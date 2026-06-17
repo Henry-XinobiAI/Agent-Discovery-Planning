@@ -15,9 +15,10 @@
 | 문서 | 레이어 | 다루는 것 | 핵심 단위 |
 |---|---|---|---|
 | `Agent_Memory_Vision.md` | **메모리 기반 (확정 전제)** | 개인 지식그래프 4계층(L0 Record → L1 Capsule → L2 Personal Knowledge → L3 Public Knowledge), Wikidata anchor 정렬, expert routing | anchor↔personal-node link |
-| `agent_discovery_recommendation_directions.md` | **discovery & recommendation 기준 베이스** | 위 메모리 구조 위에서 발견·추천: 두 모드(pull·push), need 6유형, 토픽⊥입장 표현, 쟁점 축, need별 목적함수, 피드백, **memory·persona 팀 입력 계약(§8)** | stance descriptor (edge) |
+| `agent_discovery_recommendation_directions.md` | **discovery & recommendation 설계 근거 (canonical)** | 위 메모리 구조 위에서 발견·추천: 두 모드(pull·push), need 6유형, 토픽⊥입장 표현, 쟁점 축, need별 목적함수, 피드백, **팀 입력 계약(§9)** | stance descriptor (edge) |
+| `Agent_Discovery_Recommendation_Roadmap.md` | **discovery & recommendation 빌드 페이징** | 위 설계의 MVP 범위·retrieval 흐름 요약 + **개발 로드맵·검토 항목** | — |
 
-> 현재 active 설계 문서는 위 둘뿐이다. 런타임·초기 discovery 등 나머지 설계 문서는 모두 `archive/`(아래)에 둔다.
+> 현재 active 설계 문서는 위 셋이다. **설계 근거는 directions, 빌드 순서·일정은 Roadmap**으로 본다 — 겹치는 설계 섹션의 source of truth는 directions이며, 둘이 어긋나면 directions가 우선이다. 구현 형태(wiring)는 §5. 런타임·초기 discovery 등 나머지 설계 문서는 모두 `archive/`(아래)에 둔다.
 
 ---
 
@@ -39,8 +40,9 @@
 ## 3. 읽는 순서
 
 1. **`Agent_Memory_Vision.md`** — 메모리 전제(4계층·anchor). 먼저 읽는다.
-2. **`agent_discovery_recommendation_directions.md`** — discovery & recommendation 설계. 자립적이며, 상단에 "읽는 법" 안내가 있다. memory·persona 팀에 거는 입력 계약은 **§8**.
-3. 런타임·이벤트 구조나 초기 배경·계보가 궁금하면 → `archive/`
+2. **`agent_discovery_recommendation_directions.md`** — discovery & recommendation 설계 근거. 자립적이며, 상단에 "읽는 법" 안내가 있다. memory·persona·moderation 팀에 거는 입력 계약은 **§9**.
+3. **`Agent_Discovery_Recommendation_Roadmap.md`** — MVP 범위와 개발 로드맵·검토 항목(빌드 관점).
+4. 런타임·이벤트 구조나 초기 배경·계보가 궁금하면 → `archive/`
 
 ---
 
@@ -53,3 +55,17 @@
 - **인덱스는 projection** — 검색 인덱스는 source of truth가 아니라 재빌드 가능한 투영.
 - **freshness는 decay 가중치, hard cutoff 아님** — evergreen 관점을 죽이지 않음.
 - **추천은 agent-매개 소비** — 사람-대-사람 직접 연결이 아니라, publish된 관점을 agent가 대신 내어주는 소비 모델(현 스코프). 직접 연결(invite)은 미래·런타임 소관.
+
+---
+
+## 5. 구현 형태 (how it's wired)
+
+> 설계 근거는 directions 문서에, 빌드 페이징은 Roadmap에 있고, 여기엔 "어떤 형태로 wiring 되나"만 간략히 둔다. 구체 스택은 미정(TBD).
+
+discovery는 호출 가능한 **백엔드 서비스(API)**로 구현한다 — 버전된 공유 인덱스(anchor 파티션·stance space·contested axes), cross-agent 집계, lifecycle 이벤트 기반 갱신이 필요해 호출마다 재구축할 수 없기 때문이다. 두 모드는 이 엔진을 부르는 *경로*가 다르다.
+
+- **엔진** — query API. 요청 = typed DTO(`mode`·`topic`·`need_type`·`user_stance_ref`·`silence_threshold` 등, directions §7.3), 응답 = ranked candidates + `routing_target`. 침묵 판정도 서버가 한다.
+- **모드 A (pull)** — 유저 agent가 호출하는 **thin skill/tool 클라이언트**. API를 감싸기만 하고 로직을 재구현하지 않는다.
+- **모드 B (push)** — **moderation/runtime이 게이팅하는 이벤트 훅.** agent가 자유 호출하는 skill로 만들지 않는다 — 그러면 "약한 추천으로 끼어들지 않는다"는 침묵 규율(directions §7.2)이 깨진다.
+
+구체 스택(프로토콜·DB·skill 패키징이 MCP인지 등)은 agent 런타임에 따라 정해지며 현재 TBD.
