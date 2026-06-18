@@ -270,9 +270,10 @@ Discovery는 개별 stance를 모아 contested axes를 만든다. 이 source는 
 | **P0** | `user_stance_ref` | 현재 대화에서 드러난 유저의 topic별 입장 요약 | for/against/orthogonal 기준점 |
 | **P1** | `need_confidence` | runtime/moderation이 need 판단을 얼마나 확신하는지 | push 추천의 precision control |
 | **P1** | `requester_persona_ref` | 후보 agent가 아니라 추천을 요청하는 현재 유저/agent의 persona/profile reference | similarity와 orthogonal 기준 frame |
-| **P1** | `silence_threshold` | push 추천에서 이 점수 미만이면 추천하지 않는 기준 | 약한 추천으로 대화를 방해하지 않기 위해 |
 
 `topic_candidates`, `anchor_hint`, `axis_hint`는 Moderation/Runtime이 줄 수도 있고, Discovery가 anchor 해소 단계에서 만들 수도 있다. 둘 다 있으면 Discovery가 최종 anchor와 axis를 결정한다.
+
+Push에서 추천할지 침묵할지 결정하는 threshold는 input으로 받지 않는다. `silence_threshold`는 Discovery 내부 serving policy로 두고, mode·Need·후보 점수·제품 정책에 따라 Discovery가 적용한다.
 
 safety / privacy 관련 verdict(후보 agent 안전성, 대화 맥락 안전성, 공개 권한 등)는 이 표에 포함하지 않는다. 추후 기획에 따라 별도로 고려한다.
 
@@ -285,6 +286,7 @@ safety / privacy 관련 verdict(후보 agent 안전성, 대화 맥락 안전성,
 | **P0** | `topic_knowledge_maturity` | Memory raw signal을 바탕으로 계산한 agent-topic별 지식 성숙도 | maturity gate, expert ranking |
 | **P0** | `evidence_strength` | evidence volume, specificity, consistency 등을 합친 근거 강도 | 얇은 후보와 근거 있는 후보 구분 |
 | **P0** | ranking/objective | need별 scoring과 후보 정렬 로직 | 최종 추천 순서 결정 |
+| **P0** | serving policy / `silence_threshold` | push 추천에서 기준 미달이면 침묵하도록 하는 Discovery 내부 정책값 | 약한 추천으로 대화를 방해하지 않기 위해 |
 | **P0** | prior-fill | topic-specific stance가 부족할 때 global persona로 예상 stance를 채우는 projection | cold anchor에서 후보 방향성 보완 |
 | **P1** | contested axes | 한 topic 안에서 사람들이 갈라지는 쟁점 축. 예: 산미 vs 바디감 | for/against/orthogonal 계산 |
 | **P1** | axis positions projection | 각 agent가 contested axis 위에서 어디에 있는지 계산한 값 | stance matching과 coverage |
@@ -328,7 +330,7 @@ safety / privacy verdict의 lifecycle은 해당 기능을 도입하는 시점의
 | 5 | Stance matching | stance descriptor 기반 for/against 추천 |
 | 6 | Orthogonal recommendation MVP | 다른 프레임을 가진 agent 추천 |
 | 7 | Serving payload | 후보, 추천 이유, evidence refs, `routing_target` 반환 형식 |
-| 8 | Push recommendation contract | runtime/moderation query DTO, threshold, silence 동작 정의 |
+| 8 | Push recommendation policy | runtime/moderation query DTO와 Discovery의 silence 동작 정의 |
 | 9 | Feedback logging | acceptance, turns, 1-tap feedback 기록 |
 | 10 | Later track | memory impact, contribution, embedding 고도화 |
 
