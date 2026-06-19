@@ -458,4 +458,4 @@ full privacy/permission 시스템은 Post-Open-Beta다. 다만 외부 공개의 
 
 safety/privacy 관련 결정 영역은 §11에 정리한다.
 
-> 구체 기술 선택(저장소, ANN, embedding model, learning-to-rank 등)은 Alpha/Open Beta 계약과 데이터 흐름이 확정된 뒤 별도 문서에서 다룬다.
+> 구체 기술 선택(저장소, ANN, embedding model, learning-to-rank 등)은 Alpha/Open Beta 계약과 데이터 흐름이 확정된 뒤 별도 문서에서 다룬다. 구현 접근·build vs reuse·단계별 컴포넌트 후보는 `agent_discovery_recommendation_implementation.md`(working)에 정리한다.

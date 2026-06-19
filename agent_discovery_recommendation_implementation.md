@@ -39,7 +39,7 @@
 |---|---|---|---|---|
 | **Entity linking** | ReFinED, BLINK, GENRE / OpenTapioca·Falcon 2.0(Wikidata 특화) | query-side: topic text → Wikidata QID | **Alpha 핵심** | producer-side(Memory) anchoring과 **같은 QID vocabulary로 정렬**돼야 후보가 맞음 (§5). 계열별 차이 큼 — 라이선스·모델 크기·배포 방식·Wikidata 최신성/QID directness·다국어(한국어) 성능·confidence calibration을 검증 항목으로 둘 것 |
 | **Wikidata / KG access** | WDQS(SPARQL)·dumps·qwikidata / 로컬 Qlever·Oxigraph | QID, parent/neighbor, sparse anchor fallback | **Alpha** | 라이브 WDQS vs 로컬 덤프 운영 방식은 별도 비교 |
-| **Edge store + metadata filter** | Postgres(+pgvector), graph DB(Neo4j·Nebula) / Vespa | `anchor_id` 기반 edge 조회 + maturity·freshness·discoverability·safety 필터 | **Alpha**(Postgres/graph) / when-needed(Vespa) | Alpha 검색은 대부분 structured query라 vector 없이 충분할 수 있음. Vespa는 retrieve+filter+rank를 한 엔진으로 통합하고 싶을 때의 후보지 첫 선택지 아님(운영 복잡도) — 선택 기준은 §6 |
+| **Edge store + metadata filter** | Postgres(+pgvector), graph DB(Neo4j·Nebula) / Vespa | `anchor_id` 기반 edge 조회 + maturity·freshness·discoverability·safety 필터 | **Alpha**(Postgres/graph) / when-needed(Vespa) | Alpha 검색은 대부분 structured query라 vector 없이 충분할 수 있음. Vespa는 retrieve+filter+rank를 한 엔진으로 통합하고 싶을 때의 후보지만, 첫 선택지는 아님(운영 복잡도) — 선택 기준은 §6 |
 | **KG embedding** | PyKEEN, DGL-KE, AmpliGraph | anchor 연관도/이웃 확장 | when-needed | semantic 이웃 확장이 필요해질 때 |
 | **ANN / vector** | Faiss, Qdrant | stance/persona embedding, topic-conditioned embedding 검색 | when-needed | embedding 도입·semantic recall·대규모 candidate gen 시에만. Alpha 조기 dependency 아님 |
 

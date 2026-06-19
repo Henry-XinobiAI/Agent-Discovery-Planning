@@ -16,9 +16,10 @@
 |---|---|---|---|
 | `Agent_Memory_Vision.md` | **메모리 기반 (확정 전제)** | 개인 지식그래프 4계층(L0 Record → L1 Capsule → L2 Personal Knowledge → L3 Public Knowledge), Wikidata anchor 정렬, expert routing | anchor↔personal-node link |
 | `agent_discovery_recommendation_directions.md` | **discovery & recommendation 설계 근거 (canonical)** | 위 메모리 구조 위에서 발견·추천: 두 모드(pull·push), need 6유형, 토픽⊥입장 표현, 쟁점 축, need별 목적함수, 피드백, **팀 입력 계약(§9)** | stance descriptor (edge) |
-| `Agent_Discovery_Recommendation_Roadmap.md` | **discovery & recommendation 빌드 페이징** | 위 설계의 MVP 범위·retrieval 흐름 요약 + **개발 로드맵·검토 항목** | — |
+| `Agent_Discovery_Recommendation_Roadmap.md` | **discovery & recommendation 빌드 페이징** | 위 설계의 Alpha/Open Beta/Post 범위·retrieval 흐름 요약 + **개발 로드맵·검토 항목** | — |
+| `agent_discovery_recommendation_implementation.md` | **구현 접근 (working)** | build vs reuse 원칙, 단계별 컴포넌트 후보(Discovery/Recommendation), 선결 의존성·리스크. 확정 스택 아님 | — |
 
-> 현재 active 설계 문서는 위 셋이다. **설계 근거는 directions, 빌드 순서·일정은 Roadmap**으로 본다 — 겹치는 설계 섹션의 source of truth는 directions이며, 둘이 어긋나면 directions가 우선이다. 구현 형태(wiring)는 §5. 런타임·초기 discovery 등 나머지 설계 문서는 모두 `archive/`(아래)에 둔다.
+> 현재 active 문서는 위 넷이다. **설계 근거는 directions, 빌드 순서·일정은 Roadmap, 구현 접근은 implementation**으로 본다 — 겹치는 설계 섹션의 source of truth는 directions이며, 둘이 어긋나면 directions가 우선이다. 구현 형태(wiring)는 §5. 런타임·초기 discovery 등 나머지 설계 문서는 모두 `archive/`(아래)에 둔다.
 
 ---
 
@@ -41,8 +42,9 @@
 
 1. **`Agent_Memory_Vision.md`** — 메모리 전제(4계층·anchor). 먼저 읽는다.
 2. **`agent_discovery_recommendation_directions.md`** — discovery & recommendation 설계 근거. 자립적이며, 상단에 "읽는 법" 안내가 있다. memory·persona·moderation 팀에 거는 입력 계약은 **§9**.
-3. **`Agent_Discovery_Recommendation_Roadmap.md`** — MVP 범위와 개발 로드맵·검토 항목(빌드 관점).
-4. 런타임·이벤트 구조나 초기 배경·계보가 궁금하면 → `archive/`
+3. **`Agent_Discovery_Recommendation_Roadmap.md`** — Alpha/Open Beta/Post 범위와 개발 로드맵·검토 항목(빌드 관점).
+4. **`agent_discovery_recommendation_implementation.md`** — 구현 관점(가져올 것 vs 직접 구현, 단계별 컴포넌트 후보)이 궁금하면.
+5. 런타임·이벤트 구조나 초기 배경·계보가 궁금하면 → `archive/`
 
 ---
 
