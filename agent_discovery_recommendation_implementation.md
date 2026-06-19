@@ -79,7 +79,59 @@
 - **vector infra premature adoption** — Alpha 검색은 structured query 중심. ANN/vector는 when-needed.
 - **feedback ≠ reward** — off-policy 평가(OBP 등)와 decision-log 필드 설계가 선행. shadow mode와 짝.
 
-## 6. Open Questions (→ 별도 `technology_selection` 문서, deep research 대상)
+## 6. Mock-first / contract-first 전략
+
+Memory·Persona 구현을 기다리면 Discovery/Recommendation Alpha가 막힌다. 그래서 **Memory/Persona와 공동 합의한 contract를 mock provider로 구현해 개발을 먼저 시작**한다. 핵심은 mock이 "버려질 개발용 더미"가 아니라 **통합 경계 그 자체 = 통합 리허설**이 되도록 만드는 것이다.
+
+### 6.1 Provider 인터페이스 (real과 동일)
+
+- Discovery는 Memory/Persona DB를 직접 읽지 않는다. `MemoryProvider` / `PersonaProvider` 인터페이스 뒤에 둔다.
+- Alpha 개발 중에는 `MockMemoryProvider` / `MockPersonaProvider`를 붙이고, 실제 팀 API가 나오면 **구현만 교체**한다.
+- **mock provider는 real provider와 동일한 인터페이스를 구현한다.** 이걸 명시하지 않으면 mock이 개발용 샘플로 전락하고 통합이 rewrite가 된다.
+
+### 6.2 입력 contract — 공동 서명 (Discovery 단독 동결 ❌)
+
+contract를 Discovery가 임의로 정하면 그건 우리 추측일 뿐이고, 통합 때 실제 출력과 어긋나면 mock 위에 쌓은 게 전부 rewrite다. 최소한 다음은 Memory/Persona와 **합의**해야 한다:
+
+- 필드별 **source owner** (Memory / Persona / owner / privacy / safety) — 모든 필드에 `source_owner` 태그를 붙인다. `routing_target`·`discoverability`·safety verdict는 Memory 본체가 아니라 owner/privacy/safety 소유일 수 있어, 책임 경계가 흐려지지 않게 한다. (§9.3 observed=Memory / prior=Persona, §11 eligibility와 일관)
+- **nullable · confidence · freshness · versioning** 규칙
+- `anchor_id`가 가리키는 **KG/QID vocabulary**의 의미 (→ §6.4)
+- producer-side anchoring과 query-side linking이 **같은 disambiguation 기준**을 쓰는가
+
+contract에는 **버전**을 박고, 그 버전을 fixture·contract test와 묶는다. 통합 때 "어느 계약 버전 기준인가"가 흐려지면 mock→real 교체가 다시 추측이 된다.
+
+### 6.3 Fixture dataset — 가드에서 역산한 회귀 세트
+
+happy-path 샘플이 아니라, directions·Roadmap에 흩어진 주요 리스크·가드에서 역산한다.
+
+원칙은 간단하다: **가드 하나당 그걸 깨는 fixture 하나**를 둔다. 예: directions §10 가드 표, directions §1.2 maturity gate, directions/Roadmap §4 freshness/contested axis, directions/Roadmap §11 eligibility.
+
+그러면 fixture set이 곧 설계 불변식의 회귀 테스트가 된다. mock 데이터가 너무 예쁘면 Discovery/Recommendation이 실제보다 잘 되는 것처럼 보이므로, 험한 케이스를 기본 포함한다.
+
+| fixture | 방어하는 리스크 / 가드 |
+|---|---|
+| dense / cold topic | sparse anchor fallback |
+| ambiguous topic (QID 분기) | QID 정렬 실패 |
+| same-axis disagreement | for/against 성립 |
+| weak evidence agent | maturity gate |
+| high persona / low memory | hollow agent (prior로 maturity 안 채움, §10) |
+| stale but valuable | freshness = decay, hard cutoff 아님 |
+| discoverability off | privacy/eligibility gate (§11) |
+| established axis 유무 | orthogonal · false controversy (established/inherited_established, §10) |
+
+### 6.4 QID는 스키마가 아니라 의미 계약 (Alpha 선결, mock과 별개)
+
+`anchor_id: "Q123"` 같은 **필드 모양**은 contract test로 검증되지만, "이 QID가 같은 개념을 가리키는가"는 **mock으로 숨길 수 없다** (모양은 맞는데 값이 다른 QID). 따라서 QID **vocabulary · fallback · ambiguity · alias/redirect** 처리 기준은 contract test와 별개 트랙으로, **Alpha 선결 합의**로 둔다. §5의 anchor vocabulary 정렬 리스크와 동일한 문제다.
+
+### 6.5 Decision-log from day one
+
+실제 feedback이 없어도, 추천 한 번마다 **어떤 입력으로 어떤 후보가 왜 살아남고 탈락했는지** 로그를 남긴다. 이게 Open Beta 평가·threshold 튜닝·off-policy 평가(§3.2)의 선행 데이터가 된다.
+
+### 6.6 통합 = 교체
+
+실제 팀 API가 나오면 mock provider를 real provider로 바꾸고, **같은 contract test를 실제 데이터에 돌린다.** mock 단계에서 인터페이스·계약 버전·fixture 가드를 지켜왔다면, 통합은 rewrite가 아니라 교체 + integration test다.
+
+## 7. Open Questions (→ 별도 `technology_selection` 문서, deep research 대상)
 
 - entity linker 비교: ReFinED vs BLINK vs OpenTapioca/Falcon (Wikidata 적합성·라이선스·성숙도)
 - KG access 방식: 라이브 WDQS vs 로컬 dump/local store
