@@ -38,6 +38,15 @@
 
 Alpha의 1차 산출물은 **topic과 need를 입력받아 Pull 모드로 추천 가능한 agent 후보, 추천 이유, `routing_target`을 반환하는 API**다. 내부 구현은 request-time fetch로 시작하고, 필요하면 projection/cache/index로 확장한다.
 
+내부적으로는 **Discovery 단계**와 **Recommendation 단계**를 구분한다.
+
+- **Discovery 단계** = topic을 anchor에 grounding하고, agent-topic edge를 조회·게이팅해 후보 공간을 만든다.
+- **Recommendation 단계** = 그 후보 중 `need_type`에 맞게 stance 연산, ranking, serving, push silence, 평가/튜닝을 수행한다.
+
+요청 방식과 내부 처리 단계는 별개의 구분이다. 요청 방식은 pull / push이고, 내부 처리 단계는 Discovery / Recommendation이다.
+
+따라서 pull과 push 모두 **Discovery → Recommendation**을 거친다. pull이 Discovery이고 push가 Recommendation인 것이 아니다. Alpha에서는 pull을 먼저 노출하고, Open Beta에서는 push를 추가로 노출할 뿐이다. 상위명 "Agent Discovery & Recommendation"은 이 두 내부 단계를 함께 가리킨다.
+
 ---
 
 ## 2. 추천의 두 모드
@@ -157,9 +166,11 @@ Open Beta(외부 공개)에서 더하는 범위:
 
 ## 6. Retrieval과 Ranking 흐름
 
-공통 파이프라인은 아래와 같다.
+공통 파이프라인은 두 내부 단계로 나뉜다. **Discovery 단계**가 후보 공간을 만들고, **Recommendation 단계**가 그 후보를 need에 맞게 선택·서빙한다(§1).
 
 ```text
+[Discovery 단계 — 후보 공간 구성]
+
 1. 입력 정규화
    topic, need_type, user_stance_ref, requester_persona_ref
 
@@ -174,6 +185,10 @@ Open Beta(외부 공개)에서 더하는 범위:
    maturity floor
    (safety / privacy gate: Alpha 내부 inactive, 외부 공개 시 active — §11)
 
+-> 출력: need-complete candidate pool
+
+[Recommendation 단계 — need-conditioned 선택/서빙]
+
 5. need별 연산
    depth / experience / similarity / for / against / orthogonal
 
@@ -181,11 +196,13 @@ Open Beta(외부 공개)에서 더하는 범위:
    need-specific score + diversity
 
 7. serving
-   후보, 설명, routing_target 반환
+   후보, 설명, routing_target, push silence 반환
 
 8. feedback logging
    acceptance, turns, explicit feedback (memory impact는 Post-Open-Beta)
 ```
+
+경계 계약: Discovery는 affinity로 과도하게 pruning하지 않은 **need-complete candidate pool**을 Recommendation에 넘긴다. `need_type`은 Recommendation의 objective를 정하지만, 규모가 커지면 recall을 위해 Discovery 검색 단계에도 전달될 수 있다.
 
 랭킹은 하나의 고정 relevance score가 아니다.
 
@@ -311,7 +328,7 @@ observed stance는 agent-topic edge에서 **읽고**(edge는 Memory substrate이
 | 우선순위 | needed_by | 데이터 | 무엇인가 | 왜 필요한가 |
 | --- | --- | --- | --- | --- |
 | **P0** | Open Beta (Push) | `mode` | 요청이 pull인지 push인지 | pull/push 동작 차이 |
-| **P0** | Open Beta (Push) | `need_type` | 현재 추천이 해결해야 하는 need. 예: `depth`, `against`, `orthogonal` | discovery 목적함수 선택 |
+| **P0** | Open Beta (Push) | `need_type` | 현재 추천이 해결해야 하는 need. 예: `depth`, `against`, `orthogonal` | Recommendation objective 선택. 필요 시 Discovery retrieval recall에도 전달 |
 | **P0** | Open Beta (Push) | `user_stance_ref` | 현재 대화에서 드러난 유저의 topic별 입장 요약 | for/against/orthogonal 기준점 |
 | **P1** | Open Beta (Push) | `need_confidence` | runtime/moderation이 need 판단을 얼마나 확신하는지 | push 추천의 precision control |
 | **P1** | Open Beta | `requester_persona_ref` | 후보 agent가 아니라 추천을 요청하는 현재 유저/agent의 persona/profile reference | similarity와 orthogonal 기준 frame |
@@ -320,27 +337,27 @@ observed stance는 agent-topic edge에서 **읽고**(edge는 Memory substrate이
 
 `topic_candidates`, `anchor_hint`, `axis_hint`는 Moderation/Runtime이 줄 수도 있고, Discovery가 anchor 해소 단계에서 만들 수도 있다. 둘 다 있으면 Discovery가 최종 anchor와 axis를 결정한다.
 
-Push에서 추천할지 침묵할지 결정하는 threshold는 input으로 받지 않는다. `silence_threshold`는 Discovery 내부 serving policy로 두고, mode·Need·후보 점수·제품 정책에 따라 Discovery가 적용한다.
+Push에서 추천할지 침묵할지 결정하는 threshold는 input으로 받지 않는다. `silence_threshold`는 Recommendation 단계의 serving policy로 두고, mode·Need·후보 점수·제품 정책에 따라 적용한다.
 
 safety / privacy 관련 verdict(후보 agent 안전성, 대화 맥락 안전성, 공개 권한 등)는 이 표에 포함하지 않는다. Alpha(내부/closed)에서는 inactive로 두고, 외부 공개(Open Beta) 시 hard gate로 활성화한다. query DTO 계약은 Alpha 동안 확정해 shadow mode로 검증한다. 결정해야 할 주제는 §11에 정리한다.
 
-### 9.5 Discovery가 내부에서 derive하는 것
+### 9.5 Discovery / Recommendation 단계가 내부에서 derive하는 것
 
-다른 source가 만들 필요 없는 것:
+다른 source가 만들 필요 없는 것. 어느 내부 단계가 derive하는지로 묶는다(§6).
 
-| 우선순위 | 데이터/산출물 | 무엇인가 | 어디에 쓰는가 |
-| --- | --- | --- | --- |
-| **P0** | `topic_knowledge_maturity` | Memory raw signal을 바탕으로 계산한 agent-topic별 지식 성숙도 | maturity gate, expert ranking |
-| **P0** | `evidence_strength` | evidence volume, specificity, consistency 등을 합친 근거 강도 | 얇은 후보와 근거 있는 후보 구분 |
-| **P0** | ranking/objective | need별 scoring과 후보 정렬 로직 | 최종 추천 순서 결정 |
-| **P0** | serving policy / `silence_threshold` | push 추천에서 기준 미달이면 침묵하도록 하는 Discovery 내부 정책값 | 약한 추천으로 대화를 방해하지 않기 위해 |
-| **P0** | prior-fill | topic-specific stance가 부족할 때 global persona로 예상 stance를 채우는 projection | cold anchor에서 후보 방향성 보완 |
-| **P1** | contested axes | 한 topic 안에서 사람들이 갈라지는 쟁점 축. 예: 산미 vs 바디감 | for/against/orthogonal 계산 |
-| **P1** | axis positions projection | 각 agent가 contested axis 위에서 어디에 있는지 계산한 값 | stance matching과 coverage |
-| **P1** | axis confidence calibration | axis와 stance position을 얼마나 믿을 수 있는지 보정한 값 | provisional/established 판단, false controversy 방지 |
-| **P2** | stance space version | anchor별 stance space의 버전 | 추천용 projection/cache/index를 갖게 되면 axis 변경 시 stale 식별에 필요 |
-| **P2** | topic-conditioned embedding | topic 성분을 줄인 stance/perspective embedding | 규모가 커졌을 때 for/against matching 최적화 |
-| **P2** | contribution/reputation score | 추천 이후 검증된 memory impact를 agent/topic/need별로 누적한 점수 | Post-Open-Beta ranking 보강, 단 popularity bias 가드 필요 |
+| 단계 | 우선순위 | 데이터/산출물 | 무엇인가 | 어디에 쓰는가 |
+| --- | --- | --- | --- | --- |
+| **Discovery** | **P0** | `topic_knowledge_maturity` | Memory raw signal을 바탕으로 계산한 agent-topic별 지식 성숙도 | maturity gate, expert ranking |
+| **Discovery** | **P0** | `evidence_strength` | evidence volume, specificity, consistency 등을 합친 근거 강도 | 얇은 후보와 근거 있는 후보 구분 |
+| **Discovery** | **P0** | prior-fill | topic-specific stance가 부족할 때 global persona로 예상 stance를 채우는 projection | cold anchor에서 후보 방향성 보완 (Recommendation objective가 소비) |
+| **Discovery** | **P1** | contested axes | 한 topic 안에서 사람들이 갈라지는 쟁점 축. 예: 산미 vs 바디감 | for/against/orthogonal 계산 |
+| **Discovery** | **P1** | axis positions projection | 각 agent가 contested axis 위에서 어디에 있는지 계산한 값 | stance matching과 coverage (Recommendation objective가 소비) |
+| **Discovery** | **P1** | axis confidence calibration | axis와 stance position을 얼마나 믿을 수 있는지 보정한 값 | provisional/established 판단, false controversy 방지 |
+| **Discovery** | **P2** | stance space version | anchor별 stance space의 버전 | 추천용 projection/cache/index를 갖게 되면 axis 변경 시 stale 식별에 필요 |
+| **Discovery** | **P2** | topic-conditioned embedding | topic 성분을 줄인 stance/perspective embedding | 규모가 커졌을 때 for/against matching 최적화 |
+| **Recommendation** | **P0** | ranking/objective | need별 scoring과 후보 정렬 로직 | 최종 추천 순서 결정 |
+| **Recommendation** | **P0** | serving policy / `silence_threshold` | push 추천에서 기준 미달이면 침묵하도록 하는 내부 정책값 | 약한 추천으로 대화를 방해하지 않기 위해 |
+| **Recommendation** | **P2** | contribution/reputation score | 추천 이후 검증된 memory impact를 agent/topic/need별로 누적한 점수 | Post-Open-Beta ranking 보강, 단 popularity bias 가드 필요 |
 
 ### 9.6 Lifecycle events (projection/cache/index 도입 시)
 
