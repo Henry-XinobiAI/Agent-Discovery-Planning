@@ -399,7 +399,7 @@ safety / privacy verdict의 lifecycle은 해당 기능을 도입하는 시점에
 
 > **구현 전략:** Memory/Persona 통합을 기다리지 않고 **공동 합의한 mock contract** 기반으로 Discovery 구현을 시작한다.
 > Provider 인터페이스 + mock provider + 가드 역산 fixture로 먼저 개발하고, 실제 API가 준비되면 provider 구현만 교체한다.
-> 단, QID vocabulary 합의는 mock과 별개인 Alpha 선결 조건이다. 상세는 `agent_discovery_recommendation_implementation.md` §6.
+> 단, QID vocabulary 합의는 mock과 별개인 Alpha 선결 조건이다. 상세는 `agent_discovery_recommendation_implementation.md` §7.
 
 **Open Beta (외부 공개)**
 
