@@ -118,9 +118,13 @@ check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privac
 
 이 표가 경계의 single source다 — "real인 줄 알았는데 mock"인 혼선을 막는다. `evidence_refs`의 원문 조회는 conversation search로 연결될 수 있으나 Alpha 후보 생성 경로엔 들어가지 않는다.
 
-### 2.6 현재 `bourbon-memory-api` 현황
+### 2.6 현재 `bourbon-memory-api` 현황 (스냅샷)
 
-`../bourbon-memory-api`를 직접 읽지 않아도 통합 상황을 이해할 수 있게 적은 요약이다. 결론은 **anchor substrate는 real로 바로 쓸 수 있고, agent-topic edge substrate는 아직 없다**는 것이다.
+> **이 절은 `bourbon-memory-api`의 특정 시점 스냅샷(2026-06-22 기준)이며 live-tracking 문서가 아니다.** Discovery는 memory-api 진행 상황을 계속 따라가며 맞추는 방식이 아니라, §2.4 provider contract와 §7 mock-first 전략을 기준으로 구현한다. memory/persona가 통합 가능한 시점에 contract를 재검증하고 mock provider를 real로 교체한다(§7.6). 그때까지 **능동 조율이 필요한 건 두 checkpoint뿐**이고 나머지 현황 변화는 추적하지 않는다:
+> 1. **QID vocabulary / anchor 의미 계약** — query-side ↔ producer-side QID가 같은 disambiguation 기준인지, alias/redirect/local anchor 처리(아래 "QID 계약" + §7.4). mock으로 숨길 수 없어 **Alpha 중 한 번은 Memory와 합의**해야 한다.
+> 2. **edge contract shape** — 아래 "아직 없는 것" 표의 필드(`maturity`/`evidence_strength`/`freshness`/`observed_stance`/`evidence_refs`/`routing_target`/`discoverability` 등)를 실제로 줄 수 있는지와 **필드별 source owner**.
+
+필요시 `../bourbon-memory-api`에서 직접 확인할 수 있고, 아래는 통합 상황 이해를 돕는 요약이다. 핵심 결론은 **anchor substrate는 real로 바로 쓸 수 있고, agent-topic edge substrate는 아직 없다**는 것이다.
 
 **현재 구현된 것** — 구현 중심은 두 가지다.
 
