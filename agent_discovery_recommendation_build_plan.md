@@ -24,10 +24,12 @@
 
 **이 계획이 끝나면 가능한 것** (= Alpha 구현 + spec §8 평가):
 
-1. `POST /recommend`가 `(topic_text, need_type, user_stance_ref?)`를 받아 후보 agent를 need에 맞게 정렬해 이유·`routing_target`과 함께 돌려준다.
-2. 경로 전체가 돈다: **real anchor grounding(memory-api) + mock edge/persona/eligibility**. mock→real은 구현 교체뿐(spec §7.6).
+1. `POST /recommend`가 `(topic_text, need_type, user_stance_ref?)`를 받아 후보 agent를 need에 맞게 정렬해 이유·`routing_target`과 함께 돌려준다(이 **후보 반환 full path**는 provider가 갖춰진 local/eval/test override에서 성립; 배포본은 아래 Alpha 의미 배너 참조).
+2. 경로 전체가 **local CLI / eval / TestClient(dependency override)** 에서 end-to-end로 검증된다: **real(또는 recorded) anchor grounding + `eval/providers/`의 mock edge/persona/eligibility**. 배포 앱은 real provider만 와이어링하고 mock을 서빙에 쓰지 않는다(§3 와이어링 규칙). mock→real은 구현 교체뿐(spec §7.6).
 3. `python -m cli eval run`으로 평가 하니스가 돌아 grounding/retrieval/gate/ranking/stance/coverage/reason 지표를 **need별·난이도 stratum별**로 보고하고 quality gate(ratchet)를 건다(spec §8).
 4. mock 코퍼스가 **실제 QID에 grounding된, 가드 역산·난이도 층화·known-item needle을 포함한** 평가 가능 데이터다(spec §7.3·§8.4) — happy-path 더미가 아니다.
+
+> **Alpha의 의미 (배포 모델 명확화).** Alpha 완료 = "**mock-backed API를 배포한다**"가 아니라 "**API contract + pipeline + eval harness를 mock substrate로 검증 완료한다**"이다. 배포 아티팩트(dev/prod)는 **real provider만** 와이어링하며, edge/persona/eligibility의 real이 아직 없으면 그 경로는 통합 시점에 채워진다(spec §7.6). mock-first 개발·튜닝은 **로컬 CLI/eval/test**에서 일어난다.
 
 **비범위 (Alpha에서 안 함, spec §5)**: RecSys framework, vector/ANN, LTR, graph/vector DB, orthogonal serving, contested-axis, push silence policy의 학습형, contribution/reputation, safety/privacy gate 활성화(=inactive). LLM은 **linker 재정렬·stance 분류·B2 silver judge**에만 쓴다(단독 QID 생성 ❌, spec §4.1).
 
@@ -41,7 +43,7 @@ bourbon-agent-recommendation-api/
 ├── api/
 │   ├── main.py                    ✎ recommend 라우터 등록, echo 제거, lifespan에 provider 부착
 │   ├── depends/
-│   │   └── pipeline.py            ★ get_pipeline / get_providers (app.state에서 주입)
+│   │   └── pipeline.py            ★ get_pipeline / get_providers (배포=real만 주입, eval/ import 금지)
 │   ├── middleware/                  (그대로)
 │   ├── routers/
 │   │   ├── health/                  (그대로)
@@ -64,12 +66,10 @@ bourbon-agent-recommendation-api/
 │   │   ├── persona.py             ★ PersonaPrior
 │   │   ├── eligibility.py         ★ Eligibility
 │   │   └── recommend.py           ★ NeedType, Query, NormalizedQuery, UserStanceRef, Candidate, Recommendation, DecisionLog
-│   ├── providers/
+│   ├── providers/                   ← shipped 런타임 경계만 (mock은 eval/에, 아래 주석)
 │   │   ├── base.py                ★ 4개 Protocol (Knowledge/Edge/Persona/Eligibility)
 │   │   ├── anchor_http.py         ★ HttpKnowledgeAnchorProvider [real] (memory-api httpx)
-│   │   ├── mock_edge.py           ★ MockMemoryEdgeProvider (fixture-backed)
-│   │   ├── mock_persona.py        ★ MockPersonaProvider
-│   │   └── mock_eligibility.py    ★ MockEligibilityProvider
+│   │   └── unavailable.py         ★ Unavailable{Edge,Persona,Eligibility}Provider — real 미통합 시 default(raise→503)
 │   ├── linker/linker.py           ★ 모듈1: topic→QID 2-tier (anchor search + LLM rerank)
 │   ├── retrieval/retrieval.py     ★ 모듈2: QID→edges + sparse 이웃 확장
 │   ├── gate/gate.py               ★ 모듈3: maturity/eligibility 필터
@@ -80,6 +80,10 @@ bourbon-agent-recommendation-api/
 │   ├── decision_log/log.py        ★ 모듈6: decision-log 기록 (day-one)
 │   └── pipeline.py                ★ 1→6 오케스트레이션 (RecommendationPipeline)
 ├── eval/                          ★ 평가 하니스 (CLI에서 실행)
+│   ├── providers/                 ★ mock providers — 로컬 CLI/eval 전용, 배포 serving 경로 미사용
+│   │   ├── edge.py                ·  MockMemoryEdgeProvider (discovery Protocol 구현)
+│   │   ├── persona.py             ·  MockPersonaProvider
+│   │   └── eligibility.py         ·  MockEligibilityProvider
 │   ├── corpus/                    ★ regression benchmark 본체 = git 추적 (§8.5)
 │   │   ├── fixtures/
 │   │   │   ├── anchors.json        ·  pinned 실제 QID 목록 (memory-api에서 선별)
@@ -118,7 +122,8 @@ spec §2.4의 언어중립 sketch를 Python `Protocol`로 고정한다. mock·re
 ```python
 # discovery/providers/base.py
 from __future__ import annotations
-from typing import Protocol
+from collections.abc import Mapping
+from typing import Any, Protocol
 from discovery.structs.anchor import Anchor, AnchorConnections, AnchorSummary, ArticleHit
 from discovery.structs.edge import AgentTopicEdge
 from discovery.structs.persona import PersonaPrior
@@ -130,14 +135,14 @@ class KnowledgeAnchorProvider(Protocol):          # real (memory-api)
     async def expand_connections(self, qid: str, *, limit: int = 30) -> AnchorConnections: ...
     async def search_articles(self, q: str, *, qid: str | None = None, lang: str | None = None) -> list[ArticleHit]: ...
 
-class MemoryEdgeProvider(Protocol):               # mock (Alpha)
+class MemoryEdgeProvider(Protocol):               # runtime contract; Alpha는 local/eval에서만 mock 구현
     async def get_edges(self, anchor_id: str) -> list[AgentTopicEdge]: ...
 
-class PersonaProvider(Protocol):                  # mock (Alpha)
+class PersonaProvider(Protocol):                  # runtime contract; Alpha는 local/eval에서만 mock 구현
     async def get_prior(self, agent_id: str) -> PersonaPrior | None: ...
 
-class EligibilityProvider(Protocol):              # mock (Alpha)
-    async def check(self, agent_id: str, *, context: dict | None = None) -> Eligibility: ...
+class EligibilityProvider(Protocol):              # runtime contract; Alpha는 local/eval에서만 mock 구현
+    async def check(self, agent_id: str, *, context: Mapping[str, Any] | None = None) -> Eligibility: ...
 ```
 
 **Real anchor provider** — memory-api를 httpx로 감싼다. memory-api의 `*.create()` async 팩토리·`EnvSettings` 패턴을 따른다. `limit`은 associative links만 제한한다는 spec §2.4 주석을 docstring에 박는다.
@@ -159,7 +164,7 @@ class HttpKnowledgeAnchorProvider:
         )
         return cls(client)
 
-    async def search_candidates(self, text, *, lang=None):
+    async def search_candidates(self, text: str, *, lang: str | None = None) -> list[AnchorSummary]:
         r = await self._client.get("/knowledge/anchors", params={"q": text, "lang": lang})
         r.raise_for_status()
         return [AnchorSummary.model_validate(x) for x in r.json()]
@@ -167,9 +172,13 @@ class HttpKnowledgeAnchorProvider:
     async def aclose(self) -> None: await self._client.aclose()
 ```
 
-> **HTTP client 규칙 (효율의 실제 레버).** agent-recommendation-api는 매 요청마다 memory-api를 호출하므로 **client lifecycle이 성능을 가른다**. 규칙: **request마다 `httpx.AsyncClient`를 새로 만들지 않는다 — lifespan에서 1번 생성해 `app.state`로 재사용**(connection pool·keep-alive 재사용). 이게 핵심이고, `httpx` vs `aiohttp` 선택은 부차적이다(둘 다 pooling 지원). httpx를 1차로 두는 이유: 템플릿·memory-api에 `httpx[http2]` 이미 존재(의존성 0 추가), `MockTransport`/`respx`로 테스트 결정론, Protocol 뒤라 병목 확인 시 호출부 변경 없이 교체 가능. **fan-out**(linker의 이웃 anchor `get()` 다발)은 라이브러리 교체가 아니라 `asyncio.gather` + `httpx.Limits` 튜닝으로 푼다. 대량 streaming·connector 세밀 튜닝이 실측 병목이 되면 그때 provider 내부만 aiohttp로 교체한다.
+> **HTTP client 규칙 (효율의 실제 레버).** agent-recommendation-api는 매 요청마다 memory-api를 호출하므로 **client lifecycle이 성능을 가른다**. 규칙: **request마다 `httpx.AsyncClient`를 새로 만들지 않는다 — lifespan에서 1번 생성해 `app.state`로 재사용**(connection pool·keep-alive 재사용). 이게 핵심이고, `httpx` vs `aiohttp` 선택은 부차적이다(둘 다 pooling 지원). httpx를 1차로 두는 이유: 템플릿·memory-api에 `httpx[http2]` 이미 존재(의존성 0 추가), **`httpx.MockTransport`** 로 외부 도구 없이 테스트 결정론(새 도구 0개 원칙 유지 — `respx` 등 미도입), Protocol 뒤라 병목 확인 시 호출부 변경 없이 교체 가능. **fan-out**(linker의 이웃 anchor `get()` 다발)은 라이브러리 교체가 아니라 `asyncio.gather` + `httpx.Limits` 튜닝으로 푼다. 대량 streaming·connector 세밀 튜닝이 실측 병목이 되면 그때 provider 내부만 aiohttp로 교체한다.
 
-**Mock providers** — fixture 파일(JSON)을 `EdgeFixture` 형태로 로드해 in-memory dict로 서빙. real과 동일 Protocol. `get_edges`는 `anchor_id`(=QID) 키 조회. **fixture는 §7.3 가드 역산 케이스를 기본 포함**(아래 §8).
+**Mock providers** — fixture JSON을 in-memory dict로 서빙하는 얇은 어댑터. `discovery/providers/base.py`의 Protocol을 구현하지만(real과 동일 인터페이스, §7.1) **위치는 `discovery/`가 아니라 `eval/providers/`다.** 이유: mock은 **로컬 CLI 튜닝 + eval 전용**이고 dev/prod 배포본의 serving 경로에서는 쓰이지 않는다(repo·이미지엔 존재하되 미사용). 런타임 의존이 아니므로 shipped 도메인 패키지에 두지 않는다. mock 데이터(`eval/corpus/fixtures/*`)는 튜닝하며 계속 늘어난다.
+
+> **provider 와이어링 규칙 (배포 경계).** **배포 앱**(`api/depends/pipeline.py`)은 **real provider만** 와이어링하고 `eval/`을 import하지 않는다 — 배포본 serving 경로에 mock import가 0이어야 한다. **mock 합성**은 `cli/recommend.py`(로컬 디버그)·`cli/eval.py`·`eval/harness.py`·tests에서만 일어난다(real anchor + `eval/providers/`의 mock edge/persona/eligibility). 이로써 §7 mock-first 개발/튜닝은 로컬·eval에서 돌리고, 배포본은 real 계약에만 묶인다(통합 = real 채워짐).
+>
+> **Alpha 배포본의 real provider 공백 처리.** Alpha 시점엔 edge/persona/eligibility의 real 구현이 아직 없다(Memory/Persona 미통합). 배포 앱은 mock으로 fallback하지 않고, real-slot에 **shipped `Unavailable{Edge,Persona,Eligibility}Provider`** 를 와이어링한다 — 이들은 호출 시 `upstream_unavailable`(503)을 던진다. 결과: 배포 `/recommend`는 **anchor grounding(real)까지는 동작**하고, edge에 의존하는 후보 생성/랭킹 단계에서 **503을 정직하게 반환**한다(가짜 후보 ❌). real edge/persona가 통합되면 `Unavailable*`를 real 구현으로 교체(= §7.6 통합). 즉 "후보를 돌려준다"는 **로컬/eval/test(override)** 에서 검증되고, 배포 serving의 후보 경로 활성화는 real 통합 시점이다.
 
 각 도메인 struct는 memory-api의 `StrictBaseModel`을 복제한 base 위에 둔다. anchor 4종은 spec §2.6 필드를 그대로 미러(우리가 memory-api를 패키지로 import하지 않고, provider 경계가 자기 모델을 소유 — 통합 시 계약 검증 지점).
 
@@ -183,7 +192,7 @@ mock fixture를 만들 때 필드 해석이 열리지 않도록 핵심 struct의
 
 **`UserStanceRef`** (내부 normalized, for/against용) — API는 `user_stance_ref: str`로 받지만 **pipeline 진입 전 request normalizer**(별도 입력 정규화 단계, linker와 분리 — linker는 topic→QID 책임만)가 `UserStanceRef{ axis: str, dir: Stance, text: str \| None }`로 normalize한다. stance 분류(§4.2)·stance 지표(spec §8.5)·테스트는 모두 이 normalized 구조를 기준으로 하므로 문자열 파싱 ambiguity가 pipeline 안으로 새지 않는다. (`NormalizedQuery`는 raw `Query`를 normalize한 결과 — `topic_text`/`need_type`/`lang`/`limit` + `user_stance: UserStanceRef \| None`.)
 
-**`AgentTopicEdge`** (mock @ Alpha, spec §2.4·§7.2) — 모든 필드에 `source_owner`를 단다:
+**`AgentTopicEdge`** (contract v0; Alpha는 local/eval fixture가 이 모델을 채움, spec §2.4·§7.2) — 모든 필드에 `source_owner`를 단다:
 
 | 필드 | 타입 | 의미 | source_owner |
 |---|---|---|---|
@@ -200,9 +209,9 @@ mock fixture를 만들 때 필드 해석이 열리지 않도록 핵심 struct의
 | `discoverable` | `bool` | edge 수준 노출 가능 여부 | privacy |
 | `source_owner` | `dict[str,SourceOwner]` | 필드별 소유 맵(위 열을 코드로) | — |
 
-**`PersonaPrior`** (mock, spec §2.4) — `agent_id: str` · `prior_stance: Stance \| None` · `stable_traits: list[str]` · `expertise_claims: list[str]`(주장된 QID/topic). **prior는 maturity를 못 채운다**(hollow guard, spec §10): ranking에서 동일 band 내 보조 신호로만.
+**`PersonaPrior`** (contract v0; Alpha는 local/eval fixture가 이 모델을 채움, spec §2.4) — `agent_id: str` · `prior_stance: Stance \| None` · `stable_traits: list[str]` · `expertise_claims: list[str]`(주장된 QID/topic). **prior는 maturity를 못 채운다**(hollow guard, spec §10): ranking에서 동일 band 내 보조 신호로만.
 
-**`Eligibility`** (mock, spec §2.4) — `agent_id: str` · `discoverable: bool` · `reason: str \| None`. (Alpha는 `discoverable`만 active; `privacy_clearance`/`safety_verdict`는 Open Beta 이전 활성화 시 추가, spec §8.2.)
+**`Eligibility`** (contract v0; Alpha는 local/eval fixture가 이 모델을 채움, spec §2.4) — `agent_id: str` · `discoverable: bool` · `reason: str \| None`. (Alpha는 `discoverable`만 active; `privacy_clearance`/`safety_verdict`는 Open Beta 이전 활성화 시 추가, spec §8.2.)
 
 **`Candidate`** (내부, 모듈 ②→④ 통과 객체) — `edge: AgentTopicEdge` · `via: AnchorVia` (+`via_qid: str\|None` 이웃확장 출처) · `persona: PersonaPrior \| None` · `eligibility: Eligibility` · `features: dict[str,float]`(scorer 입력, §4.2) · `score: float \| None` · `stance_axis/stance_dir` · `drop_reason: str \| None`(게이트 탈락 사유, decision-log용).
 
@@ -214,7 +223,7 @@ mock fixture를 만들 때 필드 해석이 열리지 않도록 핵심 struct의
 
 ## 4. 파이프라인 (모듈 1→6)
 
-`discovery/pipeline.py`가 spec §2.3 경로를 그대로 오케스트레이션한다. 순수 함수/작은 클래스로, 각 모듈은 자기 디렉토리에서 단독 테스트 가능.
+`discovery/pipeline.py`가 spec §2.3 경로를 그대로 오케스트레이션한다. 순수 함수/작은 클래스로, 각 모듈은 자기 디렉토리에서 단독 테스트 가능. **pipeline은 provider가 mock인지 real인지 모른다** — Protocol만 보고 동작하며, 주입은 호출자(배포=`api/depends`, 로컬/eval=CLI·harness)가 결정한다.
 
 ```python
 # discovery/pipeline.py  (스케치)
@@ -225,11 +234,11 @@ class RecommendationPipeline:
 
     async def recommend(self, query: Query) -> Recommendation:
         normalized = self._normalize(query)                                              # ⓪ request normalizer (str→UserStanceRef)
-        qid, grounding = await self._linker.resolve(normalized.topic_text, lang=normalized.lang)  # ① real anchor (topic→QID only)
-        candidates = await self._retrieve(qid)                                           # ② mock edge (+ ① 이웃확장)
-        survivors, dropped = await self._gate(candidates)                                # ③ mock eligibility
+        qid, grounding = await self._linker.resolve(normalized.topic_text, lang=normalized.lang)  # ① anchor provider (topic→QID only)
+        candidates = await self._retrieve(qid)                                           # ② edge provider (+ ① 이웃확장)
+        survivors, dropped = await self._gate(candidates)                                # ③ eligibility provider
         ranked = await self._ranker.rank(survivors, need=normalized.need_type,
-                                         stance=normalized.user_stance)                  # ④ persona mock + rule/LLM
+                                         stance=normalized.user_stance)                  # ④ persona provider + rule/LLM
         result = self._serve(ranked, qid=qid)                                            # ⑤ payload/routing_target/silence
         self._log.write(query, normalized, grounding, candidates, survivors, dropped, ranked)  # ⑥ decision-log (raw+normalized)
         return result
@@ -239,7 +248,7 @@ class RecommendationPipeline:
 - **①  Linker (2-tier, spec §4.1)**: `search_candidates` → 후보가 모호/희박하면 `expand_connections`로 이웃 anchor 확장 → LLM rerank로 최종 QID 선택. **topic→QID 책임만 진다**(stance 파싱 아님). LLM은 후보 위 재정렬만(`invoke_structured`로 구조화 출력). 단독 QID 생성 금지.
 - **②  Retrieval**: `edges.get_edges(qid)`. sparse면 `expand_connections` 이웃 QID들로 풀 확장(이웃 확장은 real).
 - **③  Gate**: maturity 임계 + `eligibility.check`(discoverable). safety/privacy는 Alpha inactive(spec §8.2).
-- **④  Ranking**: need별 rule scorer + `persona.get_prior`(mock prior는 maturity를 못 채움 — hollow guard, spec §10) + stance 분류(for/against).
+- **④  Ranking**: need별 rule scorer + `persona.get_prior`(persona prior는 maturity를 못 채움 — hollow guard, spec §10) + stance 분류(for/against).
 - **⑤  Serving**: 후보·이유·`routing_target` payload. push silence는 Alpha에서 threshold stub(policy는 Open Beta).
 - **⑥  Decision-log**: 입력·중간값·생존/탈락 이유를 day-one 기록(§4.3). Open Beta OPE replay harness로 승계(spec §7.5·§8.9).
 
@@ -256,7 +265,7 @@ class RecommendationPipeline:
 | `user_stance_ref` | `str \| None` |  | `null` | for/against의 기준 입장. need=for/against에서만 필수(검증). **request normalizer가 `UserStanceRef{axis,dir,text}`로 normalize 후 pipeline 전달**(§3.1) |
 | `lang` | `str \| None` |  | `"ko"` | linker 언어 힌트 |
 | `limit` | `int` |  | `10` | 반환 후보 상한(1–50) |
-| `context` | `dict \| None` |  | `null` | eligibility용 호출 맥락 |
+| `context` | `Mapping[str,Any] \| None` |  | `null` | eligibility용 호출 맥락 |
 
 **`RecommendResponse`**:
 
@@ -282,7 +291,7 @@ class RecommendationPipeline:
 |---|---|---|
 | `grounding_failed` | 422 | **anchor grounding 후보 0** 또는 신뢰도 미달(topic→QID 자체 실패) |
 | `invalid_need` | 422 | need=for/against인데 `user_stance_ref` 없음 (pydantic+model_validator) |
-| `upstream_unavailable` | 503 | memory-api anchor 호출 실패 |
+| `upstream_unavailable` | 503 | memory-api anchor 호출 실패, **또는 edge/persona/eligibility real 미통합**(배포 앱의 `Unavailable*` provider, §3) |
 
 **두 종류의 "0"을 구분한다(오독 방지):**
 - **anchor grounding 후보 0** (topic을 QID로 못 풀음) → `grounding_failed` **422 에러**. grounding은 모든 후속 단계의 전제라, 실패하면 추천 자체가 성립 안 함.
@@ -355,6 +364,9 @@ class RecommendationPipeline:
        global _orch
        if _orch is None: _orch = create_orchestrator()
        return _orch
+   def set_orchestrator(o: ChatOrchestrator | None) -> None:  # 테스트 주입/리셋
+       global _orch
+       _orch = o
    async def invoke_structured(*, system: str, user: str, schema: type[T],
                                model: str | None = None) -> T | None:
        req = E3ChatRequest(model=model or LlmSettings.get().DEFAULT_MODEL,
@@ -366,7 +378,7 @@ class RecommendationPipeline:
        return schema.model_validate_json(raw) if raw else None
    ```
    사용처는 linker rerank(`discovery/linker`), stance 분류(`discovery/ranking/stance.py`), B2 judge(`eval/judge`) **세 곳뿐**. LLM 의존을 이 래퍼 뒤에 가둬, 추후 e3llm replace 시 영향 면적을 최소화한다.
-4. `.env.example`에 `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` (Vertex ADC) 추가. LLM 호출은 항상 mockable하게(테스트는 fake orchestrator 주입).
+4. `.env.example`에 `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` (Vertex ADC) 추가. **테스트 격리**: `set_orchestrator(fake)`로 fake orchestrator 주입하고 fixture teardown에서 `set_orchestrator(None)`로 리셋(global singleton이 테스트 간 새지 않게) — flaky 방지.
 
 ## 6. 구현 단계 (순서·체크리스트)
 
@@ -377,9 +389,9 @@ class RecommendationPipeline:
 - **Phase 0 — Scaffold 정렬**: ~~`module/`→`discovery/` 개명~~ **(현재 기준 완료)**. 남은 작업: echo 제거(`discovery/echo/`·`api/routers/echo/`·`cli/echo.py`·관련 test), `e3llm` vendor(rsync) + deps(`google-genai`·`openai` 추가), `.env.example`에 `MEMORY_API_BASE_URL`/`GOOGLE_CLOUD_*` 추가, `discovery/config.py`(EnvSettings 서브클래스)·`discovery/llm.py` 골격, `cli`에서 echo 제거. *acceptance*: `pre-commit run --all-files`·`pytest` green(echo 제거로 깨지는 test 정리 포함).
 - **Phase 1 — 계약 동결**: `discovery/structs/*` + `providers/base.py` Protocol. anchor 4종 필드를 spec §2.6에 1:1 맞춤. `Query`/`NormalizedQuery`/`Recommendation` + `UserStanceRef`(§3.1) 정의. *acceptance*: `pre-commit run --all-files`(ruff+mypy) 통과, struct round-trip 테스트, **`Query`→`NormalizedQuery` normalizer 테스트**(raw `user_stance_ref` 문자열 → `UserStanceRef{axis,dir,text}` 파싱, need=for/against 누락 시 `invalid_need`, 정상/엣지 케이스).
 - **Phase 2 — Real anchor grounding**: `HttpKnowledgeAnchorProvider` + 최소 linker(LLM 없이 top-1). **provider/client lifecycle을 lifespan에 박는다**: startup에서 `await HttpKnowledgeAnchorProvider.create()`로 **httpx client를 1번 생성**해 `app.state`에 붙이고(request마다 재생성 금지·pool/keep-alive 재사용), **shutdown에서 `await provider.aclose()`로 닫는다**(누수 방지). *acceptance*: 실제 memory-api(또는 recorded fixture)로 topic→QID가 도는 integration 테스트 + **startup create / shutdown close 호출 검증** + **여러 request가 동일 client 인스턴스를 재사용하는지 검증**(request마다 새 client 생성 안 됨, TestClient lifespan context).
-- **Phase 3 — Mock providers + 코퍼스 로더**: `mock_edge/persona/eligibility` + JSON fixture 스키마. *acceptance*: fixture 로드→`get_edges` 조회 단위 테스트.
+- **Phase 3 — Mock providers + 코퍼스 로더**: `eval/providers/{edge,persona,eligibility}.py`(discovery Protocol 구현) + JSON fixture 스키마. *acceptance*: fixture 로드→`get_edges` 조회 단위 테스트, **배포 앱 import 그래프에 `eval/` 미포함 검증**(serving 경로 mock-free).
 - **Phase 4 — Pipeline 1→6**: retrieval·gate·ranking(rule)·serving·decision-log. stance/LLM rerank는 rule/stub 먼저. *acceptance*: mock 위에서 `recommend(query)`가 끝까지 도는 단위 테스트 + decision-log 생성.
-- **Phase 5 — API + CLI recommend**: `POST /recommend` + `python -m cli recommend …`. *acceptance*: TestClient integration 테스트(template `tests/integration` 패턴).
+- **Phase 5 — API + CLI recommend**: `POST /recommend` + `python -m cli recommend …`. 배포 앱은 real provider만 와이어링하고, edge/persona/eligibility는 real 미통합이라 `Unavailable*` provider로 채운다(§3). *acceptance*: (a) **배포 와이어링** — `/recommend`가 anchor grounding까지 동작하고 edge 의존 단계에서 **503 `upstream_unavailable`** 반환(가짜 후보 ❌); (b) **full path** — TestClient `dependency_overrides`로 `eval/providers/` mock 주입 시 후보까지 end-to-end 동작(override는 test scope만). template `tests/integration` 패턴.
 - **Phase 6 — 평가 코퍼스 빌더**: §8의 생성 전략 구현(real QID grounding·strata·needle·가드 역산·gold label). **real memory-api 의존을 빌드 시점으로 격리**: `corpus build-anchors`만 live memory-api를 호출해 anchor를 **선별·고정(`anchors.json`)하는 수동/갱신 전용** 명령이고, 그때 응답을 recorded fixture로 함께 저장한다. `corpus build`(agent/edge/scenario/gold 합성)와 이후 `eval run`은 **pinned `anchors.json` + recorded fixture만** 읽고 live 호출하지 않는다 → eval/CI는 네트워크 없이 결정론. *acceptance (green 최소 조건, 전부 통과해야 함)*:
   - 모든 코퍼스 JSON이 §3.1 struct로 **schema-validate** 통과(깨지면 fail).
   - 모든 `edge.anchor_id`가 recorded fixture로 **QID replay 성공**(실재 QID 아니면 fail).
@@ -495,8 +507,10 @@ python -m cli corpus build           # [offline] pinned anchors.json 기반 agen
 python -m cli corpus build-guards    # [offline] §8.3 가드 역산 fixture
 python -m cli eval run [--strata all|hard] [--needs depth,for,…] [--against-real]  # [offline] pinned anchors + recorded fixture
 python -m cli eval report [--bucket]
-python -m cli recommend --topic "…" --need depth   # 단건 디버그 (live/recorded 선택)
+python -m cli recommend --topic "…" --need depth --substrate eval-mock|real|recorded   # 단건 디버그
 ```
+
+`recommend`의 `--substrate`가 provider 조합을 고른다(배포 앱과 달리 CLI는 mock 사용 가능): `eval-mock`=recorded anchor + `eval/providers/` mock(기본, 오프라인), `real`=live memory-api + real edge/persona(통합 후), `recorded`=recorded anchor만. 배포 serving 경로(`api/`)는 이 플래그와 무관하게 항상 real-only다.
 
 `build-anchors`만 live memory-api에 접속하고, 그 외 코퍼스 빌드·`eval run`·CI는 pinned `anchors.json` + recorded fixture로 **네트워크 없이 결정론**으로 돈다(Phase 6). `--against-real`을 줄 때만 통합 후 real edge에 붙는다.
 
@@ -505,7 +519,7 @@ python -m cli recommend --topic "…" --need depth   # 단건 디버그 (live/re
 ## 10. 테스트 & 검증 전략
 
 - **단위**: 각 모듈(linker/retrieval/gate/ranking/serving/log) + metric 계산. LLM·httpx는 fake 주입.
-- **integration**(`tests/integration`, TestClient): `POST /recommend` end-to-end(mock providers). template `test_api.py` 패턴(에러 envelope·request-id) 재사용.
+- **integration**(`tests/integration`, TestClient): `POST /recommend` end-to-end via **FastAPI `dependency_overrides`로 `eval/providers/` mock 주입**(배포 앱은 mock-free, override는 test scope만). template `test_api.py` 패턴(에러 envelope·request-id) 재사용.
 - **recorded anchor**: memory-api 응답을 fixture로 녹화해 grounding 테스트를 오프라인·결정론으로.
 - **eval = 회귀 테스트**: Phase 7부터 `python -m cli eval run`을 CI step. ratchet 하향 시 red(CLAUDE.md "완료 전 증명").
 - **계약 테스트**: mock provider가 Protocol을 만족하는지 + struct가 spec §2.6 anchor 표면과 일치하는지(통합 시 real로 같은 테스트 재실행, spec §7.6).
@@ -529,6 +543,7 @@ python -m cli recommend --topic "…" --need depth   # 단건 디버그 (live/re
 | 도메인 패키지명 | `discovery/` (구 `module/`) | ✅ 확정 (recommendation/은 RecSys affinity로 오독 위험) |
 | 이 계획 문서 위치 | planning 레포(여기) | ✅ 확정 |
 | mock 저장소 | in-memory(JSON fixture) | ✅ 확정 (Postgres/vector는 spec §5 when-needed) |
+| mock provider 위치/용도 | `eval/providers/` — 로컬 CLI 튜닝+eval 전용, 배포 serving 경로 미사용(repo엔 존재) | ✅ 확정 (배포 앱은 real만 와이어링, §3) |
 | eval 산출물 git 추적 | fixtures/gold 추적, output/silver ignore (§8.5) | 기본값 |
 | LLM provider | e3llm 기본 `google/gemini`(Vertex ADC) | 기본값 (OpenAI 대안) |
 | echo 라우터 | 제거 | 기본값 |
