@@ -499,8 +499,8 @@ anchor partition
 gate:
   on-topic
   AND maturity >= floor_need
-  AND candidate safety/reliability pass (Alpha 내부 inactive, 외부 공개 시 active — §11)
-  AND eligibility/discoverability pass (Alpha 내부 inactive, 외부 공개 시 active — §11)
+  AND discoverability / eligibility pass   (Alpha active — mock/eval substrate에서도 반드시 지킴)
+  AND safety/privacy verdict pass          (Alpha inactive 또는 true 간주, 외부 공개 전 활성화 — §11)
 
 score_need:
   alpha * stance_term
@@ -516,6 +516,8 @@ Need가 바꾸는 것은 두 가지다.
 
 1. stance 연산 방식
 2. 각 항의 가중치와 floor
+
+> **Alpha 구현 형태 (reconciliation).** 위 weighted score template은 **개념/Post-Open-Beta(LTR) 형태**다 — 어떤 feature가 need별로 중요한지를 보여준다. **Alpha는 학습 weight를 쓰지 않고 deterministic ordering contract로 구현**한다: `gate → need filter → lexicographic ordering keys → tie-break`(계수 없음, scalar score 없음). 계수(alpha…eta)는 Alpha에 두지 않고 decision-log의 raw feature로 Post-Open-Beta에서 fit한다. 정확한 Alpha gate 집합·ordering keys는 build_plan §4.2(`discoverable`은 Alpha active, `safety/privacy`는 Open Beta — §11).
 
 ### 5.3 Need별 ranking
 

@@ -183,6 +183,7 @@ Open Beta(외부 공개)에서 더하는 범위:
 4. gate
    on-topic
    maturity floor
+   discoverability / eligibility pass (Alpha active — eval gate, mock/eval에서도 지킴)
    (safety / privacy gate: Alpha 내부 inactive, 외부 공개 시 active — §11)
 
 -> 출력: need-complete candidate pool

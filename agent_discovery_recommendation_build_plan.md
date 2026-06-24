@@ -74,7 +74,7 @@ bourbon-agent-recommendation-api/
 │   ├── retrieval/retrieval.py     ★ 모듈2: QID→edges + sparse 이웃 확장
 │   ├── gate/gate.py               ★ 모듈3: maturity/eligibility 필터
 │   ├── ranking/
-│   │   ├── scorers.py             ★ 모듈4: depth/experience/for/against/coverage rule scorer
+│   │   ├── ordering.py            ★ 모듈4: need별 ordering(depth/experience/for/against/coverage, §4.2 — scalar score 아님)
 │   │   └── stance.py              ★ for/against 분류 (symbolic + LLM)
 │   ├── serving/serving.py         ★ 모듈5: payload + routing_target + silence 판정(Alpha=stub)
 │   ├── decision_log/log.py        ★ 모듈6: decision-log 기록 (day-one)
@@ -206,6 +206,7 @@ mock fixture를 만들 때 필드 해석이 열리지 않도록 핵심 struct의
 | `observed_stance` | `Stance \| None` | 관측된 입장 (축 위에서) | memory |
 | `stance_axis` | `str \| None` | 입장이 놓인 축 라벨(for/against 판정 기준) | memory |
 | `stance_summary` | `str \| None` | 입장 요약 텍스트 | memory |
+| `stance_confidence` | `float \| None` | `observed_stance`의 추출/추정 신뢰도(= directions §9.3 `extraction_confidence`). §4.2 for/against filter guard `≥ τ`의 입력 | memory |
 | `evidence_refs` | `list[str]` | conversation 원문 ref (Alpha 후보경로 미사용) | memory |
 | `routing_target` | `str` | 라우팅 목적지(room/endpoint 식별자) | owner |
 | `discoverable` | `bool` | edge 수준 노출 가능 여부 | privacy |
@@ -215,7 +216,7 @@ mock fixture를 만들 때 필드 해석이 열리지 않도록 핵심 struct의
 
 **`Eligibility`** (contract v0; Alpha는 local/eval fixture가 이 모델을 채움, spec §2.4) — `agent_id: str` · `discoverable: bool` · `reason: str \| None`. (Alpha는 `discoverable`만 active; `privacy_clearance`/`safety_verdict`는 Open Beta 이전 활성화 시 추가, directions §11.)
 
-**`Candidate`** (내부, 모듈 ②→④ 통과 객체) — `edge: AgentTopicEdge` · `via: AnchorVia` (+`via_qid: str\|None` 이웃확장 출처) · `persona: PersonaPrior \| None` · `eligibility: Eligibility` · `features: dict[str,float]`(scorer 입력, §4.2) · `score: float \| None` · `stance_axis/stance_dir` · `drop_reason: str \| None`(게이트 탈락 사유, decision-log용).
+**`Candidate`** (내부, 모듈 ②→④ 통과 객체) — `edge: AgentTopicEdge` · `via: AnchorVia` (+`via_qid: str\|None` 이웃확장 출처) · `persona: PersonaPrior \| None` · `eligibility: Eligibility` · `features: dict[str,float]`(ordering 입력 **raw 연속값**, §4.2 — band는 cutoff로 derive) · `ordering_keys: list[str]`(이 need의 lexicographic 정렬 키) · `stance_axis/stance_dir` · `drop_reason: str \| None`(게이트/필터 탈락 사유, decision-log용). **scalar `score` 없음** — Alpha ranking은 ordering contract(§4.2)라 가중합 점수를 만들지 않는다.
 
 **`Query` / `NormalizedQuery` / `Recommendation`** — 세 단계의 입출력 경계를 분리한다(⓪ normalizer 도입의 귀결, §4):
 
@@ -250,7 +251,7 @@ class RecommendationPipeline:
 - **①  Linker (2-tier, spec §4.1)**: `search_candidates` → 후보가 모호/희박하면 `expand_connections`로 이웃 anchor 확장 → LLM rerank로 최종 QID 선택. **topic→QID 책임만 진다**(stance 파싱 아님). LLM은 후보 위 재정렬만(`invoke_structured`로 구조화 출력). 단독 QID 생성 금지.
 - **②  Retrieval**: `edges.get_edges(qid)`. sparse면 `expand_connections` 이웃 QID들로 풀 확장(이웃 확장은 real).
 - **③  Gate**: maturity 임계 + `eligibility.check`(discoverable). safety/privacy는 Alpha inactive(directions §11).
-- **④  Ranking**: need별 rule scorer + `persona.get_prior`(persona prior는 maturity를 못 채움 — hollow guard, spec §10) + stance 분류(for/against).
+- **④  Ranking**: need별 ordering(§4.2 — filter + lexicographic keys, scalar score 없음) + `persona.get_prior`(persona prior는 maturity를 못 채움 — hollow guard, spec §10) + stance 분류(for/against).
 - **⑤  Serving**: 후보·이유·`routing_target` payload. push silence는 Alpha에서 threshold stub(policy는 Open Beta).
 - **⑥  Decision-log**: 입력·중간값·생존/탈락 이유를 day-one 기록(§4.3). Open Beta OPE replay harness로 승계(spec §7.5·§8.9).
 
@@ -276,7 +277,7 @@ class RecommendationPipeline:
   "anchor": { "qid": "Q11660", "label": "인공지능" },     // grounding 결과
   "need_type": "depth",
   "recommendations": [
-    { "agent_id": "a_07", "rank": 1, "score": 0.82,
+    { "agent_id": "a_07", "rank": 1,                       // Alpha는 scalar score 없이 rank만(§4.2 ordering contract)
       "stance": { "axis": "...", "dir": "for" },           // for/against need일 때
       "routing_target": "room:...",
       "reasons": ["maturity 0.9·evidence 0.8", "..."],     // evidence_ref에 묶임(§8.5 reason 지표)
@@ -299,23 +300,28 @@ class RecommendationPipeline:
 - **anchor grounding 후보 0** (topic을 QID로 못 풀음) → `grounding_failed` **422 에러**. grounding은 모든 후속 단계의 전제라, 실패하면 추천 자체가 성립 안 함.
 - **agent recommendation 후보 0** (QID는 풀렸으나 edge 없음/전부 게이트 탈락) → **에러 아님**. `recommendations: []` + `silence.silent=true`로 **200** 반환(침묵도 정상 결정, decision-log에 기록).
 
-### 4.2 Alpha ranking rule (rule scorer feature + tie-break)
+### 4.2 Alpha ranking — ordering contract (formula 아님)
 
-수식은 데이터 전엔 단정하지 않는다(spec §8.6 ratchet 철학) — 대신 **각 need가 쓰는 feature와 tie-break 순서**를 고정한다. 입력은 edge 신호(`maturity`/`evidence_strength`/`freshness`/`observed_stance`)와 persona 보조뿐. **anchor `importance`/pageview류는 ranking에 쓰지 않는다**(spec §2.6: agent 추천 신호 아님).
+수식·학습 weight를 데이터 전에 단정하지 않는다(spec §8.6 ratchet). **Alpha 산출물은 가중합 score가 아니라 ordering contract**다: `Gate → NeedFilter → NeedOrdering(lexicographic) → TieBreak → ServingSuppression`. 각 need를 **filter + ordering key 리스트**로 고정하고 점수 스칼라는 만들지 않는다(0.55·0.30 같은 계수는 데이터 전엔 근거 없음 + feature 분포 미정규화 상태에선 가중합이 오해를 만든다). 입력은 edge 신호(`maturity`/`evidence_strength`/`freshness`/`observed_stance`/`stance_confidence`)뿐 — **anchor `importance`/pageview류는 안 쓴다**(spec §2.6: agent 추천 신호 아님).
 
-게이트(③) 통과 = `maturity ≥ MATURITY_MIN` ∧ `eligibility.discoverable` ∧ `edge.discoverable`. 이후 need별:
+**Gate (Rankable)** — 통과해야 ordering 진입: `on_topic ∧ maturity ≥ MATURITY_MIN ∧ eligibility.discoverable ∧ edge.discoverable ∧ safety_eligible`. `on_topic` = `edge.anchor_id == resolved_qid` **또는** accepted neighbor expansion via(§4 ②). safety/privacy는 penalty가 아니라 **gate**다 — score에서 trade-off하지 않는다(directions §11). **Alpha는 `safety_eligible`=true로 간주**한다(필드·게이트 활성화는 Open Beta 이전); `eligibility`는 `discoverable`만 active(§3.1).
 
-| need | primary feature | tie-break(순서) | 비고 |
-|---|---|---|---|
-| `depth` | `maturity` 가중 + `evidence_strength` | freshness → `len(evidence_refs)` | 깊은 전문성 |
-| `experience` | `evidence_strength` + `freshness` | maturity → evidence_refs | 최근 구체 근거 우선 |
-| `for` | (same-axis ∧ `stance=for` 필터 후) depth 점수 | stance 신뢰도 → maturity | 축 불일치 후보 제외 |
-| `against` | (same-axis ∧ `stance=against` 필터 후) depth 점수 | 축 일치 신뢰도 → maturity | **orthogonal(다른 축)로 새지 않게 same-axis 강제**(spec §8.5 stance) |
-| `coverage` | depth 점수 × **다양성**(unique axis/persona/source) | redundancy 낮은 순 | Alpha=축/출처 round-robin 디둡(MMR/DPP는 Open Beta, spec §4.2) |
+**Need별 filter + ordering keys** (전부 `desc`, 말단 `agent_id asc`로 결정론):
 
-**전역 tie-break 말단**: `score desc → maturity desc → freshness desc → agent_id`(결정론 보장). persona prior는 동일 score band 내 보조 조정만(hollow guard). `features` dict에 각 신호를 남겨 decision-log `feature_breakdown`으로 흘린다. need 의미의 source of truth는 directions §5.
+| need | filter | ordering keys |
+|---|---|---|
+| `depth` | — | `maturity_band` → `evidence_strength` → `freshness` → `agent_id` |
+| `experience` | — | `evidence_strength` → `freshness` → `maturity_band` → `agent_id` |
+| `for` | `same_axis ∧ dir=for ∧ stance_confidence ≥ τ` | `maturity_band` → `evidence_strength` → `freshness` → `stance_confidence` → `agent_id` |
+| `against` | `same_axis ∧ dir=against ∧ stance_confidence ≥ τ` | `maturity_band` → `evidence_strength` → `freshness` → `stance_confidence` → `agent_id` |
+| `coverage` | — | axis/source/cluster로 group → **round-robin** → (group 내) `maturity_band` → `evidence_strength` → `freshness` → `agent_id` |
 
-**Favorite / user-preference 신호 (Alpha: reserved — 소비 안 함).** 즐겨찾기는 **personalization 신호이지 expertise 근거가 아니다.** 따라서 `maturity`/`evidence_strength`/stance match 같은 핵심 feature보다 앞설 수 없고, **어떤 gate(topic/maturity/safety/discoverability)도 우회하지 못한다.** Alpha는 favorite을 **ranking score term으로 쓰지 않는다**(평가축이 흐려짐, §1 비범위). **Post-Open-Beta**에 승격하더라도 score 가산이 아니라 **bounded tie-break key**로만(위 전역 tie-break 말단의 `maturity`와 `freshness` 사이), 그것도 need별로 제한한다:
+- **for/against = expertise-primary.** wrong-axis/wrong-direction은 낮은 점수가 아니라 **후보집합 밖**(hard filter — orthogonal로 안 샘, spec §8.5). `stance_confidence`는 ① filter reliability guard(`≥ τ`) ② decision-log diagnostic ③ **late tie-break**의 3역할뿐 — extraction/측정 confidence가 전문성을 못 이기게 **1순위로 두지 않는다**. 값은 **edge(Memory) 제공**(§3.1 `stance_confidence` = directions §9.3 extraction_confidence)이고, for/against **방향 판정**(observed_stance vs `user_stance`)은 Discovery가 request-time에 derive한다(directions §9.3·§4.4) — edge가 need를 태깅하지 않는다.
+- **coverage = round-robin dedupe.** MMR/DPP는 Open Beta(spec §4.2). marginal-diversity는 선택순서 의존이라 정적 score가 아님.
+- **lexicographic은 weight를 없애지만 `maturity_band` 경계가 파라미터다** — band 안에서만 evidence가 compensate하므로 cutoff가 고-레버리지. **maturity_band boundaries are provisional config values — evaluation targets, ratcheted after Alpha eval**(spec §8.6). maturity gate threshold와 정렬.
+- ordering이 스칼라를 안 만드므로 **전역 tie-break = need ordering keys 자체**(말단 `agent_id`로 결정론 보장). persona prior는 동일 band 내 late 보조만(hollow guard). 각 신호는 raw로 decision-log `feature_breakdown`에 남긴다(§4.3). need 의미의 source of truth는 directions §5.
+
+**Favorite / user-preference 신호 (Alpha: reserved — 소비 안 함).** 즐겨찾기는 **personalization 신호이지 expertise 근거가 아니다.** 따라서 `maturity`/`evidence_strength`/stance match 같은 핵심 feature보다 앞설 수 없고, **어떤 gate(topic/maturity/safety/discoverability)도 우회하지 못한다.** Alpha는 favorite을 **ranking score term으로 쓰지 않는다**(평가축이 흐려짐, §1 비범위). **Post-Open-Beta**에 승격하더라도 score 가산이 아니라 **bounded tie-break key**로만(ordering keys 말단 — 전문성 키 뒤·`agent_id` 앞의 late tie-break), 그것도 need별로 제한한다:
 
 | need | favorite 사용 (Post-Open-Beta 승격 시) |
 |---|---|
@@ -341,18 +347,23 @@ class RecommendationPipeline:
   "grounding": { "resolved_qid": "Q...", "label": "...", "method": "rerank|top1",
                  "fallback_used": false, "considered": [{"qid":"Q..","score":0.9}] },
   "candidate_pool": [{ "agent_id": "...", "anchor_id": "Q...", "via": "direct|neighbor", "via_qid": null }],
-  "dropped": [{ "agent_id": "...", "reason": "maturity|eligibility|discoverable" }],
-  "ranked": [{ "agent_id": "...", "rank": 1, "score": 0.82,
-               "feature_breakdown": { "maturity": 0.9, "evidence_strength": 0.8, "freshness": 0.6 },
+  "dropped": [{ "agent_id": "...", "reason": "maturity|eligibility|discoverable|off_axis|wrong_stance|low_stance_confidence" }],
+  "ranked": [{ "agent_id": "...", "rank": 1, "passed_gate": true,
+               "need_filter": "same_axis_and_for",                          // for/against만; depth/experience/coverage는 null
+               "feature_breakdown": { "maturity": 0.73, "maturity_band": "high",   // raw 연속값 + derived band 병기
+                                      "evidence_strength": 0.81, "freshness": 0.62,
+                                      "stance_confidence": 0.69 },
+               "ordering_keys": ["maturity_band","evidence_strength","freshness","stance_confidence","agent_id"],  // 이 need의 lexicographic 정렬 키(§4.2)
                "stance": { "axis": "...", "dir": "for" } }],
   "reasons": [{ "agent_id": "...", "text": "...", "evidence_refs": ["msg:..."] }],
   "serving": { "silent": false, "reason": null, "returned": 5 },
-  "provider_versions": { "anchor": "memory-api@d8135bb", "edge": "mock@v0", "persona": "mock@v0", "eligibility": "mock@v0" },
+  "provider_versions": { "anchor": "memory-api@…", "edge": "mock@v0", "persona": "mock@v0", "eligibility": "mock@v0" },
+                       // ↑ local/eval 예시. substrate별로 값이 다름: 배포=unavailable@v0(real 미통합), eval=mock@v0, 통합후=memory-api@… (§2.5·§8.10)
   "ope": { "propensity": null, "action_set": ["..."], "reward_proxy": null }   // Alpha 비움, Open Beta OPE 자리(spec §7.5)
 }
 ```
 
-`provider_versions`로 mock→real 전환 전후 비교가 가능해진다(spec §8.10 substrate report). `ope` 블록은 Alpha에서 비우되 **존재**시켜, Open Beta에서 스키마 변경 없이 채운다.
+Alpha ranking은 가중합 스칼라를 만들지 않으므로 **`score` 필드 대신 `ordering_keys` + raw `feature_breakdown`을 남긴다**(§4.2 ordering contract). raw 연속값(`maturity`)과 derived `maturity_band`를 **둘 다** 기록해야 Post-OB에서 LTR/threshold tuning/error analysis가 band cutoff·weight를 역으로 fit할 수 있다(band만 남기면 정보 손실). `provider_versions`로 mock→real 전환 전후 비교가 가능해진다(spec §8.10 substrate report). `ope` 블록은 Alpha에서 비우되 **존재**시켜, Open Beta에서 스키마 변경 없이 채운다.
 
 ## 5. e3llm 통합
 
