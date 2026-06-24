@@ -720,7 +720,7 @@ global_score = 평균 만족도 + 평균 대화 길이 + 선택률
 
 후보 agent 자체의 안전성은 query DTO 하나로 표현할 수 없다. 후보별 safety/reliability는 candidate projection 또는 moderation-provided candidate verdict로 들어와야 하며, §5.2의 hard gate에서 per-candidate로 적용된다.
 
-Push에서 추천할지 침묵할지 결정하는 threshold는 query input으로 받지 않는다. `silence_threshold`는 Recommendation 단계의 serving policy로 두고, mode·Need·후보 점수·제품 정책에 따라 적용한다.
+Push에서 추천할지 침묵할지 결정하는 threshold는 query input으로 받지 않는다. `silence_threshold`는 Recommendation 단계의 serving policy로 두고, mode·Need·후보 품질 신호·ordering 결과·제품 정책에 따라 적용한다.
 
 ---
 

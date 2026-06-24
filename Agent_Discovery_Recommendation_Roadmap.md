@@ -338,7 +338,7 @@ observed stance는 agent-topic edge에서 **읽고**(edge는 Memory substrate이
 
 `topic_candidates`, `anchor_hint`, `axis_hint`는 Moderation/Runtime이 줄 수도 있고, Discovery가 anchor 해소 단계에서 만들 수도 있다. 둘 다 있으면 Discovery가 최종 anchor와 axis를 결정한다.
 
-Push에서 추천할지 침묵할지 결정하는 threshold는 input으로 받지 않는다. `silence_threshold`는 Recommendation 단계의 serving policy로 두고, mode·Need·후보 점수·제품 정책에 따라 적용한다.
+Push에서 추천할지 침묵할지 결정하는 threshold는 input으로 받지 않는다. `silence_threshold`는 Recommendation 단계의 serving policy로 두고, mode·Need·후보 품질 신호·ordering 결과·제품 정책에 따라 적용한다.
 
 safety / privacy 관련 verdict(후보 agent 안전성, 대화 맥락 안전성, 공개 권한 등)는 이 표에 포함하지 않는다. Alpha(내부/closed)에서는 inactive로 두고, 외부 공개(Open Beta) 시 hard gate로 활성화한다. query DTO 계약은 Alpha 동안 확정해 shadow mode로 검증한다. 결정해야 할 주제는 §11에 정리한다.
 
