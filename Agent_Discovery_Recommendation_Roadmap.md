@@ -410,11 +410,14 @@ safety / privacy verdict의 lifecycle은 해당 기능을 도입하는 시점에
 | 10 | Orthogonal recommendation (조건부) | established/inherited_established axis 한정, 부족하면 fallback |
 | 11 | Feedback logging 확대 + Need별 평가 | push impression/dismiss/accept, funnel, threshold 튜닝 |
 
+> **Open Beta 후보 항목 (bourbon-api 신호 존재 시):** negative preference — `hidden`/`muted`(do-not-show serving suppression), `dismissed_recently`(Push fatigue/silence). positive favorite tie-break은 Post-Open-Beta(stage 13). favorite/preference는 expertise·gate를 우회하지 않는다.
+
 **Post-Open-Beta**
 
 | 단계 | 산출물 | 목표 |
 | --- | --- | --- |
 | 12 | 고도화 track | memory impact, validated contribution, reputation, embedding/learning-to-rank 고도화 |
+| 13 | positive favorite 반영 | favorite을 bounded tie-break(깊이/경험/강화, 대립/직교 제외). 출처: `bourbon-api`. expertise/gate 우회·단일 popularity score 금지 |
 
 ---
 
