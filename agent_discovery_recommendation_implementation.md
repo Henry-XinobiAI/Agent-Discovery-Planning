@@ -154,7 +154,7 @@ list 라우트(`entities`/`suggest`/`articles`)는 `Page[T]={items,limit,truncat
 
 - **`GET /knowledge/entities?q=…` → `Page[EntitySummary]`** (`.items` 언랩); 각 `EntitySummary`: `qid`, `source`, `label`, `description`, `importance`, `pageview`, `pagerank`, `sitelink_count`, `categories`, `instance_of`, `abstract`.
 - **`GET /knowledge/entities/suggest?q=…` → `Page[EntitySuggestion]`** (`.items` 언랩); 각 `EntitySuggestion`: `qid`, `source`, `label`, `description` (display/ranking 신호 생략 — typeahead용 경량).
-- **`GET /knowledge/entities/{qid}` → `Entity`**: `qid`, `source`, `label`, `labels`, `description`, `aliases`, `instance_of`, `subclass_of`, `sitelink_count`, `sitelinks`, `pageview`, `pagerank`, `importance`, `categories`, `linked_qids`, `abstract`, `fetched_at`.
+- **`GET /knowledge/entities/{qid}` → `Entity`**: `qid`, `source`, `label`, `labels`, `description`, `aliases`, `instance_of`, `subclass_of`, `occupations`, `sitelink_count`, `sitelinks`, `pageview`, `pagerank`, `importance`, `categories`, `linked_qids`, `abstract`, `fetched_at`. (`occupations`는 P106·people-only로 `EntitySummary`엔 없고 detail `Entity`에만 있다; memory-api `positioning.py`가 `instance_of`와 함께 broader positioning seed로 쓴다 — Alpha 미사용이나 향후 axis/coverage 신호 후보.)
 - **`GET /knowledge/entities/{qid}/connections` → `EntityConnections`**: `center`, `broader`, `narrower`, `links_out`, `links_in`, `limit`, `truncated`; 각 node는 `EntitySummary`.
 - **`GET /knowledge/articles?q=…` → `Page[ArticleHit]`** (`.items` 언랩); 각 `ArticleHit`: `chunk_id`, `qid`, `title`, `lang`, `section_path`, `ordinal`, `text`.
 

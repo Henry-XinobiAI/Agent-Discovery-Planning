@@ -56,7 +56,7 @@ bourbon-agent-recommendation-api/
 ├── discovery/                     ✓ 도메인 패키지 (module/→discovery/ 개명 완료)
 │   ├── echo/                      ⌫ 현재 템플릿 잔재 — 제거
 │   ├── utils/                       (elapsed_timer·sentry, 템플릿 것 유지)
-│   ├── config.py                  ★ EnvSettings 서브클래스 (MemoryApiSettings, LlmSettings, RankingSettings[§4.2 임계], …)
+│   ├── config.py                  ★ EnvSettings 서브클래스 (MemoryApiSettings, LlmSettings, RankingSettings[§4.2 임계], LinkerSettings[§4① grounding 임계], …)
 │   ├── llm.py                     ★ e3llm 래퍼 (get_orchestrator / invoke_structured)
 │   ├── log_config.py                (템플릿 것 유지)
 │   ├── structs/
@@ -69,7 +69,7 @@ bourbon-agent-recommendation-api/
 │   ├── providers/                   ← shipped 런타임 경계만 (mock은 eval/에, 아래 주석)
 │   │   ├── base.py                ★ 4개 Protocol (Knowledge/Edge/Persona/Eligibility)
 │   │   ├── entity_http.py         ★ HttpKnowledgeEntityProvider [real] (memory-api /knowledge/entities httpx, Page unwrap)
-│   │   └── unavailable.py         ★ Unavailable{Edge,Persona,Eligibility}Provider — real 미통합 시 default(raise→503)
+│   │   └── unavailable.py         ★ Unavailable{Edge,Eligibility}Provider(호출 시 raise→503) + NullPersonaProvider(get_prior→None) — real 미통합 시 배포 default (edge/elig=hard, persona=degradable, §3)
 │   ├── linker/linker.py           ★ 모듈1: topic→QID 2-tier (anchor search + LLM rerank)
 │   ├── retrieval/retrieval.py     ★ 모듈2: QID→edges + sparse 이웃 확장
 │   ├── gate/gate.py               ★ 모듈3: maturity/eligibility 필터
@@ -85,9 +85,9 @@ bourbon-agent-recommendation-api/
 │   │   ├── persona.py             ·  MockPersonaProvider
 │   │   └── eligibility.py         ·  MockEligibilityProvider
 │   ├── corpus/                    ★ regression benchmark 본체 = git 추적 (§8.5)
-│   │   ├── structs.py             ·  Scenario/GoldLabel + Stratum/GoldLabelClass/GoldSource enum (§8.6)
+│   │   ├── structs.py             ·  Scenario/GoldLabel/PinnedAnchorFixture + Stratum/GoldLabelClass/GoldSource enum (§8.6·§8.7)
 │   │   ├── fixtures/
-│   │   │   ├── anchors.json        ·  pinned anchor fixture = eval/CI offline anchor substrate (search/detail/connections 정보 포함, §9)
+│   │   │   ├── anchors.json        ·  pinned anchor fixture = eval/CI offline anchor substrate (PinnedAnchorFixture schema §8.7; search/detail/connections 포함, §9)
 │   │   │   ├── agents.json         ·  합성 agent
 │   │   │   ├── edges.json          ·  합성 agent-topic edge (real QID grounding)
 │   │   │   └── scenarios.json      ·  need별 시나리오 질의 (Scenario, §8.6)
@@ -187,7 +187,7 @@ class HttpKnowledgeEntityProvider:
 
 > **provider 와이어링 규칙 (배포 경계).** **배포 앱**(`api/depends/pipeline.py`)은 **real provider만** 와이어링하고 `eval/`을 import하지 않는다 — 배포본 serving 경로에 mock import가 0이어야 한다. **mock 합성**은 `cli/recommend.py`(로컬 디버그)·`cli/eval.py`·`eval/harness.py`·tests에서만 일어난다(real anchor + `eval/providers/`의 mock edge/persona/eligibility). 이로써 §7 mock-first 개발/튜닝은 로컬·eval에서 돌리고, 배포본은 real 계약에만 묶인다(통합 = real 채워짐).
 >
-> **Alpha 배포본의 real provider 공백 처리.** Alpha 시점엔 edge/persona/eligibility의 real 구현이 아직 없다(Memory/Persona 미통합). 배포 앱은 mock으로 fallback하지 않고, real-slot에 **shipped `Unavailable{Edge,Persona,Eligibility}Provider`** 를 와이어링한다 — 이들은 호출 시 `upstream_unavailable`(503)을 던진다. 결과: 배포 `/recommend`는 **anchor grounding(real)까지는 동작**하고, edge에 의존하는 후보 생성/랭킹 단계에서 **503을 정직하게 반환**한다(가짜 후보 ❌). real edge/persona가 통합되면 `Unavailable*`를 real 구현으로 교체(= §7.6 통합). 즉 "후보를 돌려준다"는 **로컬/eval/test(override)** 에서 검증되고, 배포 serving의 후보 경로 활성화는 real 통합 시점이다.
+> **Alpha 배포본의 real provider 공백 처리.** Alpha 시점엔 edge/persona/eligibility의 real 구현이 아직 없다(Memory/Persona 미통합). 배포 앱은 mock으로 fallback하지 않고, real-slot에 **shipped default**를 와이어링한다: `edge`·`eligibility`는 **`Unavailable{Edge,Eligibility}Provider`**(호출 시 `upstream_unavailable` 503), `persona`는 **`NullPersonaProvider`**(`get_prior`→`None`). 결과: 배포 `/recommend`는 **anchor grounding(real)까지는 동작**하고, edge에 의존하는 후보 생성/랭킹 단계에서 **503을 정직하게 반환**한다(가짜 후보 ❌). 이 default들은 real이 통합되면 real 구현으로 교체(= §7.6 통합). 즉 "후보를 돌려준다"는 **로컬/eval/test(override)** 에서 검증되고, 배포 serving의 후보 경로 활성화는 real 통합 시점이다. **provider 필수성 구분(부분 통합 대비)**: `edge`·`eligibility`는 **hard-required**(없으면 후보·게이트가 성립 안 함 → `Unavailable*`가 503), `persona`는 **optional/degradable**(`get_prior`가 `PersonaPrior \| None`, ranking에선 동일 band 내 late 보조뿐 — hollow guard). 따라서 **`UnavailablePersonaProvider`는 만들지 않는다** — persona 공백은 배포 default부터 `NullPersonaProvider`(`None`)로 degrade하므로 persona 부재가 503을 유발하지 않는다(edge만 먼저 통합되는 부분 통합에서도 동일).
 >
 > **Reserved (Alpha 미구현) — `UserPreferenceProvider`.** favorite/hidden/muted/dismissed는 `bourbon-api` 출처의 **user→agent preference 신호**(Memory/Persona와 소유가 다름). Alpha에서는 코드 Protocol·`Unavailable*` provider를 만들지 않고 **문서 레벨 integration point만 예약**한다. positive favorite은 **Post-Open-Beta** tie-break, negative preference는 **Open Beta 후보 항목**(serving suppression). 상세: directions §9.7, §4.2.
 
@@ -201,7 +201,23 @@ mock fixture를 만들 때 필드 해석이 열리지 않도록 핵심 struct의
 
 > **similarity need 결정**: directions/Roadmap에는 `similarity`가 남아 있으나, **Alpha API `NeedType`은 위 5종으로 시작하고 `similarity`는 Persona real contract(+embedding) 이후로 미룬다.** Alpha는 mock persona라 similarity를 지금 넣으면 순환이 된다(spec §4·§5 when-needed). 포함 결정이 뒤집히면 §3.1·§4.1·§4.2·§8.1·Phase 6/7의 need 5종을 6종으로 일괄 변경한다.
 
-**`UserStanceRef`** (내부 normalized, for/against용) — API는 `user_stance_ref: str`로 받지만 **pipeline 진입 전 request normalizer**(별도 입력 정규화 단계, linker와 분리 — linker는 topic→QID 책임만)가 `UserStanceRef{ axis: str, dir: Stance, text: str \| None }`로 normalize한다. stance 분류(§4.2)·stance 지표(spec §8.5)·테스트는 모두 이 normalized 구조를 기준으로 하므로 문자열 파싱 ambiguity가 pipeline 안으로 새지 않는다. (`NormalizedQuery`는 raw `Query`를 normalize한 결과 — `topic_text`/`need_type`/`lang`/`limit` + `user_stance: UserStanceRef \| None`.)
+**`UserStanceRef`** (내부 normalized, for/against용) — `axis: str` · `dir: Stance` · `text: str \| None = None` · **`confidence: float \| None = None`**(forward-compat: 보수적 Alpha의 결정론 파싱에선 `None`, Phase 8 free-form LLM normalize가 채움). API는 `user_stance_ref: str`로 받지만 **pipeline 진입 전 request normalizer**(별도 입력 정규화 단계, linker와 분리 — linker는 topic→QID 책임만)가 이 구조로 normalize한다. stance 분류(§4.2)·stance 지표(spec §8.5)·테스트는 모두 이 normalized 구조를 기준으로 하므로 문자열 파싱 ambiguity가 pipeline 안으로 새지 않는다.
+
+> **`UserStanceRef.confidence` ≠ `AgentTopicEdge.stance_confidence`.** 전자는 **질의측** stance 파싱 신뢰도(Alpha=`None`), 후자는 **agent측** observed_stance 추출 신뢰도(= directions §9.3 extraction_confidence, edge/Memory 제공). 이름이 비슷하나 소유·의미가 다르다 — 혼동 금지.
+
+**Alpha 입력 문법 (보수적 — free-form은 Phase 8 LLM normalize로).** Alpha의 `user_stance_ref` 문자열은 작게 고정된 semi-structured 문법만 받는다:
+
+```
+axis=<text>; dir=<for|against|neutral>; text=<optional text>
+```
+
+파싱 규칙(Phase 1 normalizer 테스트가 검증):
+- `axis`·`dir` **필수**, `text` optional.
+- **unknown key → invalid**, `dir` 값이 `Stance` enum 밖 → invalid.
+- need=for/against인데 parse 실패(필수 키 누락·invalid) → **`invalid_need` 422**.
+- need=depth/experience/coverage에서 `user_stance_ref`가 와도 **reject하지 않고 ignore + decision-log에 기록(log-only)** — 클라이언트가 공통 payload를 보낼 수 있으므로 불필요한 stance에 422를 내지 않는다(API를 까다롭게 만들지 않음).
+
+(`NormalizedQuery`는 raw `Query`를 normalize한 결과 — `topic_text`/`need_type`/`lang`/`limit` + `user_stance: UserStanceRef \| None`.)
 
 **`EntityCandidate`** (linker 내부, 모듈① candidate generation의 정규화 타입) — `search_candidates`(→`EntitySummary`)와 `suggest`(→`EntitySuggestion`)는 응답 타입이 다르므로, qid merge 후 **하나의 후보 타입으로 정규화**해 LLM rerank 입력을 닫는다: `qid: str` · `label: str` · `description: str\|None` · `summary: EntitySummary\|None` · `suggestion: EntitySuggestion\|None` · `sources: tuple[Literal["search","suggest"], ...]`(정렬·중복 제거된 provenance — 순서/중복이 의미 없고 결정론적이라 list 대신 tuple). **merge 정책**: 같은 `qid`면 `EntitySummary`(`summary`)를 우선 보존하고 `sources=("search","suggest")`로 provenance를 남긴다. **suggest-only 후보는 rerank 후보에는 포함**하되 `importance`/`pageview`류 ranking·display 신호가 없으므로 그 feature는 **absent로 취급**(disambiguation prior에서 결측 처리). 이 타입은 linker 안에서만 살고 pipeline 밖으로는 최종 QID만 나간다.
 
@@ -259,7 +275,7 @@ class RecommendationPipeline:
 ```
 
 - **⓪  Request normalizer**: raw `Query`(API `RecommendRequest`) → `NormalizedQuery`. `user_stance_ref: str`를 `UserStanceRef{axis,dir,text}`로 파싱·정규화(§3.1). **linker와 분리** — 입력 정규화는 여기서, topic→QID는 ①에서. 문자열 파싱 ambiguity가 pipeline 안으로 안 샌다.
-- **①  Linker (2-tier, spec §4.1)**: candidate generation = `search_candidates`(`/knowledge/entities` full-text) **∪ `suggest`(`/knowledge/entities/suggest` prefix/alias) — qid로 merge·dedupe해 `EntityCandidate`(§3.1)로 정규화**(한국어 topic/alias recall 보강; 복잡도 작음) → 후보가 모호/희박하면 `expand_connections`로 이웃 anchor 확장 → LLM rerank로 최종 QID 선택. **topic→QID 책임만 진다**(stance 파싱 아님). LLM은 후보 위 재정렬만(`invoke_structured`로 구조화 출력). 단독 QID 생성 금지.
+- **①  Linker (2-tier, spec §4.1)**: candidate generation = `search_candidates`(`/knowledge/entities` full-text) **∪ `suggest`(`/knowledge/entities/suggest` prefix/alias) — qid로 merge·dedupe해 `EntityCandidate`(§3.1)로 정규화**(한국어 topic/alias recall 보강; 복잡도 작음) → 후보가 모호/희박하면 `expand_connections`로 이웃 anchor 확장 → LLM rerank로 최종 QID 선택. **topic→QID 책임만 진다**(stance 파싱 아님). LLM은 후보 위 재정렬만(`invoke_structured`로 구조화 출력). 단독 QID 생성 금지. **채택 게이트**(memory-api `Grounder` 선례 차용, personal-build-pipeline §STEP4): `confidence ≥ LINKER_CONF_MIN ∧ margin ≥ LINKER_MARGIN_MIN`이라야 그 QID를 채택, 미달이면 `grounding_failed`(§4.1). **margin 정의는 linker rerank 후보셋 기준** — 후보 1개면 `1.0`, 여러 개면 `top1_confidence − top2_confidence`(memory-api 문서의 "여러 개면 confidence 자체"와 달리 top1/top2 차가 disambiguation엔 더 직관적). seed: `LINKER_CONF_MIN=0.50`, `LINKER_MARGIN_MIN=0.15`(§2 `LinkerSettings`, provisional·ratchet 대상).
 - **②  Retrieval**: `edges.get_edges(qid)`. sparse면 `expand_connections` 이웃 QID들로 풀 확장(이웃 확장은 real).
 - **③  Gate**: maturity 임계 + `eligibility.check`(discoverable). safety/privacy는 Alpha inactive(directions §11).
 - **④  Ranking**: need별 ordering(§4.2 — filter + lexicographic keys, scalar score 없음) + `persona.get_prior`(persona prior는 maturity를 못 채움 — hollow guard, spec §10) + stance 분류(for/against).
@@ -276,7 +292,7 @@ class RecommendationPipeline:
 |---|---|---|---|---|
 | `topic_text` | `str` | ✓ | — | grounding할 주제 텍스트 |
 | `need_type` | `NeedType` | ✓ | — | depth/experience/for/against/coverage |
-| `user_stance_ref` | `str \| None` |  | `null` | for/against의 기준 입장. need=for/against에서만 필수(검증). **request normalizer가 `UserStanceRef{axis,dir,text}`로 normalize 후 pipeline 전달**(§3.1) |
+| `user_stance_ref` | `str \| None` |  | `null` | for/against의 기준 입장. semi-structured 문법 `axis=…; dir=…; text=…`(§3.1). need=for/against에서 parse 실패 시 `invalid_need`; depth/experience/coverage에선 와도 ignore+log-only(§3.1). **request normalizer가 `UserStanceRef`로 normalize 후 pipeline 전달** |
 | `lang` | `str \| None` |  | `"ko"` | linker 언어 힌트 |
 | `limit` | `int` |  | `10` | 반환 후보 상한(1–50) |
 | `context` | `Mapping[str,Any] \| None` |  | `null` | eligibility용 호출 맥락 |
@@ -303,9 +319,9 @@ class RecommendationPipeline:
 
 | code | status | 발생 |
 |---|---|---|
-| `grounding_failed` | 422 | **anchor grounding 후보 0** 또는 신뢰도 미달(topic→QID 자체 실패) |
+| `grounding_failed` | 422 | **anchor grounding 후보 0** 또는 채택 게이트 미달(`confidence < LINKER_CONF_MIN` ∨ `margin < LINKER_MARGIN_MIN`, §4 ①) — topic→QID 자체 실패 |
 | `invalid_need` | 422 | need=for/against인데 `user_stance_ref` 없음 (pydantic+model_validator) |
-| `upstream_unavailable` | 503 | memory-api anchor 호출 실패, **또는 edge/persona/eligibility real 미통합**(배포 앱의 `Unavailable*` provider, §3) |
+| `upstream_unavailable` | 503 | memory-api anchor 호출 실패, **또는 edge/eligibility real 미통합**(배포 앱의 `Unavailable{Edge,Eligibility}Provider`, §3). persona 부재는 503 아님(`NullPersonaProvider`→`None`) |
 
 **두 종류의 "0"을 구분한다(오독 방지):**
 - **anchor grounding 후보 0** (topic을 QID로 못 풀음) → `grounding_failed` **422 에러**. grounding은 모든 후속 단계의 전제라, 실패하면 추천 자체가 성립 안 함.
@@ -329,7 +345,7 @@ class RecommendationPipeline:
 
 - **for/against = expertise-primary.** wrong-axis/wrong-direction은 낮은 점수가 아니라 **후보집합 밖**(hard filter — orthogonal로 안 샘, spec §8.5). `stance_confidence`는 ① filter reliability guard(`≥ τ`) ② decision-log diagnostic ③ **late tie-break**의 3역할뿐 — extraction/측정 confidence가 전문성을 못 이기게 **1순위로 두지 않는다**. 값은 **edge(Memory) 제공**(§3.1 `stance_confidence` = directions §9.3 extraction_confidence)이고, for/against **방향 판정**(observed_stance vs `user_stance`)은 Discovery가 request-time에 derive한다(directions §9.3·§4.4) — edge가 need를 태깅하지 않는다.
 - **coverage = round-robin dedupe.** MMR/DPP는 Open Beta(spec §4.2). marginal-diversity는 선택순서 의존이라 정적 score가 아님.
-- **lexicographic은 weight를 없애지만 임계는 여전히 파라미터다** — `maturity_band` cutoff는 band 안에서만 evidence가 compensate하므로 고-레버리지. ranking 임계 셋은 **`discovery/config.py`의 `RankingSettings`(provisional 상수, eval-ratchet 대상, spec §8.6)** 에 모은다: `MATURITY_MIN`, `STANCE_CONFIDENCE_MIN`(= `τ`, for/against guard), `MATURITY_BAND_CUTOFFS`(high/medium/low 경계). 전부 Alpha 기본값일 뿐 학습값 아니며, decision-log raw feature로 Post-OB에서 재튜닝한다(§4.3).
+- **lexicographic은 weight를 없애지만 임계는 여전히 파라미터다** — `maturity_band` cutoff는 band 안에서만 evidence가 compensate하므로 고-레버리지. ranking 임계 셋은 **`discovery/config.py`의 `RankingSettings`(provisional 상수, eval-ratchet 대상, spec §8.6)** 에 모은다. **Alpha seed(학습값 아님 · ratchet 대상)**: `MATURITY_MIN=0.45`, `STANCE_CONFIDENCE_MIN=0.60`(= `τ`, for/against guard), `MATURITY_BAND_CUTOFFS={high≥0.75, medium≥0.50, low<0.50}`. **`MATURITY_MIN(0.45) < medium(0.50)`은 의도**다 — gate는 "rankable 최소 자격"만 보고(그래서 low band 후보도 통과 가능), band는 통과한 후보를 정렬한다(gate ↔ ordering 책임 분리). 전부 Alpha 기본값일 뿐 학습값 아니며, decision-log raw feature로 Post-OB에서 재튜닝한다(§4.3).
 - **gate floor = 단일 `MATURITY_MIN`** (need별 분리 안 함). gate는 "최소 후보 자격"만 판단하고 **need 차이는 ordering에서 표현**한다(gate/ranking 책임 분리) — need별 floor(directions `floor_need`)를 지금부터 두면 또 다른 임의 파라미터가 된다. *Alpha v0 uses a single `MATURITY_MIN`; need-specific floors are deferred until eval shows clear need-specific failure modes.* **전환 트리거**: depth가 false-pass인데 experience가 false-block이면 그때 `MATURITY_MIN` → `MATURITY_MIN_BY_NEED`(`dict[NeedType,float]`)로 분리(directions §10).
 - ordering이 스칼라를 안 만드므로 **전역 tie-break = need ordering keys 자체**(말단 `agent_id`로 결정론 보장). persona prior는 동일 band 내 late 보조만(hollow guard). 각 신호는 raw로 decision-log `feature_breakdown`에 남긴다(§4.3). need 의미의 source of truth는 directions §5.
 
@@ -425,11 +441,11 @@ Alpha ranking은 가중합 스칼라를 만들지 않으므로 **`score` 필드 
 각 Phase는 독립 PR 단위. **acceptance**를 못 넘으면 다음으로 안 간다(CLAUDE.md 검증 우선).
 
 - **Phase 0 — Scaffold 정렬**: ~~`module/`→`discovery/` 개명~~ **(현재 기준 완료)**. 남은 작업: echo 제거(`discovery/echo/`·`api/routers/echo/`·`cli/echo.py`·관련 test), `e3llm` vendor(rsync) + deps(`google-genai`·`openai` 추가), `.env.example`에 `MEMORY_API_BASE_URL`/`GOOGLE_CLOUD_*` 추가, `discovery/config.py`(EnvSettings 서브클래스)·`discovery/llm.py` 골격, `cli`에서 echo 제거. *acceptance*: `pre-commit run --all-files`·`pytest` green(echo 제거로 깨지는 test 정리 포함).
-- **Phase 1 — 계약 동결**: `discovery/structs/*` + `providers/base.py` Protocol + **`providers/unavailable.py`(`Unavailable*` — Protocol과 한 몸으로 지금 정의해 Phase 5는 와이어링만)**. entity read model 5종(`EntitySummary`/`Entity`/`EntitySuggestion`/`EntityConnections`/`ArticleHit`) + `Page[T]` envelope을 spec §2.6에 1:1 맞춤. `Query`/`NormalizedQuery`/`Recommendation` + `UserStanceRef`(§3.1) + linker 내부 `EntityCandidate`(§3) 정의. *acceptance*: `pre-commit run --all-files`(ruff+mypy) 통과, struct round-trip 테스트, **`Query`→`NormalizedQuery` normalizer 테스트**(raw `user_stance_ref` 문자열 → `UserStanceRef{axis,dir,text}` 파싱, need=for/against 누락 시 `invalid_need`, 정상/엣지 케이스), `Unavailable*` 호출 시 `upstream_unavailable` raise 단위 테스트.
+- **Phase 1 — 계약 동결**: `discovery/structs/*` + `providers/base.py` Protocol + **`providers/unavailable.py`(`Unavailable{Edge,Eligibility}Provider` + `NullPersonaProvider` — Protocol과 한 몸으로 지금 정의해 Phase 5는 와이어링만)**. entity read model 5종(`EntitySummary`/`Entity`/`EntitySuggestion`/`EntityConnections`/`ArticleHit`) + `Page[T]` envelope을 spec §2.6에 1:1 맞춤. `Query`/`NormalizedQuery`/`Recommendation` + `UserStanceRef`(§3.1) + linker 내부 `EntityCandidate`(§3) 정의. *acceptance*: `pre-commit run --all-files`(ruff+mypy) 통과, struct round-trip 테스트, **`Query`→`NormalizedQuery` normalizer 테스트**(§3.1 문법) — parse 실패 케이스를 명시 커버: `missing axis` / `missing dir` / `invalid dir`(enum 밖) / `unknown key` / `duplicated key` / `malformed segment` → for·against는 `invalid_need` 422; **need=depth/experience/coverage + user_stance_ref → no error + decision-log에 raw 보존(log-only)**; 정상 입력 round-trip. 그리고 `UnavailableEdge/EligibilityProvider` 호출 시 `upstream_unavailable` raise + `NullPersonaProvider.get_prior`→`None` 단위 테스트.
 - **Phase 2 — Real anchor grounding**: `HttpKnowledgeEntityProvider`(`/knowledge/entities`, Page unwrap) + 최소 linker(LLM 없이 top-1). **provider/client lifecycle을 lifespan에 박는다**: startup에서 `await HttpKnowledgeEntityProvider.create()`로 **httpx client를 1번 생성**해 `app.state`에 붙이고(request마다 재생성 금지·pool/keep-alive 재사용), **shutdown에서 `await provider.aclose()`로 닫는다**(누수 방지). *acceptance*: 실제 memory-api(live; 오프라인 결정론 substrate인 pinned `anchors.json`은 Phase 6 이후)로 topic→QID가 도는 integration 테스트 + **startup create / shutdown close 호출 검증** + **여러 request가 동일 client 인스턴스를 재사용하는지 검증**(request마다 새 client 생성 안 됨, TestClient lifespan context).
 - **Phase 3 — Mock providers + 코퍼스 로더**: `eval/providers/{edge,persona,eligibility}.py`(discovery Protocol 구현) + JSON fixture 스키마. *acceptance*: fixture 로드→`get_edges` 조회 단위 테스트, **배포 앱 import 그래프에 `eval/` 미포함 검증**(serving 경로 mock-free).
 - **Phase 4 — Pipeline 1→6**: retrieval·gate·ranking(ordering, §4.2)·serving·decision-log. stance/LLM rerank는 symbolic/stub 먼저. *acceptance*: mock 위에서 `recommend(query)`가 끝까지 도는 단위 테스트 + decision-log 생성.
-- **Phase 5 — API + CLI recommend**: `POST /recommend` + `uv run python -m cli recommend …`. 배포 앱은 real provider만 와이어링하고, edge/persona/eligibility는 real 미통합이라 `Unavailable*` provider로 채운다(§3). *acceptance*: (a) **배포 와이어링** — `/recommend`가 anchor grounding까지 동작하고 edge 의존 단계에서 **503 `upstream_unavailable`** 반환(가짜 후보 ❌); (b) **full path** — TestClient `dependency_overrides`로 `eval/providers/` mock 주입 시 후보까지 end-to-end 동작(override는 test scope만). template `tests/integration` 패턴.
+- **Phase 5 — API + CLI recommend**: `POST /recommend` + `uv run python -m cli recommend …`. 배포 앱은 real provider만 와이어링하고, real 미통합인 edge/eligibility는 `Unavailable*`로, persona는 `NullPersonaProvider`로 채운다(§3). *acceptance*: (a) **배포 와이어링** — `/recommend`가 anchor grounding까지 동작하고 edge 의존 단계에서 **503 `upstream_unavailable`** 반환(가짜 후보 ❌); (b) **full path** — TestClient `dependency_overrides`로 `eval/providers/` mock 주입 시 후보까지 end-to-end 동작(override는 test scope만). template `tests/integration` 패턴.
 - **Phase 6 — 평가 코퍼스 빌더**: §8의 생성 전략 구현(real QID grounding·strata·needle·가드 역산·gold label). **real memory-api 의존을 빌드 시점으로 격리**: `corpus build-anchors`만 live memory-api를 호출해 anchor를 **선별·고정(`anchors.json`)하는 수동/갱신 전용** 명령이고, search/detail/connections에 필요한 정보를 `anchors.json`에 함께 저장한다(= offline anchor substrate). `corpus build`(agent/edge/scenario/gold 합성)와 이후 `eval run`은 **pinned `anchors.json`만** 읽고 live 호출하지 않는다 → eval/CI는 네트워크 없이 결정론. *acceptance (green 최소 조건, 전부 통과해야 함)*:
   - 모든 코퍼스 JSON이 struct로 **schema-validate** 통과 — edge/agent/persona는 §3.1, scenario/gold는 §8.6(`Scenario`/`GoldLabel`) (깨지면 fail).
   - 모든 `edge.anchor_id`가 pinned `anchors.json`으로 **QID replay 성공**(실재 QID 아니면 fail).
@@ -456,7 +472,7 @@ Phase 0–5 = "경로가 돈다", 6–8 = "평가가 돈다", 9 = "회귀가 잠
 - **Pydantic v2 strict** — 도메인은 `StrictBaseModel`, API는 `ApiModel(extra=forbid)`. enum은 `Field(strict=False)`(memory-api 규칙).
 - **async 일관** — 모든 I/O(httpx, LLM) async. 팩토리는 `async def create`. keyword-only 인자.
 - **`from __future__ import annotations`** 전 모듈. PEP 604 union(`str | None`), `list[...]`.
-- **LLM은 래퍼 뒤에만** — `discovery/llm.invoke_structured` 외부에서 e3llm 직접 호출 금지(테스트 주입성·replace 대비).
+- **LLM은 래퍼 뒤에만** — `discovery/llm.invoke_structured` 외부에서 e3llm 직접 호출 금지(테스트 주입성·replace 대비). LLM 호출 3곳(linker rerank·stance·B2 judge)은 memory-api 추출 패턴을 따른다: **structured output**(Pydantic schema 강제, `pydantic_response_format` 대응) + **dual-model**(lenient mirror로 받아 strict 도메인 모델로 재검증, malformed 1건은 fatal 아니라 drop+warning — coldbrew, memory-api `extract.py`).
 - **over-engineering 금지** — Postgres/graph/vector/LTR/framework는 spec §5 when-needed. Alpha는 in-memory mock + structured 조회로 충분.
 - **결정론** — eval 코퍼스 빌더는 seed 고정(재현). LLM 사용 지점은 항상 fake로 대체 가능.
 
@@ -552,6 +568,35 @@ scenario·gold도 도메인 struct처럼 필드를 못 박는다 — Phase 6 `sc
 | `source` | `GoldSource` | `b1_human`/`b2_silver`/`synthetic` — **B1/B2/synthetic 분리를 코드로 강제**(§8.4); 품질 주장은 `b1_human`만 |
 
 eval enum 추가: `Stratum`(easy/guard/hard/ambiguous) · `GoldLabelClass`(ideal/acceptable/bad/must_not_show) · `GoldSource`(b1_human/b2_silver/synthetic). 전부 `StrEnum`.
+
+### 8.7 `anchors.json` 최소 schema (`PinnedAnchorFixture`)
+
+offline anchor substrate(§6 Phase 6·§9)의 모양을 못 박는다 — Phase 6 `schema-validate`의 대상이자, real memory-api 계약과의 drift를 잡는 지점. `eval/corpus/structs.py`의 pydantic 모델(`StrictBaseModel`)이고, **중첩 타입은 우리가 미러한 entity read model**(`discovery/structs/entity.py`의 `EntitySummary`/`Entity`/`EntitySuggestion`/`EntityConnections`/`ArticleHit`)을 그대로 쓴다. memory-api `tests/routers/knowledge/test_examples.py`의 검증 패턴(예시 payload를 실제 모델로 `model_validate`)을 가져와, `anchors.json`을 `PinnedAnchorFixture`로 load-time validate한다(§10 계약 테스트 겸함).
+
+```jsonc
+{
+  "contract": {                                  // → decision-log provider_versions.anchor · §8.10 substrate report
+    "memory_api_commit": "9784b7e",
+    "entity_contract": "knowledge-entity@v0",
+    "generated_at": "2026-..Z"                    // 빌더 주입(Date.now 금지 규칙과 무관, 런타임 주입)
+  },
+  "queries": [
+    { "query_id": "aq_01",                        // fixture-내부 안정 핸들(scenario가 문자열 대신 이걸 참조 → query 변경에 안전)
+      "query": "인공지능", "limit": 20,
+      "search":  [ /* EntitySummary[]   — Page.items 언랩 후 */ ],
+      "suggest": [ /* EntitySuggestion[] — Page.items 언랩 후 */ ],
+      "expected_qid": "Q11660" }
+  ],
+  "entities":    { "Q11660": { /* Entity (detail) */ } },          // → get(qid)
+  "connections": { "Q11660": { /* EntityConnections */ } },        // → expand_connections(qid)
+  "articles":    { "Q11660": [ /* ArticleHit[] */ ] }              // → search_articles (Alpha 후보경로 미사용 → optional)
+}
+```
+
+설계 결정:
+- **raw `Page` 저장 ❌, unwrap된 list로 저장** — Protocol 메서드가 이미 `list[…]`를 반환하고 `.items` 언랩은 real provider 책임이라(§3), fixture에 envelope을 넣으면 mock도 언랩을 중복 구현하게 된다. `Page.limit/truncated`는 오프라인 grounding eval 미사용(의도적 scope cut).
+- **블록 ↔ Protocol 매핑**: `queries[].search/suggest`(키 = `(query, limit)`) → `search_candidates`/`suggest` · `entities` → `get` · `connections` → `expand_connections` · `articles` → `search_articles`. pinned provider의 런타임 조회 키는 `NormalizedQuery`가 넘기는 **`query` 문자열**(provider는 `text`만 받음); `query_id`는 fixture 무결성·scenario 교차참조용 안정 핸들이다(런타임 조회 키 아님).
+- **provenance**: `contract.memory_api_commit`/`entity_contract`가 substrate별 비교(mock↔real, §4.3 `provider_versions`)의 기준이 된다.
 
 ## 9. Eval 하니스 & CLI
 
