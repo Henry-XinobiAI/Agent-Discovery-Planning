@@ -6,7 +6,7 @@
 
 ## 0. 이 계획이 따르는 기준 (확정 사실)
 
-세 레포를 직접 확인한 결과 (base: 2026-06-23, memory-api 계약: 2026-06-24 재확인 — `8ffcec8` entity rename):
+세 레포를 직접 확인한 결과 (base: 2026-06-23, memory-api 계약: **2026-06-26 재확인 — main `bb4102b`**; entity rename은 `8ffcec8`에서 도입, 이후 main 변경분(`#27`–`#30` 등)은 personal KG/webapp 위주로 **public entity 계약은 동일**. WIP 브랜치 `worktree-personal-kg-context-band`도 personal KG 한정 — §11 메모):
 
 | 사실 | 출처 | 계획에의 영향 |
 |---|---|---|
@@ -15,7 +15,7 @@
 | pyproject 기존 deps에 **`httpx[http2]`·`dateparser`·`aiofiles`·`aiohttp` 이미 포함**, `tool.uv`에 `default-groups` 없음(dev만 implicit) | `bourbon-agent-recommendation-api` | e3llm runtime 추가분은 **`google-genai`·`openai` 둘뿐**(httpx/dateparser는 이미 있음, §5) |
 | Python `>=3.14,<3.15`, uv(`package=false`), ruff(line 120, B/Q/I/ASYNC/T20), mypy(pydantic plugin) — `[tool.mypy]`에 `strict=true`는 **없고**, pre-commit이 `--disallow-untyped-defs`/`--disallow-incomplete-defs`/`--check-untyped-defs`로 type annotation을 강제, pytest-asyncio(auto), structlog | 두 레포 공통 | 새 코드도 동일 규칙. **새 도구 도입 없음** |
 | memory-api 도메인 패턴: `StrictBaseModel`(strict+validate_assignment), API는 `ApiModel`(extra=forbid), `structs.py`/`router.py`/`repository.py`/`writer.py` 분리, `EnvSettings.get()` 싱글턴, async `.create()` 팩토리, keyword-only 인자, `from __future__ import annotations` | `bourbon-memory-api` | 그대로 복제 |
-| knowledge public API = **`8ffcec8`(unify /knowledge & /personal + anchor/node→**entity** rename) / HEAD `9784b7e`** 기준 **5개 라우트** `GET /knowledge/{entities/suggest, entities, entities/{qid}, entities/{qid}/connections, articles}` + 모델 `EntitySource`/`Entity`/`EntitySummary`/`EntitySuggestion`/`EntityConnections`/`ArticleHit`. **list 응답은 `Page[T]={items,limit,truncated}` transport envelope**(cursor 아님), `entities/{qid}`·`connections`만 bare 모델 (spec §2.6) | `bourbon-memory-api` | real provider가 이 표면에 묶임. **`Page[T]` unwrap은 provider 책임**(`.items`만 도메인에 전달, envelope가 Discovery로 새지 않음) |
+| knowledge public API = **`8ffcec8`(unify /knowledge & /personal + anchor/node→**entity** rename) / main `bb4102b`(공개 entity 계약 불변)** 기준 **5개 라우트** `GET /knowledge/{entities/suggest, entities, entities/{qid}, entities/{qid}/connections, articles}` + 모델 `EntitySource`/`Entity`/`EntitySummary`/`EntitySuggestion`/`EntityConnections`/`ArticleHit`. **list 응답은 `Page[T]={items,limit,truncated}` transport envelope**(cursor 아님), `entities/{qid}`·`connections`만 bare 모델 (spec §2.6) | `bourbon-memory-api` | real provider가 이 표면에 묶임. **`Page[T]` unwrap은 provider 책임**(`.items`만 도메인에 전달, envelope가 Discovery로 새지 않음) |
 | `e3llm`은 vendored 디렉토리(서브모듈/패키지 아님). `package=false`라 sibling 모듈로 import. `create_orchestrator()` + `json_schema_format` + `invoke_structured` 패턴 | `bourbon-agent` | 디렉토리 복사 + e3llm runtime deps를 main `[project] dependencies`에 추가(§5) |
 
 **확정 결정 / 기본값** (§12에 모음): 아래 셋은 2026-06-23 리뷰에서 **확정**됐다 — 도메인 패키지명 `module/` → **`discovery/`**(**현재 기준 적용 완료**; 서비스 전체가 "Agent Discovery & Recommendation"·Recommendation은 내부 단계), mock 저장소는 **in-memory(JSON fixture 로드)**(Postgres/graph/vector는 spec §4·§5대로 when-needed·Alpha 미도입), 이 계획 문서는 planning 레포에 보관. 나머지 기본값(LLM provider·echo 제거 등)은 §12 참고.
@@ -251,6 +251,29 @@ axis=<text>; dir=<for|against|neutral>; text=<optional text>
 - **`NormalizedQuery`** = pipeline 내부 입력. `topic_text` · `lang` · `need_type` · `limit` · `context` + **`user_stance: UserStanceRef | None`**(raw 문자열은 여기서 사라지고 `{axis,dir,text}`로 normalize됨). ⓪ request normalizer가 `Query`→`NormalizedQuery`로 변환하며, 이후 linker/ranker/serving은 모두 이 구조만 본다.
 - **`Recommendation`** = API response와 1:1(`RecommendResponse`). §4.1.
 
+### 3.2 memory-api 신호 → Discovery 소비 맵 (무엇을 받아 무엇을 계산/사용하는가)
+
+Alpha에서 **memory-api로부터 real로 받는 값은 anchor/entity 신호뿐**이다(edge/persona/eligibility는 Alpha엔 mock — §3.1 contract; future-real 출처는 §11). 아래는 public `/knowledge` 라우트가 주는 각 값의 의미·범위와, Discovery가 그걸로 **무엇을 계산해 어디에 쓰는지**다. **핵심 원칙: anchor에 붙은 값은 anchor disambiguation/확장에만 쓰고, agent expertise·추천 품질 신호로 해석하지 않는다**(spec §2.6).
+
+| memory-api 값 (출처 라우트) | 의미 | 값/범위 | Discovery가 계산/사용 | Alpha |
+|---|---|---|---|---|
+| `qid` (전 라우트) | Wikidata 식별자 | `"Q…"` 문자열 | **`anchor_id`로 그대로 사용** = edge join key(§3.1) | ✓ |
+| `label`·`description` | 표시/검색 텍스트 | str | LLM rerank 입력 + 응답 `anchor.label` 표시 | ✓ |
+| `importance` (Summary/detail) | pageview·pagerank·sitelink 혼합 notability(산식 spec §2.6) | ~`0.0–1.0` 정규화 | **disambiguation prior**(후보 정렬·rerank 보조)·sparse fallback 정렬만 | ✓(제한) |
+| `pageview`·`pagerank`·`sitelink_count` | popularity/centrality raw | int/float ≥0 | `importance`의 구성요소; 단독으론 보조 정렬만 | ✓(제한) |
+| `aliases`·`labels`·`sitelinks` | 다국어·이표기 | list/dict | linker candidate **alias recall** 보강(한국어) | 부분 |
+| `instance_of`·`subclass_of`·`categories`·`abstract` | 분류/설명 | list/str | rerank 문맥; (future) axis hint | 부분 |
+| `linked_qids` (detail) | associative out-edges | list[QID] | sparse expansion 후보 풀 | ✓ |
+| `occupations` (detail) | P106 직업(people-only) | list[QID] | **Alpha 미사용**; future positioning/axis seed(§11) | ✗ |
+| `connections{broader/narrower/links_out/links_in}` | typed 이웃 | `EntitySummary[]` | **이웃 anchor 확장**(sparse fallback) → neighbor QID 풀(§4②) | ✓ |
+| `Page[T]{items,limit,truncated}` | list transport envelope | — | provider가 `.items` 언랩 후 버림(도메인 비전파, §3) | ✓ |
+
+**우리가 추가로 계산하는 값**(memory-api가 주지 않음):
+- **per-candidate rerank confidence** — `EntityCandidate`(§3.1) 위 LLM rerank 산출(`0.0–1.0`) → **grounding 채택 게이트**: `confidence ≥ LINKER_CONF_MIN(0.50)` ∧ `margin ≥ LINKER_MARGIN_MIN(0.15)`, `margin`=후보 1개 `confidence`·2개+ `top1−top2`(§4①). 미달 → `grounding_failed` 422.
+- **`AnchorVia`**(`direct`/`neighbor`) + `via_qid` — 후보가 resolved QID 직접인지 이웃 확장 출처인지(§3.1 Candidate; gate `on_topic` 판정 입력).
+
+edge 신호(`maturity`/`evidence_strength`/`freshness`/`observed_stance`/`stance_confidence` 등)는 **Alpha에선 memory-api가 아니라 mock fixture**가 채운다 — 의미·`source_owner`는 §3.1 표, ranking에서의 소비는 §4.2, future-real 출처 후보(personal KG salience/reference_kind 포함)는 §11에 있다.
+
 ## 4. 파이프라인 (모듈 1→6)
 
 `discovery/pipeline.py`가 spec §2.3 경로를 그대로 오케스트레이션한다. 순수 함수/작은 클래스로, 각 모듈은 자기 디렉토리에서 단독 테스트 가능. **pipeline은 provider가 mock인지 real인지 모른다** — Protocol만 보고 동작하며, 주입은 호출자(배포=`api/depends`, 로컬/eval=CLI·harness)가 결정한다.
@@ -275,7 +298,7 @@ class RecommendationPipeline:
 ```
 
 - **⓪  Request normalizer**: raw `Query`(API `RecommendRequest`) → `NormalizedQuery`. `user_stance_ref: str`를 `UserStanceRef{axis,dir,text}`로 파싱·정규화(§3.1). **linker와 분리** — 입력 정규화는 여기서, topic→QID는 ①에서. 문자열 파싱 ambiguity가 pipeline 안으로 안 샌다.
-- **①  Linker (2-tier, spec §4.1)**: candidate generation = `search_candidates`(`/knowledge/entities` full-text) **∪ `suggest`(`/knowledge/entities/suggest` prefix/alias) — qid로 merge·dedupe해 `EntityCandidate`(§3.1)로 정규화**(한국어 topic/alias recall 보강; 복잡도 작음) → 후보가 모호/희박하면 `expand_connections`로 이웃 anchor 확장 → LLM rerank로 최종 QID 선택. **topic→QID 책임만 진다**(stance 파싱 아님). LLM은 후보 위 재정렬만(`invoke_structured`로 구조화 출력). 단독 QID 생성 금지. **채택 게이트**(memory-api `Grounder` 선례 차용, personal-build-pipeline §STEP4): `confidence ≥ LINKER_CONF_MIN ∧ margin ≥ LINKER_MARGIN_MIN`이라야 그 QID를 채택, 미달이면 `grounding_failed`(§4.1). **margin 정의는 linker rerank 후보셋 기준** — 후보 1개면 `1.0`, 여러 개면 `top1_confidence − top2_confidence`(memory-api 문서의 "여러 개면 confidence 자체"와 달리 top1/top2 차가 disambiguation엔 더 직관적). seed: `LINKER_CONF_MIN=0.50`, `LINKER_MARGIN_MIN=0.15`(§2 `LinkerSettings`, provisional·ratchet 대상).
+- **①  Linker (2-tier, spec §4.1)**: candidate generation = `search_candidates`(`/knowledge/entities` full-text) **∪ `suggest`(`/knowledge/entities/suggest` prefix/alias) — qid로 merge·dedupe해 `EntityCandidate`(§3.1)로 정규화**(한국어 topic/alias recall 보강; 복잡도 작음) → 후보가 모호/희박하면 `expand_connections`로 이웃 anchor 확장 → LLM rerank로 최종 QID 선택. **topic→QID 책임만 진다**(stance 파싱 아님). LLM은 후보 위 재정렬만(`invoke_structured`로 구조화 출력). 단독 QID 생성 금지. **채택 게이트**: `confidence ≥ LINKER_CONF_MIN ∧ margin ≥ LINKER_MARGIN_MIN`이라야 그 QID를 채택, 미달이면 `grounding_failed`(§4.1). **margin은 rerank 후보셋 기준 Discovery 자체 정책이다 — memory-api `Grounder`를 미러하지 않는다**(거긴 LLM이 winner confidence 하나만 주는 입력이라 confidence 자체를 margin proxy로 쓰지만, 우리 linker는 후보별 rerank confidence를 갖는다): **후보 1개 → `margin = confidence`**, **후보 2개 이상 → `margin = top1_confidence − top2_confidence`**. (single 후보에 `1.0` 특례를 두지 않는다 — 그러면 단일 후보가 margin gate를 우회해 homonym over-grounding을 낳는다; memory-api도 같은 이유로 single=1.0 특례를 제거했다. single=confidence면 `LINKER_CONF_MIN`(절대 신뢰도)·`LINKER_MARGIN_MIN`(채택 여유 = ambiguity margin; 후보 2개+에선 runner-up 대비 우위, 1개에선 confidence 자체)이 둘 다 의미를 유지.) threshold seed `LINKER_CONF_MIN=0.50`·`LINKER_MARGIN_MIN=0.15`는 memory-api `Grounder` 값(`min_score`/`min_margin`)을 차용(§2 `LinkerSettings`, provisional·ratchet 대상).
 - **②  Retrieval**: `edges.get_edges(qid)`. sparse면 `expand_connections` 이웃 QID들로 풀 확장(이웃 확장은 real).
 - **③  Gate**: maturity 임계 + `eligibility.check`(discoverable). safety/privacy는 Alpha inactive(directions §11).
 - **④  Ranking**: need별 ordering(§4.2 — filter + lexicographic keys, scalar score 없음) + `persona.get_prior`(persona prior는 maturity를 못 채움 — hollow guard, spec §10) + stance 분류(for/against).
@@ -576,7 +599,7 @@ offline anchor substrate(§6 Phase 6·§9)의 모양을 못 박는다 — Phase 
 ```jsonc
 {
   "contract": {                                  // → decision-log provider_versions.anchor · §8.10 substrate report
-    "memory_api_commit": "9784b7e",
+    "memory_api_commit": "bb4102b",            // build-anchors가 실제 호출한 memory-api commit (예시값; 갱신 시 최신)
     "entity_contract": "knowledge-entity@v0",
     "generated_at": "2026-..Z"                    // 빌더 주입(Date.now 금지 규칙과 무관, 런타임 주입)
   },
@@ -647,6 +670,8 @@ uv run python -m cli recommend --topic "…" --need depth --substrate eval-mock|
 
 1. **QID vocabulary 의미 계약** — query-side linker QID ↔ producer-side anchoring QID가 같은 disambiguation 기준인지, alias/redirect/`LOCAL` anchor 규칙(spec §2.6·§7.4). 코퍼스 빌드가 이 정렬의 1차 리허설.
 2. **edge contract shape + 필드별 source_owner** — `maturity/evidence_strength/freshness/observed_stance/routing_target/discoverability`를 실제로 줄 수 있는지(spec §2.6·§7.2). mock edge 스키마가 합의 초안 역할.
+
+   > **(2026-06-26 메모, future MemoryEdgeProvider)** memory-api WIP 브랜치 `worktree-personal-kg-context-band`가 personal KG에 **entity salience**(`salience` + owner/other refs·statements·opinions 분해)와 mention **reference_kind**(`public_figure`/`personal_acquaintance`/`unknown`)를 도입 중. 통합 시 고려점: **이들은 retrieval prior·grounding precision 보조 신호 후보일 뿐, `maturity`/`evidence_strength`/`stance_confidence`를 대체하지 않는다** — salience는 "그 owner에게 자주/중요하게 등장"이지 "전문성이 높다"가 아니다(혼동 시 popularity prior 재유입 — directions의 평판/기여도 popularity-prior 금지 원칙 위반). 순기능: `reference_kind=personal_acquaintance → LOCAL` short-circuit이 public QID에 개인 지인 오결합을 줄여 `/personal/groundings/{qid}`의 noise를 낮춘다 = Discovery grounding precision↑.
 
 이 둘은 contract test가 "모양"만 보고 "값의 의미"는 못 잡으므로(spec §7.4) 별도 합의가 필요하다.
 
