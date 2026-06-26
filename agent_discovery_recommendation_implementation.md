@@ -78,7 +78,7 @@ search_candidates(text, limit?)      -> [EntitySummary{ qid, label, importance, 
 suggest(text, limit?)                -> [EntitySuggestion{ qid, source, label, description }]         # GET /knowledge/entities/suggest (Page→.items; prefix/alias)
 get(qid)                             -> Entity{ qid, label, labels, aliases, linked_qids, … }        # GET /knowledge/entities/{qid}    (bare)
 expand_connections(qid, limit)       -> EntityConnections{ center, broader, narrower, links_*, limit, truncated }  # GET /knowledge/entities/{qid}/connections (bare)
-search_articles(q, qid?, lang?)      -> [ArticleHit]                                                 # GET /knowledge/articles (Page→.items; 보조)
+search_articles(q, qid?, lang?, limit=10) -> [ArticleHit]                                            # GET /knowledge/articles (Page→.items; 보조; limit ge=1 le=100)
 ```
 
 `KnowledgeEntityProvider`는 full entity linker가 아니라 **memory-api entity substrate adapter**다 — entity 검색(`search_candidates`)·prefix 보조(`suggest`)·단건 조회·connections 호출을 감쌀 뿐 disambiguation을 결정하지 않는다. Query-side linker(모듈 1)가 candidate generation을 `search_candidates ∪ suggest`(qid merge)로 모으고, 필요 시 별도 entity linker(§4.1)를 조합해 최종 QID를 정한다(구현 계획에서는 두 타입을 linker 내부 `EntityCandidate`로 정규화 — build_plan §3.1). **`lang`은 `search_articles`에만 있다** — entity 검색/suggest 계약엔 `lang` 파라미터가 없고 핵심 파라미터는 `q`다(계약 drift 방지).
@@ -126,7 +126,7 @@ check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privac
 
 ### 2.6 현재 `bourbon-memory-api` 현황 (스냅샷)
 
-> **이 절은 `bourbon-memory-api`의 특정 시점 스냅샷(2026-06-24 재확인, memory-api `8ffcec8`(`/knowledge`·`/personal` unify + anchor/node→**entity** rename) / HEAD `9784b7e` 기준)이며 live-tracking 문서가 아니다.** 직전 스냅샷(`d8135bb`)의 `Anchor*` / `/knowledge/anchors` 표면은 `Entity*` / `/knowledge/entities`로 갱신됐다. Discovery는 memory-api 진행 상황을 계속 따라가며 맞추는 방식이 아니라, §2.4 provider contract와 §7 mock-first 전략을 기준으로 구현한다. memory/persona가 통합 가능한 시점에 contract를 재검증하고 mock provider를 real로 교체한다(§7.6). 그때까지 **능동 조율이 필요한 건 두 checkpoint뿐**이고 나머지 현황 변화는 추적하지 않는다:
+> **이 절은 `bourbon-memory-api`의 특정 시점 스냅샷(2026-06-26 재확인, main `bb4102b` 기준 — public entity 계약은 `8ffcec8`(`/knowledge`·`/personal` unify + anchor/node→**entity** rename) 이후 불변; `8ffcec8`→`9784b7e`→`bb4102b` 모두 조상)이며 live-tracking 문서가 아니다.** 직전 스냅샷(`d8135bb`)의 `Anchor*` / `/knowledge/anchors` 표면은 `Entity*` / `/knowledge/entities`로 갱신됐다. Discovery는 memory-api 진행 상황을 계속 따라가며 맞추는 방식이 아니라, §2.4 provider contract와 §7 mock-first 전략을 기준으로 구현한다. memory/persona가 통합 가능한 시점에 contract를 재검증하고 mock provider를 real로 교체한다(§7.6). 그때까지 **능동 조율이 필요한 건 두 checkpoint뿐**이고 나머지 현황 변화는 추적하지 않는다:
 > 1. **QID vocabulary / anchor 의미 계약** — query-side ↔ producer-side QID가 같은 disambiguation 기준인지, alias/redirect/local anchor 처리(아래 "QID 계약" + §7.4). mock으로 숨길 수 없어 **Alpha 중 한 번은 Memory와 합의**해야 한다.
 > 2. **edge contract shape** — 아래 "아직 없는 것" 표의 필드(`maturity`/`evidence_strength`/`freshness`/`observed_stance`/`evidence_refs`/`routing_target`/`discoverability` 등)를 실제로 줄 수 있는지와 **필드별 source owner**.
 
