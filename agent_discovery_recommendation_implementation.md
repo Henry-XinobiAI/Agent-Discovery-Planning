@@ -65,7 +65,7 @@ request(topic_text, need_type, user_stance_ref?)
 
 핵심은 **①은 지금 실제 substrate가 있고, ②~③은 mock provider로, ④는 mock persona prior + build ranking으로 선대체한다**는 것이다(④의 ranking 로직 자체는 우리가 build하고, 그 안의 persona prior만 mock이다). 그래서 Discovery는 Memory/Persona 구현을 기다리지 않고 전체 경로를 끝까지 돌릴 수 있다. mock을 real로 바꾸는 것이 곧 통합이다(§7).
 
-> **`[mock]`은 배포 런타임 provider가 아니라 로컬/eval substrate다.** 위 mock 경로가 성립하는 곳은 **로컬 CLI·eval·test**다. 배포 아티팩트(dev/prod)는 mock을 와이어링하지 않고, edge/persona/eligibility의 real-slot에 `Unavailable*` provider를 두어 통합 전까지 `upstream_unavailable`(503)을 반환한다(§7.6). 즉 Alpha의 "mock"은 개발/평가 substrate이지 배포 런타임 의존이 아니다 — 경계는 §2.5 표가 single source.
+> **`[mock]`은 배포 런타임 provider가 아니라 로컬/eval substrate다.** 위 mock 경로가 성립하는 곳은 **로컬 CLI·eval·test**다. 배포 아티팩트(dev/prod)는 mock을 와이어링하지 않고, edge/eligibility의 real-slot엔 `Unavailable*` provider를 두어 통합 전까지 `upstream_unavailable`(503)을 반환하고, persona는 `NullPersonaProvider`로 `None` degrade한다(503 아님 — build_plan §3). 즉 Alpha의 "mock"은 개발/평가 substrate이지 배포 런타임 의존이 아니다 — 경계는 §2.5 표가 single source.
 
 ### 2.4 Provider 인터페이스 (sketch)
 
@@ -90,11 +90,12 @@ search_articles(q, qid?, lang?)      -> [ArticleHit]                            
 ```
 get_edges(anchor_id) -> [AgentTopicEdge{ agent_id, anchor_id,
                           maturity, evidence_strength, freshness,
+                          experience_source_type, experience_specificity,   # experience need 전용 (build_plan §3.1)
                           observed_stance, stance_summary, evidence_refs,
                           routing_target, source_owner }]
 ```
 
-`PersonaProvider` — Alpha: **eval mock** / 배포 **unavailable→503**:
+`PersonaProvider` — Alpha: **eval mock** / 배포 **`NullPersonaProvider`→`None` (degradable, 503 아님)** (build_plan §3 — persona는 optional/hollow guard라 부재가 503을 유발하지 않는다; `UnavailablePersonaProvider`는 만들지 않음):
 
 ```
 get_prior(agent_id) -> PersonaPrior{ prior_stance?, stable_traits, expertise_claims }
@@ -106,7 +107,7 @@ get_prior(agent_id) -> PersonaPrior{ prior_stance?, stable_traits, expertise_cla
 check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privacy / (safety)
 ```
 
-`EntitySummary`·`Entity`·`EntitySuggestion`·`EntityConnections`·`ArticleHit`만 real 응답(§2.6의 현재 API 표면)에 묶인다. 나머지 타입은 contract로 합의하고, **local/eval에서는 mock fixture로 채우되 배포 앱은 real 통합 전까지 `Unavailable*` provider로 503을 반환한다**(§2.5 표·§7.2). 필드별 `source_owner` 규칙은 §7.2.
+`EntitySummary`·`Entity`·`EntitySuggestion`·`EntityConnections`·`ArticleHit`만 real 응답(§2.6의 현재 API 표면)에 묶인다. 나머지 타입은 contract로 합의하고, **local/eval에서는 mock fixture로 채우되 배포 앱은 real 통합 전까지**: `edge`·`eligibility`는 hard-required라 **`Unavailable*` provider로 503**, `persona`는 optional/degradable이라 **`NullPersonaProvider`로 `None` degrade(503 아님)**(build_plan §3 — provider 필수성 구분)(§2.5 표·§7.2). 필드별 `source_owner` 규칙은 §7.2.
 
 ### 2.5 경계 요약표
 
@@ -116,12 +117,12 @@ check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privac
 |---|---|---|---|
 | `KnowledgeEntityProvider` (topic→QID, suggest, entity 단건, connections, articles) | `bourbon-memory-api` `/knowledge/entities*` | real / pinned `anchors.json` | **real** |
 | `MemoryEdgeProvider` (agent-topic edge) | Memory (미통합) | eval mock | **unavailable → 503** (real 통합 전) |
-| `PersonaProvider` (persona prior) | Persona (미통합) | eval mock | **unavailable → 503** |
+| `PersonaProvider` (persona prior) | Persona (미통합) | eval mock | **`NullPersonaProvider` → `None`** (degradable, 503 아님) |
 | `EligibilityProvider` (discoverability) | owner/privacy (미통합) | eval mock | **unavailable → 503** |
 | Future `UserPreferenceProvider` (favorite/user preference) | `bourbon-api` (미통합) | not implemented | not implemented (Post-Open-Beta) |
 | evidence 원문 조회 | conversation search | — | 후일 (Alpha 미사용) |
 
-이 표가 경계의 single source다 — "real인 줄 알았는데 mock"·"Alpha 배포가 mock으로 돈다"는 혼선을 막는다. mock은 `eval/providers/`에 있고 **배포 serving 경로는 mock-free**다(deployed 앱은 `eval/`을 import하지 않음); edge/persona/eligibility의 real이 없는 동안 배포 앱은 `Unavailable*` provider로 503을 반환한다(§7.6). `evidence_refs`의 원문 조회는 conversation search로 연결될 수 있으나 Alpha 후보 생성 경로엔 들어가지 않는다. **`UserPreferenceProvider`(favorite)는 personalization 신호로 expertise·gate와 무관하며 Alpha 후보/랭킹에 쓰지 않는다(reserved, 코드 미구현)** — 출처는 memory-api/persona가 아닌 `bourbon-api`, 실소비는 Post-Open-Beta(directions §9.7, ranking 거버넌스 §5.3).
+이 표가 경계의 single source다 — "real인 줄 알았는데 mock"·"Alpha 배포가 mock으로 돈다"는 혼선을 막는다. mock은 `eval/providers/`에 있고 **배포 serving 경로는 mock-free**다(deployed 앱은 `eval/`을 import하지 않음); edge/eligibility의 real이 없는 동안 배포 앱은 `Unavailable*` provider로 503을 반환하고, persona는 `NullPersonaProvider`로 `None` degrade한다(503 아님 — build_plan §3, §7.6). `evidence_refs`의 원문 조회는 conversation search로 연결될 수 있으나 Alpha 후보 생성 경로엔 들어가지 않는다. **`UserPreferenceProvider`(favorite)는 personalization 신호로 expertise·gate와 무관하며 Alpha 후보/랭킹에 쓰지 않는다(reserved, 코드 미구현)** — 출처는 memory-api/persona가 아닌 `bourbon-api`, 실소비는 Post-Open-Beta(directions §9.7, ranking 거버넌스 §5.3).
 
 ### 2.6 현재 `bourbon-memory-api` 현황 (스냅샷)
 
