@@ -109,7 +109,7 @@ bourbon-agent-recommendation-api/
 │   ├── corpus.py                  ★ 코퍼스 빌드 (build-anchors / build / build-guards)
 │   └── eval.py                    ★ eval run / report
 ├── tests/                         ✎ echo 테스트 제거, 모듈별 단위 + integration 추가
-├── .env.example                   ✎ MEMORY_API_BASE_URL, LLM_PROXY_URL/MODEL, EVAL_* 추가 (GOOGLE_CLOUD_*·LLM_API_KEY=optional direct mode 주석)
+├── .env.example                   ✎ MEMORY_API_BASE_URL, LLM_PROXY_URL/MODEL, EVAL_* 추가 (GOOGLE_CLOUD_*·OPENAI_API_KEY=optional direct mode 주석)
 └── pyproject.toml                 ✎ google-genai를 main dependencies에 추가, eval/dev group 정리(§5)
 ```
 
@@ -433,7 +433,7 @@ Alpha ranking은 가중합 스칼라를 만들지 않으므로 **`score` 필드 
 1. **structured-completion spine 포팅 (e3llm SDK 직접 의존 안 함).** memory-api `4106366`은 e3llm 패키지를 import하지 않고 자체 OpenAI-compatible proxy client를 쓴다(coldbrew `agent/client.py` 패턴; `memory/llm/`에 `import e3llm` **0건** — 2026-06-30 직접 확인). Discovery는 `../bourbon-memory-api/memory/llm/`의 **structured-completion spine만** `discovery/llm/`로 포팅한다 — `complete`/`complete_messages` + `convert_schema`/structured 경로. **tool-calling 표면은 제외**(`ToolSpec`/`to_openai_tool`/`ToolCallingProvider`/`complete_with_tools`/`openai_tools_to_gemini`/`gemini_tool_config`/`openai_messages_to_gemini`/`_TOOL_CHOICE_MODE`·`GoogleProvider._config`의 `tools`/`tool_choice`): Discovery의 3개 LLM 사용처(linker rerank·stance·B2 judge)는 전부 structured-output이고 agentic loop가 없으며, 원형 `providers.py:18`의 `from memory.conversation.tools.spec import ToolSpec`는 Discovery에 미존재라 literal copy 자체가 불가하다. tool-calling이 실제로 필요해지면(다중 provider fan-out·근거부족 시 추가 retrieval·동적 explanation/judge lookup) **그때 별도 `tools.py`로** 추가하고 spine에 반쯤 남기지 않는다. 새 추상화는 설계하지 않는다(memory-api와 drift 방지). 런타임 LLM은 e3llm-api 프록시 서비스(k8s `LLM_PROXY_URL`)가 담당한다.
    ```
    discovery/llm/
-     config.py      LLMSettings(EnvSettings) — LLM_PROXY_URL/MODEL/timeout/max_tokens (+ direct: LLM_MODE/LLM_PROVIDER/LLM_MODEL/LLM_API_KEY)
+     config.py      LLMSettings(EnvSettings) — LLM_PROXY_URL/MODEL/timeout/max_tokens (+ direct 필드: LLM_MODE/LLM_PROVIDER/LLM_MODEL/LLM_API_KEY[현재 미소비]; openai 직접 키는 env OPENAI_API_KEY를 make_provider가 읽음)
      providers.py   LLMProvider Protocol · _BaseLLMProvider(httpx + _request_with_retry) · OpenAIProvider(complete/_messages) · GoogleProvider(Vertex ADC; complete/_messages만, _config는 system/max_output_tokens로 단순화) · convert_schema · parse_model_string · make_provider · LLMResponse · Message   ← memory-api spine과 동일 유지 (tool-calling 표면 제외)
      proxy.py       LLMProxyClient(_BaseLLMProvider) — /v1/chat/completions, response_format json_schema   ← 기본 runtime client
      structured.py  pydantic_response_format(model, name) — convert_schema 검증 게이트(import 시점에 Gemini 변환 가능성 검증)
@@ -478,7 +478,7 @@ Alpha ranking은 가중합 스칼라를 만들지 않으므로 **`score` 필드 
            return None   # malformed=fatal 아님 → drop+warning (coldbrew 규칙)
    ```
    사용처는 linker rerank(`discovery/linker`), stance 분류(`discovery/ranking/stance.py`), B2 judge(`eval/judge`) **세 곳뿐**. LLM 의존을 이 wrapper 뒤에 가둬, 추후 client replace 시 영향 면적을 최소화한다. **drop 단위 주의(coldbrew 매핑)**: stance/judge는 **단건** 호출이라 malformed→`None`(graceful degrade). **linker rerank는 후보 리스트를 산출**하므로 item-level drop이 필요한데, `invoke_structured(schema: type[T])`는 단일 모델만 검증하므로 `list[...]`을 직접 넘기지 않는다 — **wrapper 모델로 받는다**: `schema=RerankResponse`(`RerankResponse(items: list[LenientRerankItem])`, item은 관대한 mirror 모델). 그 다음 호출부(linker)가 `items`를 돌며 strict 도메인 모델로 **item별 재검증해 malformed item만 drop+warning, 나머지 후보는 보존**한다(memory-api `extract.py`의 lenient mirror→strict 패턴; `list` 자체 검증이 필요하면 `TypeAdapter(list[T])` 사용). 즉 **wrapper-level은 항상 단건(`None` or `RerankResponse`)이고 item-level drop은 linker 호출부 책임** — rerank만 item drop, stance/judge는 call-level `None`.
-5. **env + 테스트 격리.** 기본 `.env.example`은 **proxy 경로만** 채운다 — `LLM_PROXY_URL`(기본 `http://localhost:8081`, k8s dev=`http://e3llm-api/`)·`LLM_PROXY_MODEL`(`openai/gpt-4o-mini` | `google/gemini-2.5-flash`). direct provider env(`LLM_MODE=direct`·`LLM_PROVIDER`·`LLM_MODEL`·`LLM_API_KEY`·Vertex ADC `GOOGLE_CLOUD_PROJECT`/`GOOGLE_CLOUD_LOCATION`)는 **"optional direct mode"로만 주석 문서화**한다. **테스트 격리**: `set_client(fake)`로 fake client 주입 + fixture teardown에서 `set_client(None)` 리셋(global singleton이 테스트 간 새지 않게 — flaky 방지). **direct provider 테스트는 contract만** — schema conversion(`convert_schema`), model string parse(`parse_model_string`), fake client injection, provider factory env validation(`make_provider`). direct GoogleProvider 실호출은 Alpha 회귀에 넣지 않는다.
+5. **env + 테스트 격리.** 기본 `.env.example`은 **proxy 경로만** 채운다 — `LLM_PROXY_URL`(기본 `http://localhost:8081`, k8s dev=`http://e3llm-api/`)·`LLM_PROXY_MODEL`(`openai/gpt-4o-mini` | `google/gemini-2.5-flash`). direct provider env(`LLM_MODE=direct`·`LLM_PROVIDER`·`LLM_MODEL`·openai 직접은 `OPENAI_API_KEY`[make_provider가 읽는 실제 var; `LLM_API_KEY` 필드는 현재 미소비]·Vertex ADC `GOOGLE_CLOUD_PROJECT`/`GOOGLE_CLOUD_LOCATION`)는 **"optional direct mode"로만 주석 문서화**한다. **테스트 격리**: `set_client(fake)`로 fake client 주입 + fixture teardown에서 `set_client(None)` 리셋(global singleton이 테스트 간 새지 않게 — flaky 방지). **direct provider 테스트는 contract만** — schema conversion(`convert_schema`), model string parse(`parse_model_string`), fake client injection, provider factory env validation(`make_provider`). direct GoogleProvider 실호출은 Alpha 회귀에 넣지 않는다.
 
 ## 6. 구현 단계 (순서·체크리스트)
 
