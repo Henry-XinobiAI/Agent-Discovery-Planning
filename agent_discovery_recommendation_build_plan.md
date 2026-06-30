@@ -2,7 +2,7 @@
 
 > 이 문서는 **구현 실행 계획**이다. 설계 기준은 `agent_discovery_recommendation_directions.md`, 무엇을 짓는지·경계·후보 기술은 `agent_discovery_recommendation_implementation.md`(이하 **spec**)에 있다. 여기서는 그것들을 `bourbon-agent-recommendation-api` 레포에 **어떤 디렉토리·모듈·파일·순서로** 올릴지를 정한다. 설계 논거는 재진술하지 않고 spec 절 번호로 가리킨다.
 >
-> 구현 대상: `../bourbon-agent-recommendation-api` · 코드 스타일 기준: `../bourbon-memory-api` · LLM: `../bourbon-agent`의 `e3llm` 디렉토리를 vendor(추후 replace 가능).
+> 구현 대상: `../bourbon-agent-recommendation-api` · 코드 스타일·LLM 레이어 기준: `../bourbon-memory-api`(`memory/llm/` OpenAI-compatible proxy 패턴 포팅; e3llm SDK 직접 의존 안 함, §5).
 
 ## 0. 이 계획이 따르는 기준 (확정 사실)
 
@@ -11,12 +11,12 @@
 | 사실 | 출처 | 계획에의 영향 |
 |---|---|---|
 | 대상 레포는 **빈 레포가 아니라 동작하는 템플릿**(`project-template-python` 유래). FastAPI app factory·도메인 패키지·`api/`·`cli/`(argparse)·`tests/`·Docker·k8s·pre-commit 완비 | `bourbon-agent-recommendation-api` | bootstrap이 아니라 **확장**. echo 예제를 도메인 모듈로 치환 |
-| **현재 상태(2026-06-23 재확인 기준)**: 사용자가 **`module/`→`discovery/` 개명을 이미 완료**. `discovery/`는 현재 템플릿 잔재(`echo/`·`utils/`·`log_config.py`)만 보유. echo router/health 잔존, `e3llm/`·`recommend` router·`eval/`·`discovery/{structs,providers,linker}` **미존재**. `.env.example`에 `MEMORY_API_BASE_URL`/`GOOGLE_CLOUD_*` **없음** | `bourbon-agent-recommendation-api` | **Phase 0의 개명 단계는 완료**(§6). 나머지 Phase 0(echo 제거·e3llm vendor·deps·env)부터 착수 |
-| pyproject 기존 deps에 **`httpx[http2]`·`dateparser`·`aiofiles`·`aiohttp` 이미 포함**, `tool.uv`에 `default-groups` 없음(dev만 implicit) | `bourbon-agent-recommendation-api` | e3llm runtime 추가분은 **`google-genai`·`openai` 둘뿐**(httpx/dateparser는 이미 있음, §5) |
+| **현재 상태(2026-06-23 재확인 기준)**: 사용자가 **`module/`→`discovery/` 개명을 이미 완료**. `discovery/`는 현재 템플릿 잔재(`echo/`·`utils/`·`log_config.py`)만 보유. echo router/health 잔존, `discovery/llm/`·`recommend` router·`eval/`·`discovery/{structs,providers,linker}` **미존재**. `.env.example`에 `MEMORY_API_BASE_URL`/`LLM_PROXY_*` **없음** | `bourbon-agent-recommendation-api` | **Phase 0의 개명 단계는 완료**(§6). 나머지 Phase 0(echo 제거·LLM 레이어 포팅·deps·env)부터 착수 |
+| pyproject 기존 deps에 **`httpx[http2]`·`dateparser`·`aiofiles`·`aiohttp` 이미 포함**, `tool.uv`에 `default-groups` 없음(dev만 implicit) | `bourbon-agent-recommendation-api` | LLM 레이어 추가분은 **`google-genai` 하나뿐**(OpenAI는 raw httpx, `httpx[http2]` 기존; `openai`/e3llm 불필요, §5) |
 | Python `>=3.14,<3.15`, uv(`package=false`), ruff(line 120, B/Q/I/ASYNC/T20), mypy(pydantic plugin) — `[tool.mypy]`에 `strict=true`는 **없고**, pre-commit이 `--disallow-untyped-defs`/`--disallow-incomplete-defs`/`--check-untyped-defs`로 type annotation을 강제, pytest-asyncio(auto), structlog | 두 레포 공통 | 새 코드도 동일 규칙. **새 도구 도입 없음** |
-| memory-api 도메인 패턴: `StrictBaseModel`(strict+validate_assignment), API는 `ApiModel`(extra=forbid), `structs.py`/`router.py`/`repository.py`/`writer.py` 분리, `EnvSettings.get()` 싱글턴, async `.create()` 팩토리, keyword-only 인자, `from __future__ import annotations` | `bourbon-memory-api` | 그대로 복제 |
+| memory-api 도메인 패턴: `StrictBaseModel`(strict+validate_assignment), API는 `ApiModel`(extra=forbid), `structs.py`/`router.py`/`repository.py`/`writer.py` 분리, `EnvSettings` + `.from_env()` 클래스메서드, async `.create()` 팩토리, keyword-only 인자, `from __future__ import annotations` | `bourbon-memory-api` | 그대로 복제 |
 | knowledge public API = **`8ffcec8`(unify /knowledge & /personal + anchor/node→**entity** rename) / main `4106366`(2026-06-30 재확인, 공개 entity 계약 불변)** 기준 **5개 라우트** `GET /knowledge/{entities/suggest, entities, entities/{qid}, entities/{qid}/connections, articles}` + 모델 `EntitySource`/`Entity`/`EntitySummary`/`EntitySuggestion`/`EntityConnections`/`ArticleHit`. **list 응답은 `Page[T]={items,limit,truncated}` transport envelope**(cursor 아님), `entities/{qid}`·`connections`만 bare 모델 (spec §2.6) | `bourbon-memory-api` | real provider가 이 표면에 묶임. **`Page[T]` unwrap은 provider 책임**(`.items`만 도메인에 전달, envelope가 Discovery로 새지 않음) |
-| `e3llm`은 vendored 디렉토리(서브모듈/패키지 아님). `package=false`라 sibling 모듈로 import. `create_orchestrator()` + `json_schema_format` + `invoke_structured` 패턴 | `bourbon-agent` | 디렉토리 복사 + e3llm runtime deps를 main `[project] dependencies`에 추가(§5) |
+| LLM은 e3llm SDK 직접 의존이 아니라 memory-api `memory/llm/` 패턴(OpenAI-compatible proxy client + 자체 provider 레이어; `memory/`에 `import e3llm` 0건). 런타임은 `LLM_PROXY_URL` 뒤 e3llm-api 프록시 서비스 | `bourbon-memory-api` | `memory/llm/`을 `discovery/llm/`로 포팅(proxy default, direct provider=inactive) + `google-genai`를 main `[project] dependencies`에 추가(§5) |
 
 **확정 결정 / 기본값** (§12에 모음): 아래 셋은 2026-06-23 리뷰에서 **확정**됐다 — 도메인 패키지명 `module/` → **`discovery/`**(**현재 기준 적용 완료**; 서비스 전체가 "Agent Discovery & Recommendation"·Recommendation은 내부 단계), mock 저장소는 **in-memory(JSON fixture 로드)**(Postgres/graph/vector는 spec §4·§5대로 when-needed·Alpha 미도입), 이 계획 문서는 planning 레포에 보관. 나머지 기본값(LLM provider·echo 제거 등)은 §12 참고.
 
@@ -39,7 +39,6 @@
 
 ```
 bourbon-agent-recommendation-api/
-├── e3llm/                         ★ bourbon-agent에서 복사 (vendored, replaceable)
 ├── api/
 │   ├── main.py                    ✎ recommend 라우터 등록, echo 제거, lifespan에 provider 부착
 │   ├── depends/
@@ -56,8 +55,8 @@ bourbon-agent-recommendation-api/
 ├── discovery/                     ✓ 도메인 패키지 (module/→discovery/ 개명 완료)
 │   ├── echo/                      ⌫ 현재 템플릿 잔재 — 제거
 │   ├── utils/                       (elapsed_timer·sentry, 템플릿 것 유지)
-│   ├── config.py                  ★ EnvSettings 서브클래스 (MemoryApiSettings, LlmSettings, RankingSettings[§4.2 임계], LinkerSettings[§4① grounding 임계], …)
-│   ├── llm.py                     ★ e3llm 래퍼 (get_orchestrator / invoke_structured)
+│   ├── config.py                  ★ EnvSettings base(memory-api `memory/config.py` 복제) + MemoryApiSettings, RankingSettings[§4.2 임계], LinkerSettings[§4① grounding 임계] (LLMSettings는 llm/config.py §5)
+│   ├── llm/                       ★ memory-api `memory/llm/` 포팅 (config·providers·proxy·structured·wrapper; proxy default, direct=inactive, §5)
 │   ├── log_config.py                (템플릿 것 유지)
 │   ├── structs/
 │   │   ├── base.py                ★ StrictBaseModel (memory-api 것 복제)
@@ -99,7 +98,7 @@ bourbon-agent-recommendation-api/
 │   │   ├── corpus.py              ★ agent/edge/scenario 합성 (strata + needle)
 │   │   └── guards.py              ★ §7.3 가드 역산 fixture 생성
 │   ├── metrics/                   ★ grounding/retrieval/gate/ranking/stance/coverage/reason/calibration
-│   ├── judge/silver.py            ★ B2 LLM silver judge (e3llm, §8.2)
+│   ├── judge/silver.py            ★ B2 LLM silver judge (LLM proxy, §8.2)
 │   ├── gates.py                   ★ quality gate threshold + ratchet (baseline.json)
 │   ├── report.py                  ★ need×stratum 분해 리포트 + failure bucket
 │   ├── harness.py                 ★ providers→pipeline→metrics 실행 루프
@@ -110,8 +109,8 @@ bourbon-agent-recommendation-api/
 │   ├── corpus.py                  ★ 코퍼스 빌드 (build-anchors / build / build-guards)
 │   └── eval.py                    ★ eval run / report
 ├── tests/                         ✎ echo 테스트 제거, 모듈별 단위 + integration 추가
-├── .env.example                   ✎ MEMORY_API_BASE_URL, GOOGLE_CLOUD_*, EVAL_* 추가
-└── pyproject.toml                 ✎ e3llm runtime deps를 main dependencies에 추가, eval/dev group 정리(§5)
+├── .env.example                   ✎ MEMORY_API_BASE_URL, LLM_PROXY_URL/MODEL, EVAL_* 추가 (GOOGLE_CLOUD_*·LLM_API_KEY=optional direct mode 주석)
+└── pyproject.toml                 ✎ google-genai를 main dependencies에 추가, eval/dev group 정리(§5)
 ```
 
 원칙: **`api/`(전송) ↔ `discovery/`(도메인, FastAPI import 금지) ↔ `eval/`(평가) 3분리**. memory-api의 `memory/` 도메인 격리 규칙과 동일. `eval/`은 `discovery/`를 import하지만 그 역은 금지.
@@ -164,7 +163,7 @@ class HttpKnowledgeEntityProvider:
 
     @classmethod
     async def create(cls, *, settings: MemoryApiSettings | None = None) -> "HttpKnowledgeEntityProvider":
-        settings = settings or MemoryApiSettings.get()
+        settings = settings or MemoryApiSettings.from_env()
         client = httpx.AsyncClient(
             base_url=settings.MEMORY_API_BASE_URL, timeout=settings.TIMEOUT_S,
             http2=True,                                  # memory-api가 h2 서빙 시 fan-out multiplexing
@@ -427,52 +426,59 @@ class RecommendationPipeline:
 
 Alpha ranking은 가중합 스칼라를 만들지 않으므로 **`score` 필드 대신 `ordering_keys` + raw `feature_breakdown`을 남긴다**(§4.2 ordering contract). raw 연속값(`maturity`)과 derived `maturity_band`를 **둘 다** 기록해야 Post-OB에서 LTR/threshold tuning/error analysis가 band cutoff·weight를 역으로 fit할 수 있다(band만 남기면 정보 손실). `provider_versions`로 mock→real 전환 전후 비교가 가능해진다(spec §8.10 substrate report). `ope` 블록은 Alpha에서 비우되 **존재**시켜, Open Beta에서 스키마 변경 없이 채운다.
 
-## 5. e3llm 통합
+## 5. LLM 통합 (memory-api `memory/llm/` 포팅 — proxy default)
 
-1. **vendor (pycache 제외)** — `../bourbon-agent/e3llm`에 `__pycache__`/`.pyc`가 있으므로 `cp -r`를 쓰지 않는다:
-   ```bash
-   rsync -a --exclude='__pycache__' --exclude='*.pyc' ../bourbon-agent/e3llm/ ./e3llm/
+> Alpha defaults to the OpenAI-compatible proxy path for deployment parity with memory-api/e3llm-api. The direct OpenAI/Gemini providers are ported as an **inactive provider layer** so Vertex direct mode can be enabled later without changing Discovery call sites. **Direct mode is not part of Alpha serving acceptance.**
+
+1. **포팅 (e3llm SDK 직접 의존 안 함).** memory-api `4106366`은 e3llm 패키지를 import하지 않고 자체 OpenAI-compatible proxy client를 쓴다(coldbrew `agent/client.py` 패턴; `memory/llm/`에 `import e3llm` **0건** — 2026-06-30 직접 확인). Discovery도 동일하게 `../bourbon-memory-api/memory/llm/`의 파일을 `discovery/llm/`로 **거의 1:1 포팅**한다(지금 새 추상화를 설계하지 않는다 — 비용만 늘고 memory-api와 drift). 런타임 LLM은 e3llm-api 프록시 서비스(k8s `LLM_PROXY_URL`)가 담당한다.
    ```
-   (vendored, 추후 패키지로 replace 시 import 경로 불변. `.gitignore`의 `__pycache__` 규칙도 e3llm 하위에 적용되는지 확인.)
-2. **dependency 배치 — runtime vs eval 분리.** 현재 pyproject에 **`httpx[http2]`·`dateparser`·`aiofiles`·`aiohttp`는 이미 main deps에 존재**하므로, e3llm runtime을 위해 **추가할 것은 `google-genai`·`openai` 둘뿐**이다. API runtime이 LLM(linker rerank·stance)을 쓰므로 dev group이 아니라 main `[project] dependencies`에 둔다(대상 Dockerfile `uv sync --frozen --no-install-project`가 default group을 prod에 그대로 깔고, 현재 `tool.uv`엔 `default-groups`가 없어 dev만 implicit — runtime을 main에 두면 안전):
+   discovery/llm/
+     config.py      LLMSettings(EnvSettings) — LLM_PROXY_URL/MODEL/timeout/max_tokens (+ direct: LLM_MODE/LLM_PROVIDER/LLM_MODEL/LLM_API_KEY)
+     providers.py   LLMProvider Protocol · _BaseLLMProvider(httpx + _request_with_retry) · OpenAIProvider · GoogleProvider(Vertex ADC) · convert_schema · parse_model_string · make_provider · LLMResponse · Message   ← memory-api와 동일 유지
+     proxy.py       LLMProxyClient(_BaseLLMProvider) — /v1/chat/completions, response_format json_schema   ← 기본 runtime client
+     structured.py  pydantic_response_format(model, name) — convert_schema 검증 게이트(import 시점에 Gemini 변환 가능성 검증)
+     wrapper.py     invoke_structured + get_client/set_client — provider 종류를 모름, LLMClient Protocol만 의존
+   ```
+2. **proxy default + 가드.**
+   - 기본 runtime client = `LLMProxyClient.from_settings()`(proxy 경로). Gemini는 **별도 코드 경로 없이** `LLM_PROXY_MODEL=google/gemini-2.5-flash`로 모델명만 바꿔 통일한다(프록시가 OpenAI-compatible↔Gemini 변환을 책임).
+   - direct OpenAI/Gemini provider는 **포팅하되 inactive** — 명시 스위치 `LLM_MODE=direct` 없이는 절대 안 탄다(기본 `LLM_MODE=proxy`).
+   - **direct GoogleProvider는 Alpha serving acceptance path에 끼우지 않는다**(Vertex 직접 모드는 후속 운영/fallback 가능성만 확보).
+   - **LLM provider 선택은 rerank/stance/judge 호출 하부에서만** 일어난다 — agent ordering(§4.2)에는 절대 연결하지 않는다(provider 선택이 순위에 새면 scalar 불변식·ordering 계약 위반).
+3. **dependency — 추가는 `google-genai` 하나.** memory-api는 OpenAI를 raw httpx로 부르므로(SDK 아님) `openai` 패키지가 **없다**. `httpx[http2]`는 이미 main deps에 존재. **추가할 것은 `google-genai`뿐**(GoogleProvider + `convert_schema` 스키마 변환 게이트용 — 후자는 Vertex 호출이 아니라 json_schema → Gemini subset 변환에 쓰임). API runtime이 proxy client(httpx)를 쓰므로 main `[project] dependencies`에 둔다(Dockerfile 무수정):
    ```toml
    [project]
-   dependencies = [ # 기존 목록에 두 줄만 추가 (httpx/dateparser/aiofiles/aiohttp는 이미 있음)
-     "google-genai>=1.74.0", "openai>=1.82.0",   # e3llm runtime
+   dependencies = [ # 한 줄만 추가 (httpx[http2]는 이미 있음; openai/e3llm 불필요)
+     "google-genai>=2.9.0",   # memory-api와 동일 핀 (GoogleProvider + convert_schema)
    ]
    [dependency-groups]
    eval = ["…"]  # eval 전용 도구만 별도 group (judge·report 등 prod 불필요분)
    dev  = ["mypy", "pytest", "pytest-asyncio", "ruff", "…"]  # 기존 dev에 watchdog 등 유지
    ```
-   이러면 Dockerfile은 **수정 불필요**(runtime deps가 main에 있으므로). dev/eval만 group으로 남겨 prod 격리를 명확히 한다.
-3. `discovery/llm.py`에 얇은 래퍼 — bourbon-agent `scribe/llm.py`의 `invoke_structured` 패턴을 그대로:
+4. **wrapper (`discovery/llm/wrapper.py`) — provider-agnostic.** `LLMClient` Protocol(`async complete(system, user, *, response_format) -> LLMResponse`)만 의존하고 proxy/direct를 구분하지 않는다. memory-api 추출의 structured 패턴 그대로:
    ```python
-   _orch: ChatOrchestrator | None = None
-   def get_orchestrator() -> ChatOrchestrator:
-       global _orch
-       if _orch is None: _orch = create_orchestrator()
-       return _orch
-   def set_orchestrator(o: ChatOrchestrator | None) -> None:  # 테스트 주입/리셋
-       global _orch
-       _orch = o
+   _client: LLMClient | None = None
+   def get_client() -> LLMClient:
+       global _client
+       if _client is None: _client = make_client_from_settings()  # LLM_MODE=proxy → LLMProxyClient.from_settings()
+       return _client
+   def set_client(c: LLMClient | None) -> None:  # 테스트 주입/리셋
+       global _client
+       _client = c
    async def invoke_structured(*, system: str, user: str, schema: type[T],
-                               model: str | None = None) -> T | None:
-       req = E3ChatRequest(model=model or LlmSettings.get().DEFAULT_MODEL,
-                           messages=[ChatMessage(role="system", content=system),
-                                     ChatMessage(role="user", content=user)],
-                           response_format=json_schema_format(schema, name=schema.__name__))
-       resp = await get_orchestrator().invoke(req)
-       raw = resp.choices[0].message.content if resp.choices else None
+                               name: str | None = None) -> T | None:
+       resp = await get_client().complete(
+           system, user, response_format=pydantic_response_format(schema, name or schema.__name__))
+       raw = resp.content
        if not raw:
            return None
        try:
            return schema.model_validate_json(raw)
        except ValidationError as e:
            logger.warning("invoke_structured: malformed LLM output dropped (%s)", e)
-           return None   # malformed=fatal 아님 → drop+warning (§7 coldbrew 규칙)
+           return None   # malformed=fatal 아님 → drop+warning (coldbrew 규칙)
    ```
-   사용처는 linker rerank(`discovery/linker`), stance 분류(`discovery/ranking/stance.py`), B2 judge(`eval/judge`) **세 곳뿐**. LLM 의존을 이 래퍼 뒤에 가둬, 추후 e3llm replace 시 영향 면적을 최소화한다. **drop 단위 주의(coldbrew 매핑)**: stance/judge는 **단건** 호출이라 malformed→`None`(graceful degrade). **linker rerank는 후보 리스트를 산출**하므로 item-level drop이 필요한데, `invoke_structured(schema: type[T])`는 단일 모델만 검증하므로 `list[...]`을 직접 넘기지 않는다 — **wrapper 모델로 받는다**: `schema=RerankResponse`(`RerankResponse(items: list[LenientRerankItem])`, item은 관대한 mirror 모델). 그 다음 호출부(linker)가 `items`를 돌며 strict 도메인 모델로 **item별 재검증해 malformed item만 drop+warning, 나머지 후보는 보존**한다(memory-api `extract.py`의 lenient mirror→strict 패턴; `list` 자체 검증이 필요하면 `TypeAdapter(list[T])` 사용). 즉 **wrapper-level은 항상 단건(`None` or `RerankResponse`)이고 item-level drop은 linker 호출부 책임** — rerank만 item drop, stance/judge는 call-level `None`.
-4. `.env.example`에 `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` (Vertex ADC) 추가. **테스트 격리**: `set_orchestrator(fake)`로 fake orchestrator 주입하고 fixture teardown에서 `set_orchestrator(None)`로 리셋(global singleton이 테스트 간 새지 않게) — flaky 방지.
+   사용처는 linker rerank(`discovery/linker`), stance 분류(`discovery/ranking/stance.py`), B2 judge(`eval/judge`) **세 곳뿐**. LLM 의존을 이 wrapper 뒤에 가둬, 추후 client replace 시 영향 면적을 최소화한다. **drop 단위 주의(coldbrew 매핑)**: stance/judge는 **단건** 호출이라 malformed→`None`(graceful degrade). **linker rerank는 후보 리스트를 산출**하므로 item-level drop이 필요한데, `invoke_structured(schema: type[T])`는 단일 모델만 검증하므로 `list[...]`을 직접 넘기지 않는다 — **wrapper 모델로 받는다**: `schema=RerankResponse`(`RerankResponse(items: list[LenientRerankItem])`, item은 관대한 mirror 모델). 그 다음 호출부(linker)가 `items`를 돌며 strict 도메인 모델로 **item별 재검증해 malformed item만 drop+warning, 나머지 후보는 보존**한다(memory-api `extract.py`의 lenient mirror→strict 패턴; `list` 자체 검증이 필요하면 `TypeAdapter(list[T])` 사용). 즉 **wrapper-level은 항상 단건(`None` or `RerankResponse`)이고 item-level drop은 linker 호출부 책임** — rerank만 item drop, stance/judge는 call-level `None`.
+5. **env + 테스트 격리.** 기본 `.env.example`은 **proxy 경로만** 채운다 — `LLM_PROXY_URL`(기본 `http://localhost:8081`, k8s dev=`http://e3llm-api/`)·`LLM_PROXY_MODEL`(`openai/gpt-4o-mini` | `google/gemini-2.5-flash`). direct provider env(`LLM_MODE=direct`·`LLM_PROVIDER`·`LLM_MODEL`·`LLM_API_KEY`·Vertex ADC `GOOGLE_CLOUD_PROJECT`/`GOOGLE_CLOUD_LOCATION`)는 **"optional direct mode"로만 주석 문서화**한다. **테스트 격리**: `set_client(fake)`로 fake client 주입 + fixture teardown에서 `set_client(None)` 리셋(global singleton이 테스트 간 새지 않게 — flaky 방지). **direct provider 테스트는 contract만** — schema conversion(`convert_schema`), model string parse(`parse_model_string`), fake client injection, provider factory env validation(`make_provider`). direct GoogleProvider 실호출은 Alpha 회귀에 넣지 않는다.
 
 ## 6. 구현 단계 (순서·체크리스트)
 
@@ -480,7 +486,7 @@ Alpha ranking은 가중합 스칼라를 만들지 않으므로 **`score` 필드 
 
 각 Phase는 독립 PR 단위. **acceptance**를 못 넘으면 다음으로 안 간다(CLAUDE.md 검증 우선).
 
-- **Phase 0 — Scaffold 정렬**: ~~`module/`→`discovery/` 개명~~ **(현재 기준 완료)**. 남은 작업: echo 제거(`discovery/echo/`·`api/routers/echo/`·`cli/echo.py`·관련 test), `e3llm` vendor(rsync) + deps(`google-genai`·`openai` 추가), `.env.example`에 `MEMORY_API_BASE_URL`/`GOOGLE_CLOUD_*` 추가, `discovery/config.py`(EnvSettings 서브클래스)·`discovery/llm.py` 골격, `cli`에서 echo 제거. *acceptance*: `pre-commit run --all-files`·`pytest` green(echo 제거로 깨지는 test 정리 포함).
+- **Phase 0 — Scaffold 정렬**: ~~`module/`→`discovery/` 개명~~ **(현재 기준 완료)**. 남은 작업: echo 제거(`discovery/echo/`·`api/routers/echo/`·`cli/echo.py`·관련 test), **memory-api `memory/llm/` 포팅**(`discovery/llm/`: config·providers·proxy·structured·wrapper; proxy default·direct provider=inactive, §5) + deps(`google-genai` 추가), `.env.example`에 `MEMORY_API_BASE_URL`/`LLM_PROXY_URL`/`LLM_PROXY_MODEL` 추가(`GOOGLE_CLOUD_*`=optional direct mode), `discovery/config.py`(EnvSettings base + settings) 골격, `cli`에서 echo 제거. *acceptance*: `pre-commit run --all-files`·`pytest` green(echo 제거로 깨지는 test 정리 포함).
 - **Phase 1 — 계약 동결**: `discovery/structs/*` + `providers/base.py` Protocol + **`providers/unavailable.py`(`Unavailable{Edge,Eligibility}Provider` + `NullPersonaProvider` — Protocol과 한 몸으로 지금 정의해 Phase 5는 와이어링만)**. entity read model 5종(`EntitySummary`/`Entity`/`EntitySuggestion`/`EntityConnections`/`ArticleHit`) + `Page[T]` envelope을 spec §2.6에 1:1 맞춤. `Query`/`NormalizedQuery`/`Recommendation` + `UserStanceRef`(§3.1) + linker 내부 `EntityCandidate`(§3) 정의. *acceptance*: `pre-commit run --all-files`(ruff+mypy) 통과, struct round-trip 테스트, **`Query`→`NormalizedQuery` normalizer 테스트**(§3.1 문법) — parse 실패 케이스를 명시 커버: `missing axis` / `missing dir` / `invalid dir`(enum 밖) / `unknown key` / `duplicated key` / `malformed segment` → for·against는 `invalid_need` 422; **need=depth/experience/coverage + user_stance_ref → no error(422 아님) + normalizer가 거부/raise 안 함**(`NormalizedQuery.user_stance`는 `None`, raw 문자열은 `NormalizedQuery`에 싣지 않고 원본 `Query`에 보존 — §3.1) — log-only의 *기록*(decision-log `user_stance_ref_raw`) 단정은 decision-log가 생기는 Phase 4/7에서; Phase 1은 "거부/유실하지 않고 통과시킨다"까지만 검증; 정상 입력 round-trip. 그리고 `UnavailableEdge/EligibilityProvider` 호출 시 `upstream_unavailable` raise + `NullPersonaProvider.get_prior`→`None` 단위 테스트.
 - **Phase 2 — Real anchor grounding**: `HttpKnowledgeEntityProvider`(`/knowledge/entities`, Page unwrap) + 최소 linker(LLM 없이 top-1). **provider/client lifecycle을 lifespan에 박는다**: startup에서 `await HttpKnowledgeEntityProvider.create()`로 **httpx client를 1번 생성**해 `app.state`에 붙이고(request마다 재생성 금지·pool/keep-alive 재사용), **shutdown에서 `await provider.aclose()`로 닫는다**(누수 방지). *acceptance* (PR 기본은 **offline 결정론**, live는 env-gated): **(a) PR 필수 — `httpx.MockTransport`로 canned `/knowledge/entities` 응답을 물려 topic→QID가 도는 결정론 테스트**(외부 도구 0개 원칙 §2, 로컬 서비스 상태에 PR red가 좌우되지 않게 — pinned `anchors.json` 전체 코퍼스는 Phase 6라 쿼리 1건짜리 canned로 충분) + **startup create / shutdown close 호출 검증** + **여러 request가 동일 client 인스턴스를 재사용하는지 검증**(request마다 새 client 생성 안 됨, TestClient lifespan context); **(b) env-gated smoke — 실제 memory-api(live)** 로 동일 경로를 도는 integration 테스트(`MEMORY_API_BASE_URL` 등 env 있을 때만, CI 기본 skip).
 - **Phase 3 — Mock providers + 코퍼스 로더**: `eval/providers/{edge,persona,eligibility}.py`(discovery Protocol 구현) + JSON fixture 스키마. *acceptance*: fixture 로드→`get_edges` 조회 단위 테스트, **배포 앱 import 그래프에 `eval/` 미포함 검증**(serving 경로 mock-free).
@@ -512,7 +518,7 @@ Phase 0–5 = "경로가 돈다", 6–8 = "평가가 돈다", 9 = "회귀가 잠
 - **Pydantic v2 strict** — 도메인은 `StrictBaseModel`, API는 `ApiModel(extra=forbid)`. enum은 `Field(strict=False)`(memory-api 규칙).
 - **async 일관** — 모든 I/O(httpx, LLM) async. 팩토리는 `async def create`. keyword-only 인자.
 - **`from __future__ import annotations`** 전 모듈. PEP 604 union(`str | None`), `list[...]`.
-- **LLM은 래퍼 뒤에만** — `discovery/llm.invoke_structured` 외부에서 e3llm 직접 호출 금지(테스트 주입성·replace 대비). LLM 호출 3곳(linker rerank·stance·B2 judge)은 memory-api 추출 패턴을 따른다: **structured output**(Pydantic schema 강제, `pydantic_response_format` 대응) + **dual-model**(lenient mirror로 받아 strict 도메인 모델로 재검증, malformed 1건은 fatal 아니라 drop+warning — coldbrew, memory-api `extract.py`).
+- **LLM은 래퍼 뒤에만** — `discovery/llm/wrapper.invoke_structured` 외부에서 LLM client 직접 호출 금지(테스트 주입성·replace 대비). wrapper는 provider 종류를 모르고 `LLMClient` Protocol만 의존(proxy default; direct provider는 `LLM_MODE=direct`에서만, Alpha acceptance 비포함). **provider 선택은 이 3곳(linker rerank·stance·B2 judge) 하부에서만 일어나고 agent ordering(§4.2)에는 절대 연결되지 않는다.** 호출 3곳은 memory-api 추출 패턴을 따른다: **structured output**(Pydantic schema 강제, `pydantic_response_format`) + **dual-model**(lenient mirror로 받아 strict 도메인 모델로 재검증, malformed 1건은 fatal 아니라 drop+warning — coldbrew, memory-api `extract.py`).
 - **over-engineering 금지** — Postgres/graph/vector/LTR/framework는 spec §5 when-needed. Alpha는 in-memory mock + structured 조회로 충분.
 - **결정론** — eval 코퍼스 빌더는 seed 고정(재현). LLM 사용 지점은 항상 fake로 대체 가능.
 
@@ -713,12 +719,12 @@ uv run python -m cli recommend --topic "…" --need depth --substrate eval-mock|
 | mock provider 위치/용도 | `eval/providers/` — 로컬 CLI 튜닝+eval 전용, 배포 serving 경로 미사용(repo엔 존재) | ✅ 확정 (배포 앱은 real만 와이어링, §3) |
 | favorite/user-preference 소비 | Alpha 미소비(slot만 문서 예약, no-op 구현 X). 출처=`bourbon-api`(예상, memory-api/persona 아님). **positive favorite=Post-Open-Beta tie-break**(depth/experience/for, against/orthogonal=0), **negative preference(hidden/muted/dismissed)=Open Beta 후보 항목** | ✅ 확정 (§3·§4.2) |
 | eval 산출물 git 추적 | fixtures/gold 추적, output/silver ignore (§8.5) | 기본값 |
-| LLM provider | e3llm 기본 `google/gemini`(Vertex ADC) | 기본값 (OpenAI 대안) |
+| LLM 경로 | proxy default(`LLM_PROXY_MODEL`; Gemini=`google/gemini-2.5-flash`). direct OpenAI/Gemini=inactive layer(`LLM_MODE=direct`, Alpha acceptance 비포함) | ✅ 리뷰 반영 (§5) |
 | echo 라우터 | 제거 | 기본값 |
-| e3llm runtime deps 배치 | main `[project] dependencies` (dev/eval만 group) | ✅ 리뷰 반영 (§5) |
+| LLM deps | `google-genai`만 main `[project] dependencies`에 추가(OpenAI=raw httpx, `openai`/e3llm 불필요) | ✅ 리뷰 반영 (§5) |
 
 Open Items(코드 무관, spec §9 deep research 대상): 한국어 EL 2-tier 세부, KG access(memory-api vs WDQS vs self-host), edge store 확정(통합 후), vector 도입 조건, eval stack(자체 metric 유지 vs Evidently).
 
 ---
 
-**다음 행동**: 개명은 현재 기준 완료됐으므로, 승인 시 **Phase 0의 남은 작업**(echo 제거 + e3llm vendor + `google-genai`/`openai` 추가 + `.env.example`/config·llm 골격)부터 착수한다.
+**다음 행동**: 개명은 현재 기준 완료됐으므로, 승인 시 **Phase 0의 남은 작업**(echo 제거 + memory-api `memory/llm/` 포팅 + `google-genai` 추가 + `.env.example`/config·llm 골격)부터 착수한다.
