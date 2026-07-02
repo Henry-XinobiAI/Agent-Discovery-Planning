@@ -194,7 +194,7 @@ Open Beta(외부 공개)에서 더하는 범위:
    depth / experience / similarity / for / against / orthogonal
 
 6. ranking
-   need-specific score + diversity
+   need-specific lexicographic ordering + diversity (Alpha: 가중합 scalar score 아님, ordering contract)
 
 7. serving
    후보, 설명, routing_target, push silence 반환
@@ -240,7 +240,7 @@ orthogonal fallback은 orthogonal로 가장하지 않는다. 충분한 orthogona
 
 추천 단위(decision log)로 남긴다. 이 골격은 분석이 Open Beta여도 **Alpha에서 설계해 넣는다**(나중 retrofit이 비쌈).
 
-- 추천 요청/노출 단위: `request_id`, mode(pull|push), `need_type`, topic/anchor_id, axis_hint, user_stance 유무, candidate list, ranking score snapshot, reason shown, evidence_refs 유무, routing_target
+- 추천 요청/노출 단위: `request_id`, mode(pull|push), `need_type`, topic/anchor_id, axis_hint, user_stance 유무, candidate list, ordering keys + feature snapshot, reason shown, evidence_refs 유무, routing_target
 - Implicit: impression, click/select, no-click, dismiss, 대화 시작 여부, turns, duration, early exit, re-engagement, (push) silence 여부
 - Explicit: 1-tap helpful/not-helpful, agent가 topic에 맞았는지, 추천 이유가 이해됐는지, for/against/orthogonal 의도가 맞았는지, 간단한 not-helpful reason
 

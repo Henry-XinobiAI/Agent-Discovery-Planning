@@ -39,7 +39,7 @@ Discovery & Recommendation은 `bourbon-agent-recommendation-api`라는 독립 �
 | 1 | **Query-side linker** | Discovery | 요청 topic text → Wikidata QID | `bourbon-memory-api` anchor search/get/connections (real) · §4 entity linking |
 | 2 | **Candidate retrieval** | Discovery | QID → agent-topic edge 후보 (+ sparse 시 이웃 anchor 확장) | agent-topic edge: Alpha mock, later Memory real / 이웃 확장은 anchor connections (real) |
 | 3 | **Gate** | Discovery | maturity / eligibility (+ 외부공개 시 safety) 필터 | eligibility: Alpha mock, later owner/privacy/safety |
-| 4 | **Need ranking** | Recommendation | depth / for / against / coverage need별 ordering(scalar score 아님 — build_plan §4.2 ordering contract) | persona prior: Alpha mock, later Persona real (ranking 로직은 build) |
+| 4 | **Need ranking** | Recommendation | depth / for / against / coverage need별 ordering(scalar score 아님 — build_plan §4.2 ordering contract) | persona는 Gate(모듈3)에서 바인딩; Alpha ranking은 persona no-op(slot reserved), later Persona real (ranking 로직은 build) |
 | 5 | **Serving** | Recommendation | 후보·이유·`routing_target` payload, push silence 판정 | — (build) |
 | 6 | **Decision-log** | (공통) | 입력·생존·탈락 이유 기록 | — (build) |
 
@@ -89,9 +89,9 @@ search_articles(q, qid?, lang?, limit=10) -> [ArticleHit]                       
 
 ```
 get_edges(anchor_id) -> [AgentTopicEdge{ agent_id, anchor_id,
-                          maturity, evidence_strength, freshness,
+                          maturity, evidence_strength, freshness, discoverable,   # discoverable = edge-level 노출 플래그 (§7.3)
                           experience_source_type, experience_specificity,   # experience need 전용 (build_plan §3.1)
-                          observed_stance, stance_summary, evidence_refs,
+                          stance_axis, observed_stance, stance_confidence, stance_summary, evidence_refs,
                           routing_target, source_owner }]
 ```
 
