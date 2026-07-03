@@ -225,7 +225,7 @@ global_persona_projection
 = agent_id에 붙은 공개 가능한 persona 요약
 ```
 
-각 `agent_id`는 owner/user에 속하지만 `user_id`와 동일하지 않다. anchor-personal link, stance/evidence projection, contribution/reputation은 `agent_id`에 붙는다. `routing_target`은 `agent_id`와 같을 수도 있고, 별도의 대화 endpoint일 수도 있다.
+각 `agent_id`는 owner/user에 속하지만 `user_id`와 동일하지 않다(bourbon-api에서 personal agent는 `personal_agent_id(owner_id)`=결정적 `uuid5`로 owner에서 파생 — memory는 `owner_id`만 주고 `agent_id`는 이 규칙으로 얻는다). anchor-personal link, stance/evidence projection, contribution/reputation은 `agent_id`에 붙는다. `routing_target`은 계약에서 제거됐다 — recommendation은 `agent_id`만 반환하고, 실제 연결/dispatch는 bourbon-api가 런타임에 해석한다(agent에 endpoint 필드 없음).
 
 ### 3.2 Agent-topic edge에 담기는 정보
 
@@ -266,8 +266,7 @@ agent-topic edge는 knowledge signal과 stance signal을 나눠 가진다.
   "versions": {
     "stance_space_version": "...",
     "global_profile_version": "..."
-  },
-  "routing_target": "..."
+  }
 }
 ```
 
@@ -485,7 +484,7 @@ anchor partition
    need-specific weighted score + diversity
 
 7. serving
-   후보 + 설명 + routing_target + push silence
+   후보(agent_id) + 설명 + push silence
 
 8. feedback logging
    acceptance, turns, explicit feedback (memory impact는 Post-Open-Beta)
@@ -568,7 +567,7 @@ Need가 바꾸는 것은 두 가지다.
 
 추천 단위(decision log)로 남긴다. 이 골격은 분석이 Open Beta여도 **Alpha에서 설계해 넣는다**(나중 retrofit이 비쌈).
 
-- 추천 요청/노출 단위: `request_id`, mode(pull|push), `need_type`, topic/anchor_id, axis_hint, user_stance 유무, candidate list, ordering keys + feature snapshot(Alpha=lexicographic ordering; 단일 scalar score 아님), reason shown, evidence_refs 유무, routing_target
+- 추천 요청/노출 단위: `request_id`, mode(pull|push), `need_type`, topic/anchor_id, axis_hint, user_stance 유무, candidate list(`agent_id`), ordering keys + feature snapshot(Alpha=lexicographic ordering; 단일 scalar score 아님), reason shown, evidence_refs 유무
 - Implicit: impression, click/select, no-click, dismiss, 대화 시작 여부, turns, duration, early exit, re-engagement, (push) silence 여부
 - Explicit: 1-tap helpful/not-helpful, agent가 topic에 맞았는지, 추천 이유가 이해됐는지, for/against/orthogonal 의도가 맞았는지, 간단한 not-helpful reason
 
@@ -895,7 +894,7 @@ revoke
 | safety verdict | Discovery 외부 (§11) |
 | privacy/eligibility | 별도 결정 영역 (§11) |
 
-Safety/privacy verdict의 lifecycle은 해당 기능을 도입하는 시점에 함께 정한다(§11). 후보 agent나 특정 routing target이 나중에 unsafe로 판정되는 구조를 도입하면, Discovery 외부에서 update 또는 revoke 이벤트가 발행되고 Discovery는 해당 candidate projection을 재계산하거나 gate에서 제외한다.
+Safety/privacy verdict의 lifecycle은 해당 기능을 도입하는 시점에 함께 정한다(§11). 후보 agent가 나중에 unsafe로 판정되는 구조를 도입하면, Discovery 외부에서 update 또는 revoke 이벤트가 발행되고 Discovery는 해당 candidate projection을 재계산하거나 gate에서 제외한다.
 
 ### 9.7 Source: User preference / favorite (reserved; positive favorite 소비는 Post-Open-Beta)
 
@@ -970,7 +969,7 @@ Alpha는 내부/closed 범위로 운영하므로 safety/privacy 게이트 없이
 | context verdict | 지금 이 대화 맥락에서 추천을 시도해도 되나 (push) | Push(Open Beta) |
 | 적용 지점 | hard gate를 후보별·맥락별로 어디서 적용하나 | 외부 공개 |
 | unknown 처리 | verdict가 unknown일 때 fail-open이냐 fail-closed냐 | 외부 공개 |
-| lifecycle | 후보·routing target이 나중에 unsafe로 판정되면 revoke/update → Discovery가 재계산·제외 | projection/cache 도입 시 |
+| lifecycle | 후보·agent가 나중에 unsafe로 판정되면 revoke/update → Discovery가 재계산·제외 | projection/cache 도입 시 |
 
 safety와 novelty는 trade-off하지 않는다(§6.4). 따라서 safety는 weak prior가 아니라 hard gate다.
 
@@ -981,8 +980,8 @@ safety와 novelty는 trade-off하지 않는다(§6.4). 따라서 safety는 weak 
 | discoverability opt-in | 이 agent를 애초에 후보로 노출해도 되나(owner 동의) — 최소 1비트 | 외부 공개(Open Beta) |
 | 노출 입도 | 후보에 대해 무엇까지 보여주나 — description 수준(`stance_summary`, 근거 존재 여부)이지 raw memory 내용은 아님 | 외부 공개 |
 | provenance 노출 | `evidence_refs`를 추천 이유로 보일 때 출처를 얼마나 드러내나(익명 vs attributed) | 외부 공개 |
-| routing_target 노출 | 연결 endpoint를 어디까지 노출하나 | 외부 공개 |
+| ~~routing_target 노출~~ | 계약에서 제거 — recommendation은 `agent_id`만 반환하고 dispatch는 bourbon-api가 해석하므로 노출 이슈 없음 | — |
 | 동의 범위·철회 | 토픽별이냐 전역이냐, 철회 시 전파 방식 | 외부 공개 |
 | 공통사실 승급과의 관계 | L3 공통사실 승급의 익명·권한 link 정책과 일관되게 둘 것 | full privacy 설계 시 |
 
-full privacy/permission 시스템은 Post-Open-Beta다(§10). 다만 외부 공개의 선결 조건은 단순한 opt-in 1비트가 아니라 **minimum external eligibility layer**다 — discoverability opt-in에 더해 `routing_target`·provenance·`stance_summary`의 노출 입도까지 외부 공개 전에 결정해야 한다. full privacy/permission 시스템과 이 최소 layer의 경계가 §11의 핵심 구분이다.
+full privacy/permission 시스템은 Post-Open-Beta다(§10). 다만 외부 공개의 선결 조건은 단순한 opt-in 1비트가 아니라 **minimum external eligibility layer**다 — discoverability opt-in에 더해 provenance·`stance_summary`의 노출 입도까지 외부 공개 전에 결정해야 한다. full privacy/permission 시스템과 이 최소 layer의 경계가 §11의 핵심 구분이다.

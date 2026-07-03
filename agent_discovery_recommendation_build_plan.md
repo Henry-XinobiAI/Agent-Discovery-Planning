@@ -24,7 +24,7 @@
 
 **이 계획이 끝나면 가능한 것** (= Alpha 구현 + spec §8 평가):
 
-1. `POST /recommend`가 `(topic_text, need_type, user_stance_ref?)`를 받아 후보 agent를 need에 맞게 정렬해 이유·`routing_target`과 함께 돌려준다(이 **후보 반환 full path**는 provider가 갖춰진 local/eval/test override에서 성립; 배포본은 아래 Alpha 의미 배너 참조).
+1. `POST /recommend`가 `(topic_text, need_type, user_stance_ref?)`를 받아 후보 agent를 need에 맞게 정렬해 이유·근거와 함께 `agent_id` 목록으로 돌려준다(이 **후보 반환 full path**는 provider가 갖춰진 local/eval/test override에서 성립; 배포본은 아래 Alpha 의미 배너 참조).
 2. 경로 전체가 **local CLI / eval / TestClient(dependency override)** 에서 end-to-end로 검증된다: **real(또는 pinned fixture) anchor grounding + `eval/providers/`의 mock edge/persona/eligibility**. 배포 앱은 real provider만 와이어링하고 mock을 서빙에 쓰지 않는다(§3 와이어링 규칙). mock→real은 구현 교체뿐(spec §7.6).
 3. `uv run python -m cli eval run`으로 평가 하니스가 돌아 grounding/retrieval/gate/ranking/stance/coverage/reason 지표를 **need별·난이도 stratum별**로 보고하고 quality gate(ratchet)를 건다(spec §8).
 4. mock 코퍼스가 **실제 QID에 grounding된, 가드 역산·난이도 층화·known-item needle을 포함한** 평가 가능 데이터다(spec §7.3·§8.4) — happy-path 더미가 아니다.
@@ -74,7 +74,7 @@ bourbon-agent-recommendation-api/
 │   ├── retrieval.py               ★ 모듈2: QID→edges + sparse 이웃 확장
 │   ├── gate.py                    ★ 모듈3: maturity/eligibility 필터
 │   ├── ranking.py                 ★ 모듈4: need별 ordering(depth/experience/for/against/coverage, §4.2 — scalar score 아님) + for/against stance 분류(symbolic)
-│   ├── serving.py                 ★ 모듈5: payload + routing_target + silence 판정(Alpha=stub)
+│   ├── serving.py                 ★ 모듈5: payload(agent_id·이유·evidence_refs) + silence 판정(Alpha=stub)
 │   ├── decision_log.py            ★ 모듈6: decision-log writer (day-one; record 모델은 structs/decision_log.py)
 │   └── pipeline.py                ★ 1→6 오케스트레이션 (RecommendationPipeline)
 ├── eval/                          ★ 평가 하니스 (CLI에서 실행)
@@ -142,9 +142,11 @@ class MemoryEdgeProvider(Protocol):               # runtime contract; Alpha는 l
     async def get_edges(self, anchor_id: str) -> list[AgentTopicEdge]: ...
     # Future real edge source 후보(메모): memory-api `GET /personal/groundings/{qid}` → Page[GroundingMatch]
     # ={owner_id, entity:PersonalEntitySummary}. QID→owner personal entity retrieval은 시드하지만
-    # agent_id/maturity/evidence_strength/freshness/observed_stance/stance_confidence/routing_target/discoverable가
-    # 전부 빠져 있어 AgentTopicEdge를 대체하지 못함 — translation layer 또는 전용 discovery endpoint 필요(Open Beta).
-    # 특히 owner_id/personal_entity_id를 Discovery의 agent_id와 어떻게 잇느냐가 real MemoryEdgeProvider 통합의 첫 handshake(선결).
+    # maturity/evidence_strength/freshness/observed_stance/stance_confidence가 빠져 있어 AgentTopicEdge를
+    # 대체하지 못함 — translation layer 또는 전용 discovery endpoint 필요(Open Beta).
+    # agent_id는 memory가 아니라 owner_id에서 파생: bourbon-api personal_agent_id(owner_id)=uuid5(결정적).
+    # routing_target은 계약에서 제거(memory·agent-rec 둘 다 미관리; bourbon-api가 런타임 dispatch 해석).
+    # (owner_id==bourbon-api users.id 전제 — memory 팀과 확인 필요.)
 
 class PersonaProvider(Protocol):                  # runtime contract; Alpha는 local/eval에서만 mock 구현
     async def get_prior(self, agent_id: str) -> PersonaPrior | None: ...
@@ -225,7 +227,7 @@ axis=<text>; dir=<for|against|neutral>; text=<optional text>
 
 | 필드 | 타입 | 의미 | source_owner |
 |---|---|---|---|
-| `agent_id` | `str` | agent 식별자 | memory |
+| `agent_id` | `str` | agent 식별자. **memory는 `owner_id`만 제공**; `agent_id`는 edge assembly 단계에서 bourbon-api `personal_agent_id(owner_id)`로 파생 | bourbon-api / derived |
 | `anchor_id` | `str` | = Wikidata QID (spec §2.6) | memory |
 | `maturity` | `float` | topic_knowledge_maturity (게이트 임계의 1차 신호) | memory |
 | `evidence_strength` | `float` | 근거의 양/질 | memory |
@@ -237,9 +239,9 @@ axis=<text>; dir=<for|against|neutral>; text=<optional text>
 | `stance_summary` | `str \| None` | 입장 요약 텍스트 | memory |
 | `stance_confidence` | `float \| None` | `observed_stance`의 추출/추정 신뢰도(= directions §9.3 `extraction_confidence`). §4.2 for/against filter guard `≥ τ`의 입력 | memory |
 | `evidence_refs` | `list[str]` | conversation 원문 ref (Alpha 후보경로 미사용) | memory |
-| `routing_target` | `str` | 라우팅 목적지(room/endpoint 식별자) | owner |
+| ~~`routing_target`~~ | — | **계약에서 제거**: recommendation은 `agent_id`만 반환하고 dispatch는 bourbon-api가 런타임 해석. Current code still carries routing_target on AgentTopicEdge / RecommendationItem; remove in the implementation pass. | removed |
 | `discoverable` | `bool` | edge 수준 노출 가능 여부 | privacy |
-| `source_owner` | `dict[str,SourceOwner]` | 필드별 소유 맵(위 열을 코드로) | — |
+| `source_owner` | `dict[str,SourceOwner]` | 필드별 소유 맵(위 열을 코드로). *Current code source_owner map still reflects pre-removal fields (`agent_id=MEMORY`, `routing_target=OWNER`); update in implementation pass.* | — |
 
 **`PersonaPrior`** (contract v0; Alpha는 local/eval fixture가 이 모델을 채움, spec §2.4) — `agent_id: str` · `prior_stance: Stance \| None` · `stable_traits: list[str]` · `expertise_claims: list[str]`(주장된 QID/topic). **prior는 maturity를 못 채운다**(hollow guard, spec §10): ranking에서 동일 band 내 보조 신호로만.
 
@@ -305,7 +307,7 @@ class RecommendationPipeline:
 - **②  Retrieval**: `edges.get_edges(qid)`. sparse면 `expand_connections` 이웃 QID들로 풀 확장(이웃 확장은 real). **(future-edge 주의, 2026-07-02)** memory-api `connections(limit=)`의 `limit`은 **associative links(`links_out`/`links_in`)에만** 적용되고 taxonomy(`broader`/`narrower`)는 별도 cap(`_TAXONOMY_CAP`, main `d66b2c1`에서 50→100)이라 `limit` 하나로 이웃 총량이 제어되지 않는다. `_neighbor_qids()`는 broader/narrower/links를 전부 평탄화하므로, **real `MemoryEdgeProvider` 통합 전 Discovery-side `RETRIEVAL_MAX_NEIGHBORS` cap을 둬 이웃 폭발을 막는다**(Alpha는 edge=`Unavailable*`라 즉시 문제 아님 — carried-forward, Phase 5 무영향).
 - **③  Gate(Rankable)**: `eligibility.check`(discoverable) + maturity 임계 + `edge.discoverable` (need-agnostic drop만). **`persona.get_prior`도 여기서 바인딩**해 `EdgeHit`→`Candidate`를 완성한다(생존자에만 fetch; per-agent provider I/O를 ③에 모아 ④ Ranker를 provider-I/O 없는 deterministic stage로 유지). safety/privacy는 Alpha inactive(directions §11).
 - **④  Ranking**: need별 ordering(§4.2 — filter + lexicographic keys, scalar score 없음) + stance 분류(for/against). **provider I/O 없는 deterministic ranking stage** — `Candidate.features`/`ordering_keys`/`stance_axis`/`stance_dir`/`drop_reason`을 in-place annotate하므로 referentially pure는 아니나 provider I/O·비결정성은 없다. persona는 ③에서 이미 바인딩됨(정렬에선 within-band late tie-break 슬롯이나 **Alpha no-op**, §4.2). persona prior는 maturity를 못 채운다(hollow guard, spec §10).
-- **⑤  Serving**: 후보·이유·`routing_target` payload. push silence는 Alpha에서 threshold stub(policy는 Open Beta).
+- **⑤  Serving**: 후보(`agent_id`)·이유·evidence_refs payload. push silence는 Alpha에서 threshold stub(policy는 Open Beta). (`routing_target`은 계약에서 제거 — dispatch는 bourbon-api가 런타임 해석.)
 - **⑥  Decision-log**: 입력·중간값·생존/탈락 이유를 day-one 기록(§4.3). Open Beta OPE replay harness로 승계(spec §7.5·§8.9).
 
 ### 4.1 API contract — `POST /recommend`
@@ -332,7 +334,6 @@ class RecommendationPipeline:
   "recommendations": [
     { "agent_id": "a_07", "rank": 1,                       // Alpha는 scalar score 없이 rank만(§4.2 ordering contract)
       "stance": { "axis": "...", "dir": "for" },           // for/against need일 때
-      "routing_target": "room:...",
       "reasons": ["maturity 0.9·evidence 0.8", "..."],     // evidence_ref에 묶임(§8.5 reason 지표)
       "evidence_refs": ["msg:..."] }
   ],
@@ -340,6 +341,8 @@ class RecommendationPipeline:
   "decision_log_id": "dl_..."                               // §4.3 로그와 연결
 }
 ```
+
+> **`routing_target` 제거(target 계약).** 응답은 `agent_id` 중심이며 `routing_target`은 담지 않는다 — dispatch는 bourbon-api가 `agent_id`로 런타임 해석한다(agent에 endpoint 필드 없음). Current code still carries routing_target on AgentTopicEdge / RecommendationItem; remove in the implementation pass.
 
 **error code** (`AppError` 서브클래스, template `api/structs/errors.py` 패턴):
 
@@ -698,9 +701,9 @@ uv run python -m cli recommend --topic "…" --need depth --substrate eval-mock|
 코드와 별개로 Alpha 중 Memory와 **합의 트랙**:
 
 1. **QID vocabulary 의미 계약** — query-side linker QID ↔ producer-side anchoring QID가 같은 disambiguation 기준인지, alias/redirect/`LOCAL` anchor 규칙(spec §2.6·§7.4). 코퍼스 빌드가 이 정렬의 1차 리허설.
-2. **edge contract shape + 필드별 source_owner** — `maturity/evidence_strength/freshness/observed_stance/routing_target/discoverability`를 실제로 줄 수 있는지(spec §2.6·§7.2). mock edge 스키마가 합의 초안 역할.
+2. **edge contract shape + 필드별 source_owner** — `maturity/evidence_strength/freshness/observed_stance/discoverability`를 실제로 줄 수 있는지(spec §2.6·§7.2). mock edge 스키마가 합의 초안 역할. (`routing_target`은 계약에서 제거 — bourbon-api 런타임 해석; `agent_id`는 owner_id에서 파생.)
 
-   > **(2026-07-02 갱신 메모, future MemoryEdgeProvider)** memory-api **main personal KG**(`d66b2c1`)에 **entity salience**(`salience` + owner/other refs·statements·opinions 분해)와 mention **reference_kind**(`public_figure`/`personal_acquaintance`/`unknown`)가 들어와 있다(WIP 브랜치가 아니라 main 코드). Discovery 입장의 판단은 그대로다: **이들은 retrieval prior·grounding precision 보조 신호 후보일 뿐, `maturity`/`evidence_strength`/`stance_confidence`를 대체하지 않는다** — salience는 "그 owner에게 자주/중요하게 등장"이지 "전문성이 높다"가 아니다(혼동 시 popularity prior 재유입 — directions의 평판/기여도 popularity-prior 금지 원칙 위반). 순기능: `reference_kind=personal_acquaintance → LOCAL` short-circuit이 public QID에 개인 지인 오결합을 줄여 `/personal/groundings/{qid}`의 noise를 낮춘다 = Discovery grounding precision↑. **신규(4106366 이후, `#36` 계열)**: statement가 이제 **public-KG-by-QID로 직접 매핑**되고(`_resolve_statement_entity` QID-direct→title-grounding fallback), `Statement`에 `subject_qid`/`object_qid`가 비정규화되며, `statement_edges.py`가 ASSERTED edge를 만든다 — **memory-api에서 "agent-topic edge"에 가장 가까운 실체**로, future real `MemoryEdgeProvider` 소스가 형태를 잡아가는 신호다(`anchor_id=QID` join이 Discovery 계약과 정렬). 다만 여전히 `/personal/*`(공개 `/knowledge` 아님)이고 아래 §11/implementation §2.6대로 `routing_target`·discoverable/privacy/safety·`maturity`/`evidence`/`freshness`·`experience_*`·stance 필드가 빠져 있어 **`AgentTopicEdge` 직접 대체는 여전히 불가** → Phase 5 `Unavailable{Edge,Eligibility}Provider` 유지 판단 재확인. **salience serving 금지 재강조**: 나중에 쓰더라도 Alpha ordering은 lexicographic·no-aggregate-scalar이므로 salience를 serving score로 끌어오지 않고 **atomic feature 또는 eval/diagnostic로만** 쓴다.
+   > **(2026-07-02 갱신 메모, future MemoryEdgeProvider)** memory-api **main personal KG**(`d66b2c1`)에 **entity salience**(`salience` + owner/other refs·statements·opinions 분해)와 mention **reference_kind**(`public_figure`/`personal_acquaintance`/`unknown`)가 들어와 있다(WIP 브랜치가 아니라 main 코드). Discovery 입장의 판단은 그대로다: **이들은 retrieval prior·grounding precision 보조 신호 후보일 뿐, `maturity`/`evidence_strength`/`stance_confidence`를 대체하지 않는다** — salience는 "그 owner에게 자주/중요하게 등장"이지 "전문성이 높다"가 아니다(혼동 시 popularity prior 재유입 — directions의 평판/기여도 popularity-prior 금지 원칙 위반). 순기능: `reference_kind=personal_acquaintance → LOCAL` short-circuit이 public QID에 개인 지인 오결합을 줄여 `/personal/groundings/{qid}`의 noise를 낮춘다 = Discovery grounding precision↑. **신규(4106366 이후, `#36` 계열)**: statement가 이제 **public-KG-by-QID로 직접 매핑**되고(`_resolve_statement_entity` QID-direct→title-grounding fallback), `Statement`에 `subject_qid`/`object_qid`가 비정규화되며, `statement_edges.py`가 ASSERTED edge를 만든다 — **memory-api에서 "agent-topic edge"에 가장 가까운 실체**로, future real `MemoryEdgeProvider` 소스가 형태를 잡아가는 신호다(`anchor_id=QID` join이 Discovery 계약과 정렬). 다만 여전히 `/personal/*`(공개 `/knowledge` 아님)이고 아래 §11/implementation §2.6대로 discoverable/privacy/safety·`maturity`/`evidence`/`freshness`·`experience_*`·stance 필드가 빠져 있어 **`AgentTopicEdge` 직접 대체는 여전히 불가**(`routing_target`은 계약에서 제거됨·별개; `agent_id`는 owner_id에서 파생) → Phase 5 `Unavailable{Edge,Eligibility}Provider` 유지 판단 재확인. **salience serving 금지 재강조**: 나중에 쓰더라도 Alpha ordering은 lexicographic·no-aggregate-scalar이므로 salience를 serving score로 끌어오지 않고 **atomic feature 또는 eval/diagnostic로만** 쓴다.
 
 이 둘은 contract test가 "모양"만 보고 "값의 의미"는 못 잡으므로(spec §7.4) 별도 합의가 필요하다.
 

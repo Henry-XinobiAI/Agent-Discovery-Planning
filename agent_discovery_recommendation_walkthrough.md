@@ -106,7 +106,6 @@ Alpha에서 **memory-api가 진짜로 주는 건 "주제(anchor/entity) 정보"�
   "need_type": "depth",
   "recommendations": [
     { "agent_id": "a_07", "rank": 1,                      // ★ score 없음, rank만
-      "routing_target": "room:rl-deep",
       "reasons": ["maturity 0.91·evidence 0.85"],
       "evidence_refs": ["msg:..."] }
   ],
@@ -174,9 +173,9 @@ Alpha에서 **memory-api가 진짜로 주는 건 "주제(anchor/entity) 정보"�
   "anchor": { "qid": "Q176789", "label": "강화학습" },
   "need_type": "depth",
   "recommendations": [
-    { "agent_id": "a_07", "rank": 1, "routing_target": "room:rl-deep",
+    { "agent_id": "a_07", "rank": 1,
       "reasons": ["maturity 0.91(high)·evidence 0.85"] },
-    { "agent_id": "a_03", "rank": 2, "routing_target": "room:ml-general",
+    { "agent_id": "a_03", "rank": 2,
       "reasons": ["maturity 0.62(medium)·evidence 0.90"] }
   ],
   "silence": { "silent": false, "reason": null },
