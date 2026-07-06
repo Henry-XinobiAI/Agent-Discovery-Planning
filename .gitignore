@@ -3,3 +3,6 @@
 
 # 작업 스크래치(계획·todo) — 로컬 전용
 tasks/
+
+# macOS 아티팩트
+.DS_Store
