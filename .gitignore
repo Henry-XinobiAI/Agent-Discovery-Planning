@@ -1,8 +1,8 @@
-# Notion 공유용 파생 문서는 로컬 전용 — git tracking 안 함
+# Notion-export derived docs — local only, not tracked
 *_notion.md
 
-# 작업 스크래치(계획·todo) — 로컬 전용
+# Work scratch (plans, todos) — local only
 tasks/
 
-# macOS 아티팩트
+# macOS artifacts
 .DS_Store
