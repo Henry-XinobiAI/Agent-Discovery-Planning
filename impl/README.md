@@ -144,10 +144,11 @@ stance/drop_reason), ⑥에서 감사 row로 굳습니다.
 
 ---
 
-## 6. LLM 레이어 — 포팅했지만 Alpha에선 대부분 잠들어 있음
+## 6. LLM 레이어 — rerank leg는 깨어남(Phase 8A), 나머지는 잠듦
 
 memory-api `memory/llm`에서 structured-completion spine만 포팅. proxy default, direct는 비활성.
-Alpha 파이프라인은 grounding에서 LLM을 안 쓰므로(기호적 매칭만) Phase 8 rerank를 위한 준비물.
+grounding은 기본 기호적 매칭이지만, gate가 애매해서 실패하면 **LLM rerank fallback**(Phase 8A)이
+serving에서 돎 — e3llm-api proxy 경유, keyless Gemini 기본. stance normalizer / B2 judge는 아직 잠듦.
 
 **→ 자세히: [08. LLM 레이어](08-llm-layer.md)**
 

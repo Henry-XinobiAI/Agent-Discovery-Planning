@@ -381,6 +381,7 @@ stdout에 기계-청결한 단일 봉투:
 - **Precondition** (시끄럽게, 먼저 확인): 고유한 `ideal`이 없는 needle, 또는 분모가 빈 임의의 gated
   지표 — *해석*될 수 없는 지표는 그 threshold가 저울질되기 전에 실패한다.
 
-`ambiguous_fallback_rate`는 Alpha에서 `0.0`이다. linker에 rerank fallback 경로가 없기 때문이다
-(`fallback_used`는 항상 `false`); ratchet 슬롯은 실재하지만 잠잠하며, fallback이 안착하는 Phase 8에서
-teeth를 갖게 된다.
+`ambiguous_fallback_rate`는 eval에서 `0.0`이다. eval이 reranker를 주입하지 않기 때문이다(linker의
+offline default `reranker=None`) — rerank fallback이 eval에선 안 떠 `fallback_used`가 항상 `false`.
+ratchet 슬롯은 실재하지만 잠잠하며, fallback 자체는 serving에서 이미 live다(Phase 8A). real-anchor
+코퍼스로 eval을 reranker와 함께 돌릴 때 teeth를 갖게 된다.

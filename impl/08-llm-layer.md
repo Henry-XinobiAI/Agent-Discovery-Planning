@@ -3,8 +3,8 @@
 ← [개요로 돌아가기](README.md) · 관련: [03. linker](03-normalize-and-linker.md) ·
 [11. Phase 8/9 로드맵](11-phase-8-9-roadmap.md)
 
-**포팅은 했지만 Alpha 파이프라인에선 대부분 잠들어 있는** 레이어입니다. Phase 8 rerank/stance/
-judge를 위한 준비물입니다.
+포팅한 structured-LLM 레이어. **rerank leg는 Phase 8A에서 깨어나 serving에서 동작**합니다(linker
+fallback — gate 실패 시에만 호출). stance normalizer / B2 judge는 아직 잠들어 있습니다.
 
 ---
 
@@ -51,17 +51,19 @@ direct adapter는 후속.
 
 ---
 
-## Alpha에서 왜 잠들어 있나
+## 무엇이 깨어 있고 무엇이 잠들어 있나
 
-Alpha 파이프라인의 어느 단계도 LLM을 호출하지 않습니다:
-- linker(①)는 **기호적 label 매칭**만 ([03 문서](03-normalize-and-linker.md)).
+serving에서 LLM을 호출하는 유일한 지점은 **linker rerank fallback**(Phase 8A)입니다 — 기호적
+gate가 애매해서 실패할 때만 같은 후보셋을 LLM으로 재채점 ([03 문서](03-normalize-and-linker.md)).
+나머지는 여전히 결정적입니다:
 - normalize(ⓠ)는 **결정적 파서**만.
 - ranking/serving reason은 **결정적 문자열**.
-- eval 채점은 **결정적 gold — LLM judge 없음** ([10 문서](10-eval-metrics-and-gates.md)).
+- eval 채점은 **결정적 gold — LLM judge 없음** ([10 문서](10-eval-metrics-and-gates.md)). 그리고
+  eval은 reranker를 **주입하지 않아**(linker의 offline default `reranker=None`) rerank fallback이
+  eval에선 절대 안 뜸 → 오프라인·결정성 유지 (baseline 불변).
 
-그래서 이 레이어는 "언제든 붙일 수 있게 이음매를 준비해 둔" 상태입니다. `GroundingResult.method`,
-`LoggedGrounding.fallback_used`, `ScoredCandidate` 같은 자리가 이미 `"rerank"`/fallback을 위해
-예약돼 있습니다.
+`GroundingResult.method="rerank"` / `fallback_used` 자리는 이제 예약이 아니라 **활성**입니다.
+stance normalizer / B2 silver judge를 위한 이음매는 아직 예약 상태로 남아 있습니다.
 
 ---
 
@@ -74,6 +76,6 @@ Alpha 파이프라인의 어느 단계도 LLM을 호출하지 않습니다:
 
 ---
 
-**요점:** LLM spine은 포팅됐지만 Alpha는 결정성을 위해 그것을 우회합니다. Phase 8이 linker rerank
-/ stance normalizer / B2 silver judge로 이 레이어를 깨웁니다 —
-[11. Phase 8/9 로드맵](11-phase-8-9-roadmap.md).
+**요점:** Phase 8A가 이 레이어의 **rerank leg를 깨워** serving에서 동작시킵니다 (linker fallback,
+e3llm-api proxy 경유 · keyless Gemini 기본). eval은 reranker 미주입으로 오프라인·결정적 유지.
+stance normalizer / B2 silver judge는 아직 예약 — [11. Phase 8/9 로드맵](11-phase-8-9-roadmap.md).

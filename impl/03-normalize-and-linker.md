@@ -38,7 +38,8 @@ if query.need_type in (FOR, AGAINST):
 
 ## ① linker (`discovery/linker.py`) — 주제 텍스트 → QID 하나
 
-**결정적 경로** (Phase 4). LLM 없음, popularity 없음.
+**기호적 우선 경로** (Phase 4). popularity 없음. 기호적 gate 통과가 정상 경로 — LLM은 gate가
+애매해서 실패할 때만 rerank **fallback**으로 호출됩니다 (Phase 8A, [08 LLM](08-llm-layer.md)).
 
 ### 흐름
 
@@ -71,9 +72,11 @@ _CONF_SINGLE_ROUTE = 0.55  # 한 경로만 (fuzzy/partial)
 - **popularity 신호 절대 안 씀** (D2): `importance`/`pageview`/`pagerank`가 선택을 조종하지
   않음 → 앵커 선택이 popularity prior를 물려받지 않음.
 - alias tier는 별도로 관측 불가(`EntitySummary`/`EntitySuggestion` 투영에 aliases 없음, aliases는
-  full `Entity`에만) → Phase 4는 route provenance로 흡수. Phase 8에서 재도입.
-- **injection-safe by construction**: 후보 텍스트는 오직 *비교*(정규화 문자열 동등)만 되고 절대
-  해석되지 않음 → 적대적 label이 제어 흐름을 못 바꿈. Phase 8 LLM 경로도 이걸 지켜야 함.
+  full `Entity`에만) → Phase 4는 route provenance로 흡수. Phase 8B에서 재도입.
+- **injection-safe by construction**: 기호적 경로에서 후보 텍스트는 오직 *비교*(정규화 문자열 동등)만
+  되고 절대 해석되지 않음 → 적대적 label이 제어 흐름을 못 바꿈. Phase 8A rerank fallback도 이를
+  **구조적으로 봉쇄**함 — 후보 텍스트는 data(고정 system 프롬프트·user turn JSON), 응답은 후보 qid
+  집합에 전단사 검증, 채택 winner는 여전히 gate 통과 필수.
 
 ### (3) margin — 애매함 판정
 ```python
@@ -101,8 +104,9 @@ if top.confidence < CONF_MIN or margin < MARGIN_MIN:
 ```python
 class GroundingResult:
     qid / label / confidence / margin
-    method: Literal["symbolic"]        # "rerank"는 Phase 8 예약
-    considered: list[ScoredCandidate]  # confidence-desc, 로그용
+    method: Literal["symbolic","rerank"]  # "rerank" = LLM fallback으로 채택 (Phase 8A)
+    fallback_used: bool                   # rerank fallback이 grounding을 구제했을 때만 True
+    considered: list[ScoredCandidate]     # confidence-desc, 로그용
 ```
 
 ---
@@ -112,7 +116,8 @@ class GroundingResult:
 - **provisional (바뀔 수 있음):** confidence *함수* (3-tier 값), threshold seed.
 - **permanent (구조):** gate/margin *구조*, injection-safety, popularity 배제.
 
-Phase 8에서 confidence 함수가 LLM listwise reranker로 바뀌어도 gate/margin 골격은 유지됩니다.
+Phase 8A가 gate 실패 시 LLM rerank **fallback**을 붙였습니다 — gate/margin 골격은 그대로, 별도
+`RERANK_*` 상수로 재심. 기호적 confidence를 listwise reranker로 **완전 대체**하는 건 Phase 8B.
 ([11 로드맵](11-phase-8-9-roadmap.md) 참조.)
 
 ---

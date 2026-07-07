@@ -85,8 +85,9 @@ sink.write(row)
 ```
 
 ### 비자명한 결정
-- **`fallback_used=False` 하드코딩** — Alpha에는 rerank fallback 경로가 없음. Phase 8에서 teeth.
-  이게 [Phase 7 ambiguous_fallback_rate](10-eval-metrics-and-gates.md)가 지금 0.0인 이유.
+- **`fallback_used=grounding.fallback_used`** (Phase 8A) — rerank fallback이 grounding을 구제하면
+  True로 기록되어 serving 경로에선 live. eval은 reranker를 주입하지 않아(offline default) 항상
+  False → [ambiguous_fallback_rate](10-eval-metrics-and-gates.md)가 eval에서 0.0인 이유.
 - **`need_filter="same_axis_required_stance"` 상수** — 방향은 각 entry의 `stance.dir`에 있음.
   그래서 "against"가 절대 stance 라벨로 오독되지 않고 "유저의 반대 편"으로 읽힘.
 - **`ConsideredEntity.confidence`** (score 아님) — 시스템 전역 "no scalar score" 규칙과의 혼동
