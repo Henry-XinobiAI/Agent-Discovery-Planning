@@ -406,10 +406,11 @@ safety / privacy verdict의 lifecycle은 해당 기능을 도입하는 시점에
 > real anchor grounding(+LLM rerank fallback), for/against ordering, serving + decision log +
 > 평가 게이트. 단, 후보 substrate(edge/eligibility/persona)는 아직 mock이라 배포된 Pull API는
 > grounding 후 후보 단계에서 503을 반환한다. user-facing Alpha 성립에 남은 것은 **단계 2·4의
-> real edge + maturity**뿐이며, 이를 코드 repo **Phase 10**으로 승격했다(상세:
-> `impl/11-phase-8-9-roadmap.md`). 최소 범위: `MemoryEdgeProvider`만 real 교체(협의 출발점 =
-> 2026-07-03 rec-signal 계약), eligibility는 `discoverable=true` 가정의 얇은 stub(visibility 보류
-> 합의), persona는 NullProvider 유지(Alpha ranking no-op). 핵심 협의 안건 = **maturity 소유**
+> real edge + maturity + allow-all eligibility 배선**이며, 이를 코드 repo **Phase 10**으로
+> 승격했다(상세: `impl/11-phase-8-9-roadmap.md`). 최소 범위: `MemoryEdgeProvider`만 real
+> 교체(협의 출발점 = 2026-07-03 rec-signal 계약), eligibility는 `discoverable=true` 가정의 얇은
+> stub 배선(visibility 보류 합의; 현 배포는 hard-required `Unavailable*`라 real edge만으로는
+> gate에서 여전히 503), persona는 NullProvider 유지(Alpha ranking no-op). 핵심 협의 안건 = **maturity 소유**
 > (memory-api가 제공하는가 vs discovery측 translation layer가 계산하는가). 단계 7(Push DTO +
 > shadow)은 Phase 10 이후로 **명시 이월** — query DTO 계약 초안 합의만 Alpha 기간에 한다.
 
