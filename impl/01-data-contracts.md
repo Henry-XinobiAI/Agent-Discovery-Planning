@@ -111,7 +111,7 @@ class Candidate(StrictBaseModel):
 
 - **`Eligibility`** (`eligibility.py`) — `agent_id`, `discoverable`, `reason`. Alpha에선
   `discoverable`만 활성. `privacy_clearance`/`safety_verdict`는 Open Beta 전 추가
-  ([Phase 8/9 로드맵](11-phase-8-9-roadmap.md) 참조).
+  ([Phase 8–10 로드맵](11-phase-8-9-roadmap.md) 참조).
 - **`PersonaPrior`** (`persona.py`) — `prior_stance`, `stable_traits`, `expertise_claims`.
   **hollow guard**: stance/특성을 힌트할 뿐 topic `maturity`를 세울 수 없음. 랭킹은 밴드 내
   late tiebreak로만 쓰고, 밴드를 가로질러 승격시키지 못함. Alpha에선 사실상 no-op.
