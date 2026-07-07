@@ -103,13 +103,13 @@ real provider 교체를 아래 "Open Beta 및 그 이후"에 두어 Roadmap의 A
   | `PersonaProvider` | NullProvider 유지 | `persona=None` 합법 · Alpha ranking no-op |
 
 - **기존 변경:** Protocol seam([02](02-provider-boundary.md)) 덕에 코드 작업은 **real
-  `MemoryEdgeProvider` 구현 1개 + deployed-only `AllowAllEligibilityProvider` stub +
+  `MemoryEdgeProvider` 구현 1개 + deployed-only `AllowAllEligibilityProvider`(가칭) stub +
   composition root([07](07-composition-api-cli.md)) 교체**로 유계. eligibility stub이 왜
   필수인가: 현 배포 graph는 `UnavailableEligibilityProvider`(hard-required → 503)라 real
   edge만 붙이면 503이 후보 단계에서 gate 단계로 옮겨갈 뿐임. eval의 mock eligibility는
   import-isolation(serving graph의 `eval/` import 금지) 때문에 재사용 불가 —
-  `discovery/providers/`에 얇은 stub을 신설하고, decision log의
-  `ProviderVersions.eligibility`도 `unavailable@v0`에서 stub 표기로 갱신(출처 정직성).
+  `discovery/providers/`에 얇은 stub을 신설하고, decision log의 `ProviderVersions`도
+  edge·eligibility 둘 다 `unavailable@v0`에서 real/stub 표기로 갱신(출처 정직성).
   Phase 2의 `HttpKnowledgeEntityProvider`가 real HTTP provider의 템플릿.
 - **선행(진짜 크리티컬 패스):** memory-api와 edge/maturity 계약 협의. `/personal/groundings`는
   maturity 등을 안 주므로 **translation layer 또는 전용 discovery 엔드포인트**가 필요. 출발점 =
