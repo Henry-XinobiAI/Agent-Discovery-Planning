@@ -54,7 +54,7 @@ Alpha 기준 한 요청의 **논리 경로**다. **[real]** = `bourbon-memory-ap
 ```
 request(topic_text, need_type, user_stance_ref?)
   │
-  ├─① query-side linker  topic_text → QID            KnowledgeEntityProvider.search_candidates()/suggest() [real]
+  ├─① query-side linker  topic_text → QID            KnowledgeEntityProvider.search_candidates() [real]
   │                       (sparse면 이웃 anchor 확장)   KnowledgeEntityProvider.expand_connections() [real]
   ├─② candidate retrieval QID → agent-topic edges     MemoryEdgeProvider.get_edges()           [mock]
   ├─③ gate               maturity·eligibility 필터     EligibilityProvider.check()              [mock]
@@ -81,7 +81,7 @@ expand_connections(qid, limit)       -> EntityConnections{ center, broader, narr
 search_articles(q, qid?, lang?, limit=10) -> [ArticleHit]                                            # GET /knowledge/articles (Page→.items; 보조; limit ge=1 le=100)
 ```
 
-`KnowledgeEntityProvider`는 full entity linker가 아니라 **memory-api entity substrate adapter**다 — entity 검색(`search_candidates`)·prefix 보조(`suggest`)·단건 조회·connections 호출을 감쌀 뿐 disambiguation을 결정하지 않는다. Query-side linker(모듈 1)가 candidate generation을 `search_candidates ∪ suggest`(qid merge)로 모으고, 필요 시 별도 entity linker(§4.1)를 조합해 최종 QID를 정한다(구현 계획에서는 두 타입을 linker 내부 `EntityCandidate`로 정규화 — build_plan §3.1). **`lang`은 `search_articles`에만 있다** — entity 검색/suggest 계약엔 `lang` 파라미터가 없고 핵심 파라미터는 `q`다(계약 drift 방지).
+`KnowledgeEntityProvider`는 full entity linker가 아니라 **memory-api entity substrate adapter**다 — entity 검색(`search_candidates`)·prefix autocomplete(`suggest`)·단건 조회·connections 호출을 감쌀 뿐 disambiguation을 결정하지 않는다. Query-side linker(모듈 1)가 candidate generation을 `search_candidates`(search-only)로 모으고, 필요 시 별도 entity linker(§4.1)를 조합해 최종 QID를 정한다(구현 계획에서는 `EntityCandidate`로 정규화 — build_plan §3.1). `suggest`는 autocomplete 전용이라 linker recall에는 쓰지 않는다(D2; provider 메서드는 유지 D3). **`lang`은 `search_articles`에만 있다** — entity 검색/suggest 계약엔 `lang` 파라미터가 없고 핵심 파라미터는 `q`다(계약 drift 방지).
 
 `expand_connections(qid, limit)`의 `limit`은 memory-api 기준으로 associative links(`links_out`/`links_in`)만 제한한다(`EntityConnections.limit`/`truncated`가 이 cap을 echo). taxonomy 방향의 `broader`/`narrower`는 memory-api 내부 cap을 따른다.
 
@@ -144,7 +144,7 @@ check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privac
 | API | 용도 | Discovery 적용 |
 |---|---|---|
 | `GET /knowledge/entities?q=…` → `Page[EntitySummary]` | label/description full-text 검색, `importance` 정렬 | topic → QID 후보 생성 |
-| `GET /knowledge/entities/suggest?q=…` → `Page[EntitySuggestion]` | label/aliases prefix autocomplete(typeahead) | linker candidate gen 보조(prefix/alias recall) |
+| `GET /knowledge/entities/suggest?q=…` → `Page[EntitySuggestion]` | label/aliases prefix autocomplete(typeahead) | autocomplete 전용 — grounding linker recall에는 미사용(D2; provider 메서드는 유지 D3) |
 | `GET /knowledge/entities/{qid}` → `Entity` (bare) | QID 단건 조회 | 선택 anchor 검증, label/description 표시 |
 | `GET /knowledge/entities/{qid}/connections` → `EntityConnections` (bare) | `linked_qids` + hierarchy 기반 typed ego connections(`broader`/`narrower`/`links_out`/`links_in`) | sparse anchor fallback, 관련 anchor 확장 |
 | `GET /knowledge/articles?q=…` → `Page[ArticleHit]` | Wikipedia article chunk BM25 검색 | topic 설명/axis hint 보조. agent 추천 근거로 직접 쓰지 않음 |

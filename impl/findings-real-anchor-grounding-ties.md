@@ -81,7 +81,7 @@ query → [search-only symbolic grounding]   ← deterministic, no LLM (Alpha, n
                4. silence         — if proxy not enabled, fail honestly
 ```
 
-### Now — discovery, deterministic, no LLM (search-only alignment; `tasks/todo.md`)
+### Now — discovery, deterministic, no LLM (search-only alignment) — ✅ SHIPPED (branch `feat/linker-search-only-grounding`)
 - Grounding uses `/knowledge/entities` (search) only. suggest removed from grounding recall +
   confidence (measured recall contribution = 0; suggest = autocomplete per memory-api).
 - Confidence: `exact(1.0)` vs `non-exact(0.55)`; retire the both-routes tier.

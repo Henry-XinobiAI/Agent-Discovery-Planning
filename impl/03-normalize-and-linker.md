@@ -44,35 +44,32 @@ if query.need_type in (FOR, AGAINST):
 ### 흐름
 
 ```
-search_candidates ∪ suggest  (두 recall 경로, 동시 fetch)
-  → _merge_candidates (qid로 병합, provider 순서 보존)
+search_candidates  (search-only recall; /knowledge/entities)
+  → _to_candidates (qid로 dedupe, provider 순서 보존)
   → _score (기호적 label-match confidence, confidence-desc 정렬)
   → margin 계산
-  → adoption gate (confidence ≥ MIN AND margin ≥ MIN)
+  → adoption gate (top이 exact-label match AND margin ≥ MIN)
   → 통과: GroundingResult / 실패: GroundingFailedError
 ```
 
-### (1) 후보 생성 — 두 개의 recall 경로
+### (1) 후보 생성 — search-only recall
 ```python
-summaries, suggestions = await asyncio.gather(
-    self._knowledge.search_candidates(topic_text, limit=limit),
-    self._knowledge.suggest(topic_text, limit=limit),
-)
+summaries = await self._knowledge.search_candidates(topic_text, limit=limit)
 ```
-`asyncio.gather`가 인자 순서를 보존하므로 병합 순서(→ both-route tier)가 결정적. 두 경로 모두
-alias-aware라 **recall**을 위한 것.
+`search_candidates`(`/knowledge/entities`, alias-aware)만 recall에 쓴다. `suggest`는 autocomplete
+전용이라(memory-api 계약) grounding recall에서 제외 — 실측 recall 기여 0. 후보는 qid로 dedupe하며
+provider(first-appearance) 순서를 보존해 confidence 동점 시 결정적 tie-break으로 쓴다.
 
-### (2) confidence — 기호적 3-tier
+### (2) confidence — 기호적 binary
 ```python
-_CONF_EXACT_LABEL  = 1.0   # 정규화 label == query
-_CONF_BOTH_ROUTES  = 0.75  # search + suggest 둘 다에서 등장 (corroborated)
-_CONF_SINGLE_ROUTE = 0.55  # 한 경로만 (fuzzy/partial)
+_CONF_EXACT_LABEL = 1.0   # 정규화 label == query
+_CONF_NON_EXACT   = 0.55  # exact-label match가 아닌 backend search hit
 ```
 - `_norm` = `strip().casefold()` (순서·공백 무관 비교).
-- **popularity 신호 절대 안 씀** (D2): `importance`/`pageview`/`pagerank`가 선택을 조종하지
+- **popularity 신호 절대 안 씀**: `importance`/`pageview`/`pagerank`가 선택을 조종하지
   않음 → 앵커 선택이 popularity prior를 물려받지 않음.
-- alias tier는 별도로 관측 불가(`EntitySummary`/`EntitySuggestion` 투영에 aliases 없음, aliases는
-  full `Entity`에만) → Phase 4는 route provenance로 흡수. Phase 8B에서 재도입.
+- alias/cross-language recall은 search backend의 몫이지 여기의 별도 confidence tier가 아님
+  (`EntitySummary` 투영에 aliases 없음). 더 세밀한 tier는 Phase 8B LLM rerank / `match_kind` 투영에서 재도입.
 - **injection-safe by construction**: 기호적 경로에서 후보 텍스트는 오직 *비교*(정규화 문자열 동등)만
   되고 절대 해석되지 않음 → 적대적 label이 제어 흐름을 못 바꿈. Phase 8A rerank fallback도 이를
   **구조적으로 봉쇄**함 — 후보 텍스트는 data(고정 system 프롬프트·user turn JSON), 응답은 후보 qid
@@ -87,15 +84,18 @@ margin = top.confidence if len(scored) == 1 else top.confidence - scored[1].conf
 - `LINKER_CANDIDATE_LIMIT ge=2`로 floor — provider를 이 limit으로 쿼리하므로, 더 작으면
   runner-up이 fetch도 되기 전에 잘려서 애매한 쌍이 통과할 수 있음.
 
-### (4) adoption gate
+### (4) adoption gate — exact-label winner 필수
 ```python
-LINKER_CONF_MIN   = 0.50   # 절대 confidence floor
 LINKER_MARGIN_MIN = 0.15   # top1-top2 gap
-if top.confidence < CONF_MIN or margin < MARGIN_MIN:
+if top.confidence != _CONF_EXACT_LABEL or margin < LINKER_MARGIN_MIN:
     raise GroundingFailedError(...)  # "grounding 0"
 ```
-- seed는 memory-api `Grounder`(`GROUNDING_MIN_SCORE`/`GROUNDING_MIN_MARGIN`)에서 빌려옴,
-  **provisional** (eval ratchet가 retune 가능). 학습된 weight가 아님.
+- **채택은 유일 exact-label match만**: top 후보가 exact-label hit(confidence == 1.0)이라야 하고
+  margin gate도 통과해야 한다. non-exact top은 절대 symbolic 채택 안 됨(evidence/trace·rerank 입력일 뿐);
+  exact 동음이의(homonym tie) 2개+는 margin이 0으로 무너져 실패. 이로써 단일 non-exact `0.55`가
+  single-candidate margin(=자기 confidence 0.55 ≥ 0.15)으로 통과하던 구멍을 닫는다.
+- `LINKER_CONF_MIN`(구 절대 confidence floor)은 폐기 — exact는 항상 1.0이라 floor가 무의미. `LINKER_MARGIN_MIN`
+  seed는 memory-api `Grounder`(`GROUNDING_MIN_MARGIN`)에서 빌려옴, **provisional**(eval ratchet 대상). 학습 weight 아님.
 - 후보 자체가 0개여도 `GroundingFailedError`.
 - `GroundingFailedError`는 `considered`(qid, confidence 쌍)를 담아서 decision log가 "왜 실패했나"를
   기록 가능하게 함.
@@ -113,7 +113,7 @@ class GroundingResult:
 
 ## 무엇이 provisional이고 무엇이 permanent인가
 
-- **provisional (바뀔 수 있음):** confidence *함수* (3-tier 값), threshold seed.
+- **provisional (바뀔 수 있음):** confidence *함수* (binary exact/non-exact 값), threshold seed.
 - **permanent (구조):** gate/margin *구조*, injection-safety, popularity 배제.
 
 Phase 8A가 gate 실패 시 LLM rerank **fallback**을 붙였습니다 — gate/margin 골격은 그대로, 별도

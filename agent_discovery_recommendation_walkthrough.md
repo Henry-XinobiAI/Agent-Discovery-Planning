@@ -64,12 +64,12 @@
 
 ### 2.1 실제로 있고 Alpha가 real로 쓰는 것 — `/knowledge/*` (anchor)
 
-memory-api 라우터 `api/routers/knowledge/router.py` (prefix `/knowledge`)에 아래가 **전부 실재**한다. Alpha 파이프라인이 실제로 호출하는 건 이 중 **3개**다:
+memory-api 라우터 `api/routers/knowledge/router.py` (prefix `/knowledge`)에 아래가 **전부 실재**한다. Alpha 파이프라인이 실제로 호출하는 건 이 중 **2개**다(`search_candidates`·`expand_connections`; `suggest`는 provider 메서드로 남지만 grounding path가 호출하지 않는다):
 
 | 값(응답 모델) | 쓰는 단계 | endpoint (params) | 실제 존재 | Alpha가 호출? |
 |---|---|---|---|---|
 | 후보 검색 `Page[EntitySummary]` | ① Linker recall | `GET /knowledge/entities` (`q`,`limit`) | ✅ | ✅ `search_candidates` |
-| 자동완성 `Page[EntitySuggestion]` | ① Linker recall | `GET /knowledge/entities/suggest` (`q`,`limit`) | ✅ | ✅ `suggest` |
+| 자동완성 `Page[EntitySuggestion]` | autocomplete 전용(① Linker recall 아님, D2) | `GET /knowledge/entities/suggest` (`q`,`limit`) | ✅ | ⛔ grounding 미호출 (Protocol 유지, D3) |
 | 이웃 `EntityConnections` | ② 이웃 확장(직접 edge가 희박할 때만) | `GET /knowledge/entities/{qid}/connections` (`limit`) | ✅ | ✅ `expand_connections` |
 | 단건 상세 `Entity` | (계약엔 있으나 Alpha 경로 미사용) | `GET /knowledge/entities/{qid}` | ✅ | ⛔ 아직 안 부름 |
 | 기사 검색 `Page[ArticleHit]` | (계약엔 있으나 Alpha 경로 미사용) | `GET /knowledge/articles` (`q`,`qid`,`lang`,`limit`) | ✅ | ⛔ 아직 안 부름 |
@@ -216,11 +216,11 @@ memory-api에서 agent-edge에 **가장 가까운 실재 소스**는 personal gr
 **⓪ normalize** — need=`depth`, stance 없음. 끝.
 
 **① Linker (topic → QID)**
-- `search_candidates("강화학습")` + `suggest("강화학습")` → 후보를 qid로 합침:
-  - `Q176789` "강화학습" — symbolic confidence **0.88**
-  - `Q2539` "기계학습" (상위개념, 비슷해 보임) — confidence **0.31**
-- `margin = top1 − top2 = 0.88 − 0.31 = 0.57`
-- 채택 게이트: `confidence 0.88 ≥ 0.50` ✓ 그리고 `margin 0.57 ≥ 0.15` ✓ → **`Q176789` 확정**.
+- `search_candidates("강화학습")` → 후보(search-only):
+  - `Q176789` "강화학습" — 정규화 label == query → exact-label match, confidence **1.0**
+  - `Q2539` "기계학습" (상위개념, 비슷해 보임) — non-exact, confidence **0.55**
+- `margin = top1 − top2 = 1.0 − 0.55 = 0.45`
+- 채택 게이트: top이 exact-label match(`1.0`) ✓ 그리고 `margin 0.45 ≥ 0.15` ✓ → **`Q176789` 확정**.
 
 **② Retrieve** — `get_edges("Q176789")` 로 이 주제에 달린 agent edge를 모은다 (Alpha=mock):
 

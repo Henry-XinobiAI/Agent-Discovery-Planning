@@ -92,8 +92,9 @@ eval/corpus/
 memory-api의 오프라인 재생. `AnchoredKnowledgeProvider`를 뒷받침하며, 이는 얼려둔 응답을 재생함으로써
 다섯 개의 `/knowledge/entities*` 읽기 메서드를 서빙한다:
 
-- `queries[]` — 쿼리별: `query`, `limit`, 캡처된 `search` / `suggest` 후보 목록, 그리고 linker가
-  채택해야 할 `expected_qid` (validator가 이것이 캡처된 후보 중에 있음을 assert한다).
+- `queries[]` — 쿼리별: `query`, `limit`, 캡처된 `search` 후보 목록, 그리고 linker가 채택해야 할
+  `expected_qid` (validator가 이것이 캡처된 search 후보 중에 있음을 assert한다). `suggest`는
+  autocomplete 전용이라 캡처하지 않는다(D2); provider의 `suggest()`는 `[]`를 반환한다(D3).
 - `entities` / `connections` / `articles` — `get` / `expand_connections` / `search_articles`용의
   QID-keyed 상세 저장소.
 - `contract` — 출처(provenance): `memory_api_commit`, `entity_contract`, `generated_at`.
