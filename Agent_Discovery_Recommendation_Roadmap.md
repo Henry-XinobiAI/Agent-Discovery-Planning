@@ -168,6 +168,8 @@ Open Beta(외부 공개)에서 더하는 범위:
 
 공통 파이프라인은 두 내부 단계로 나뉜다. **Discovery 단계**가 후보 공간을 만들고, **Recommendation 단계**가 그 후보를 need에 맞게 선택·서빙한다(§1).
 
+> **Grounding 방식 (2026-07-08 결정):** 아래 2단계 "anchor 해소"는 **search-only 정밀 코어**(유일 exact-label match만 결정적 채택; suggest는 autocomplete 전용) + 실패 시 **LLM 폴백 사다리**(rerank=동음이의 해소 → query expansion=recall 회복[LLM은 검색어만 제안, 최종 QID는 재검색+gate] → proxy=best-effort 대체·항상 신호)로 구체화됨. **memory-api search relevance/alias 개선이 선행**(최고 ROI). 상세 설계·근거·데이터: `impl/findings-real-anchor-grounding-ties.md` → "Recommended behavior"; 단계 로드맵: `impl/11-phase-8-9-roadmap.md`.
+
 ```text
 [Discovery 단계 — 후보 공간 구성]
 
