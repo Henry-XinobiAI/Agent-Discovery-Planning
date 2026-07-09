@@ -1,6 +1,6 @@
 # Finding: real anchor grounding — exact-label homonym ties (2026-07-08)
 
-**Status:** open finding / feeds Phase 9 (real-anchor eval) and Phase 8B (grounding policy).
+**Status:** actioned — the recommended ladder is now implemented (redesigned Phase 8B, dormant). Remaining feed: Phase 9 (real-anchor eval) + post-memory-api 8B tuning.
 **Repo:** bourbon-agent-recommendation-api. **memory-api:** `bc9110c` (dev, port-forward `localhost:3000`).
 
 ## What was tried
@@ -66,22 +66,22 @@ Grounding is redesigned as a **precision core + fallback ladder**, each layer ow
 meaning, log field, and eval treatment. Do NOT collapse them into one `method` / one gate.
 
 **Each layer stamps a distinct `method` / `grounding_mode` in the decision log** —
-`symbolic` / `rerank` / `expansion` / `best_effort_proxy` — so logs and eval strata can tell
+`symbolic` / `rerank` / `expansion` / `best_effort_substitution` — so logs and eval strata can tell
 disambiguation from recall-recovery from best-effort substitution. `rerank` is NEVER reused for
-expansion or proxy; each also has its own adoption gate.
+expansion or substitution; each also has its own adoption gate.
 
 ```
 query → [search-only symbolic grounding]   ← deterministic, no LLM (Alpha, now)
           │  adopt ONLY a unique exact-label match
-          └─ fail (ambiguous or miss) → fallback ladder (LLM, Phase 8B/9):
-               1. rerank          — answer IS in pool but tied → LLM picks intended QID   [disambiguation]
-               2. query expansion — answer NOT in pool → LLM proposes SEARCH TERMS →
-                                     re-search /knowledge/entities → re-ground             [recall recovery]
-               3. proxy (opt-in)  — still unrecoverable → adopt closest related, SIGNALED  [best-effort product]
-               4. silence         — if proxy not enabled, fail honestly
+          └─ fail (ambiguous or miss) → fallback ladder (LLM, Phase 8B — implemented, dormant):
+               1. rerank                — answer IS in pool but tied → LLM picks intended QID   [disambiguation]
+               2. query expansion       — answer NOT in pool → LLM proposes SEARCH TERMS →
+                                           re-search /knowledge/entities → re-ground             [recall recovery]
+               3. substitution (opt-in) — still unrecoverable → adopt closest related, SIGNALED  [best-effort product]
+               4. silence               — if substitution not enabled, fail honestly
 ```
 
-### Now — discovery, deterministic, no LLM (search-only alignment) — ✅ SHIPPED (branch `feat/linker-search-only-grounding`)
+### Shipped — discovery, deterministic, no LLM (search-only alignment) — ✅ (branch `feat/linker-search-only-grounding`)
 - Grounding uses `/knowledge/entities` (search) only. suggest removed from grounding recall +
   confidence (measured recall contribution = 0; suggest = autocomplete per memory-api).
 - Confidence: `exact(1.0)` vs `non-exact(0.55)`; retire the both-routes tier.
@@ -105,27 +105,105 @@ query → [search-only symbolic grounding]   ← deterministic, no LLM (Alpha, n
 - **Do this first**, then re-measure real-anchor grounding — it may dissolve most misses without any
   discovery LLM work.
 
-### Later — discovery LLM fallback ladder (Phase 8B/9; injected, eval-deterministic-preserving)
-- **rerank (built, 8A):** answer in pool, tied → LLM picks the intended QID → must clear `RERANK_*`
-  gate; in-set qid only.
+### Implemented (dormant) — discovery LLM fallback ladder (redesigned Phase 8B, Tracks 1–4 complete; injected, eval-deterministic-preserving)
+This ladder is now **implemented in the code repo** (redesigned Phase 8B, Tracks 1–4 complete):
+rerank② is **live in serving** (Phase 8A); expansion③ and substitution④ **shipped opt-in and
+DORMANT** (default OFF via `EXPANSION_ENABLED` / `SUBSTITUTION_ENABLED`, wired only in the
+composition root, never in eval → `baseline.json` byte-identical; quality measured only in injected
+report-only eval strata). Branch pushed, PR pending. Each rung's technical description below is
+unchanged.
+- **rerank (live in serving, 8A):** answer in pool, tied → LLM picks the intended QID → must clear
+  `RERANK_*` gate; in-set qid only.
 - **query expansion:** miss → the LLM proposes **search terms** (distinctive alias / other-language
   label / synonyms), NOT anchors. Re-search `/knowledge/entities`; the final QID comes from the
   search result and must clear the gate + map to the original topic. The LLM never picks the QID
   directly — it only suggests queries. (E.g. `"JavaScript"` → `"자바스크립트"` → Q2005 recovered at rank
-  1.) Runs BEFORE proxy.
-- **proxy (opt-in product decision):** answer unrecoverable → adopt the closest related anchor only
-  with explicit honesty signals: `grounding_mode="best_effort_proxy"`, expose original_topic + adopted
-  proxy anchor, decision-log `proxy_used` / `original_topic` / `proxy_anchor_qid` / `proxy_reason`.
+  1.) Runs BEFORE substitution.
+- **substitution (opt-in product decision):** answer unrecoverable → adopt the closest related anchor only
+  with explicit honesty signals: `grounding_mode="best_effort_substitution"`, expose original_topic + adopted
+  substitute anchor, decision-log `substitution_used` / `original_topic` / `substitute_anchor_qid` / `substitution_reason`.
   Distinct `method`, distinct gate — never folded into `method="rerank"`. Preferred direction: allow,
   but as the LAST resort after expansion, always signaled.
 
 ### Eval
 - Deterministic gold gate stays as-is (manual-seed, `reranker=None`) = regression floor.
-- Real-anchor: disambiguation / expansion-recovery / proxy each a **separate stratum**, judged by
+- Real-anchor: disambiguation / expansion-recovery / substitution each a **separate stratum**, judged by
   B2 / human — not by the deterministic gate. Reintroduce the homonym-tie set as a dedicated stratum.
 
-### Sequencing
-1. discovery search-only alignment (deterministic, small) — now.
-2. memory-api relevance / alias / cross-language fix — highest ROI; coordinate with their team.
-3. re-measure real-anchor grounding.
-4. discovery LLM ladder: rerank → expansion → proxy (in that order), with quality eval.
+### Sequencing (2026-07-08 plan → current status)
+1. ✅ discovery search-only alignment (deterministic, small) — **shipped**.
+2. memory-api relevance / alias / cross-language fix — highest ROI; coordinate with their team. **(still pending — their team)**
+3. re-measure real-anchor grounding — after step 2.
+4. ✅ discovery LLM ladder: rerank → expansion → substitution — **shipped** (Tracks 1–4; rerank live, expansion/substitution dormant/default-OFF).
+
+**Remaining now (2026-07-09):** the ladder _implementation_ (steps 1 & 4) is done. What is left is **measurement + memory-api-gated tuning** — step 2 (memory-api relevance, their team) → step 3 (re-measure real-anchor) → Phase 9 (real-anchor eval into CI) → 8B tuning (thresholds + expansion stratum). This matches the agreed Phase 9 → Phase 10 → 8B-tuning order in `11-phase-8-9-roadmap.md`.
+
+## Spike findings — rerank feasibility + ambiguity behavior (2026-07-08)
+
+Two throwaway probes (scripts in `bourbon-agent-recommendation-api/tmp/`, uncommitted) ran the
+**shipped** `LLMReranker` (Phase 8A) against real data — live memory-api + e3llm-api proxy
+(`google/gemini-3.1-flash-lite`) — to de-risk rerank hardening before building any eval stratum.
+
+### Spike 1 — rerank on the real homonym ties (`rerank_spike.py`)
+Fed the 18 excluded real-anchor queries (16 homonym exact-label ties + 2 in-pool label mismatches)
+through `rerank()` and compared the pick to the seed's intended canonical QID.
+
+- **18/18 chose the intended canonical QID**, confidence **0.85–0.98**, margin **0.80–0.97** — all
+  clear the `RERANK_*` gate comfortably. Even the worst ties resolved (Artificial intelligence ×9 →
+  Q11660, Astronomy ×7 → Q333, Economics ×5 → Q8134).
+- **Feasibility: proven.** The LLM separates the canonical concept from the journal / category /
+  list-article / sub-topic homonyms.
+- **Gate is conservative** (winner ~0.95 vs runner-up ~0.01) — no retune needed for clean cases.
+- **Projection is sufficient**: it disambiguated **byte-identical labels** (9× "Artificial
+  intelligence") from `label` + `description` alone — no projection enrichment required.
+- **Key reframe: the serving path *can* recover these.** All 18 are *in-pool* recoveries (the answer
+  is in the candidate set), and the serving path injects a reranker (8A). So the offline
+  "**7/25 ground**" was a `reranker=None` **eval artifact** — not evidence that serving cannot ground
+  them. This spike shows the mechanism works **under the tested proxy model**
+  (`google/gemini-3.1-flash-lite`); the deployed serving default may differ (some planning docs still
+  cite `gemini-2.5-flash`), so read this as "mechanism validated," not a production-quality
+  measurement. True query-expansion cases (answer *absent* from the pool) = **0** in this corpus;
+  that class is exactly what the memory-api relevance fix targets.
+
+### Spike 2 — rerank on genuinely ambiguous topics (`rerank_spike_ambiguous.py`)
+Live-captured 8 multi-sense topics (Mercury, Java, Amazon, Python, Apple, Mars, Jaguar, Turkey) —
+no single intended sense by construction — to probe the gate's blind spot (it can reject a
+low-margin result but **cannot catch a confident-wrong pick**).
+
+- **Abstention is opportunistic, not reliable.** Only **Mercury** abstained (planet Q308 vs element
+  Q925 tied at 0.45/0.35 → margin 0.10 < gate → `grounding_failed`). The other six **confidently
+  picked** one sense (0.70–0.95, gate PASS): Python → language (Q28865), Mars → planet (Q111),
+  Apple → company (Q312), etc. Java/Jaguar/Amazon are just as "ambiguous" to a human, yet the model
+  committed. (Turkey was lost to a proxy disconnect — inconclusive.)
+- **But no arbitrary / nonsense confident-wrong.** Every confident pick was a **defensible dominant
+  sense**. The residual risk is not "wrong about the world" but "**global dominant sense ≠ this
+  user's local intent**" (a user meaning Jaguar-the-car gets jaguar-the-animal, gate can't catch it).
+- **This is an inherent limit of context-free grounding, not a rerank defect.** With only a topic
+  string and no user context, picking the dominant sense is the reasonable default.
+
+### Contract to surface (product decision)
+**Rerank grounds to the dominant sense on an ambiguous topic; the margin gate is NOT a reliable
+ambiguity safeguard** — it catches ambiguity only when the model happens to spread its confidence
+(Mercury), not when it commits to a dominant sense (Java/Jaguar). Mitigation is **user
+disambiguation** (a parenthetical like `Python (programming language)`, which rerank handles well —
+Spike 1) or **future context-passing**, NOT a rerank redesign. For Alpha the dominant-sense default
+is acceptable, but the team must not rely on the gate to prevent confident sense-mismatches.
+
+### Infra note (separate from grounding quality)
+Both port-forwarded endpoints showed transient `RemoteProtocolError: Server disconnected` /
+`All connection attempts failed` (Turkey's rerank degraded to `None`). In production a proxy failure
+makes `rerank` return `None` → `grounding_failed` (works as designed, but **depresses the grounding
+success rate**) — an ops/reliability item for Phase 10.
+
+### Implications
+- **Not a blocker for building the rerank stratum** (no arbitrary confident-wrong observed in this
+  8-topic probe). Whether to *accept* the dominant-sense default is a **separate product decision** —
+  this spike does not settle it, and 8 topics is not enough to conclude no redesign is ever needed.
+- The **rerank stratum must test both behaviors**: canonical-pick on dominant-sense ties (Spike 1
+  set) **and** abstain on balanced ambiguity (a **Mercury-style** case). But don't hard-code the live
+  model abstaining on Mercury as gold — that's model/snapshot-dependent. Pin the *deterministic*
+  regression with a **fake reranker returning spread scores** (margin < gate → `grounding_failed`);
+  keep the live-model behavior on Mercury-style topics as a **report-only observation** in the
+  non-deterministic stratum.
+- Rerank stratum stays **non-deterministic / injected-reranker / B2-or-human judged**, separate from
+  the deterministic manual-seed gold gate (which keeps `reranker=None`).

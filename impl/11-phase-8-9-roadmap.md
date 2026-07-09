@@ -1,42 +1,71 @@
-# 11. Phase 8–10 로드맵 (대부분 미구현 — 8-1 rerank fallback · 8-2는 **Phase 8A 완료**)
+# 11. Phase 8–10 로드맵 (8A rerank + 재정의된 8B 폴백 사다리 = 구현 완료 · 다음 = Phase 9 → 10)
 
 ← [개요로 돌아가기](README.md) · 관련: [08. LLM](08-llm-layer.md) ·
 [03. linker](03-normalize-and-linker.md) · [10. metrics + gates](10-eval-metrics-and-gates.md)
 
-여기부터는 **대부분 아직 구현하지 않은** 내용입니다 (예외: 8-1의 rerank **fallback**과 8-2
-`fallback_used` teeth는 Phase 8A에서 착지 — 각 절에 ✅ 표시). 각 항목마다 "무엇을 추가하나 +
-**기존 코드/계약이 이렇게 바뀐다**"를 명시합니다. Alpha가 자리(hook)를 예약해 둔 덕에 대부분
-additive이고, 계약 struct는 대체로 안 바뀝니다.
+각 절의 ✅/상태 표시로 진행 상황을 구분합니다. **이미 착지: 8-1 rerank fallback(rung ②, Phase
+8A) · 8-2 `fallback_used` teeth(Phase 8A) · 재정의된 8B 그라운딩 폴백 사다리 전체(Tracks 1–4 —
+expansion③·substitution④ rung + report-only eval strata; 코드 repo 브랜치 push·PR 대기).**
+**아직 미구현: 8-3 stance normalizer · 8-4 B2 judge · 8-5 rich reason · 8-6 gate 필드 · Phase
+9(eval→CI) · Phase 10(real edge).** 각 항목마다 "무엇을 추가하나 + **기존 코드/계약이 이렇게
+바뀐다**"를 명시합니다. Alpha가 자리(hook)를 예약해 둔 덕에 대부분 additive이고, 계약 struct는
+대체로 안 바뀝니다.
 
 > 마일스톤 정리: **Alpha**(7월, 내부, Pull + for/against) → **Open Beta**(8월말, 외부, Push +
 > orthogonal) → **Post**. Phase 8/9는 Alpha→Open Beta 사이의 품질·평가 작업 단계이고,
 > **Phase 10(real edge 통합)이 user-facing Alpha 성립의 마지막 조각**입니다 (2026-07-07 승격).
+>
+> **다음 순서 (2026-07-09 합의):** **Phase 9(eval→CI gate) → Phase 10(real edge/maturity) →
+> Phase 8B 잔여 튜닝.** CI 게이트로 "깨지면 바로 보임"을 Phase 10의 integration surface 확대 전에
+> 잠근다. 8B 사다리 _구현_은 끝났고, 남은 8B 작업은 **튜닝**뿐(expansion threshold + harness
+> expander seam + expansion stratum)이며 memory-api relevance fix 이후에만 유효하다(그 전엔 현
+> search 품질에 맞춘 premature tuning). 이 순서가 아래 "권장 착수 순서 (2026-07-07 기준)"를 대체한다.
 
 ---
 
 ## Phase 8 — LLM rerank / stance / B2 silver judge
 
 Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 깨우는 단계입니다. **Phase 8A가
-8-1의 rerank fallback과 8-2를 이미 착지**시켰습니다 (아래 ✅). 남은 것은 8-1의 full listwise 교체
-(8B) · stance(8-3) · judge(8-4) · rich reason(8-5) · gate 필드(8-6).
+8-1의 rerank fallback과 8-2를 착지**시켰고, **재정의된 8B(그라운딩 폴백 사다리 — expansion③ +
+substitution④)도 구현 완료**(아래 ✅)입니다. 남은 것은 **stance(8-3) · judge(8-4) · rich
+reason(8-5) · gate 필드(8-6)**뿐입니다.
 
-### 8-1. Linker LLM rerank — ✅ **fallback은 Phase 8A 완료** (full 교체는 8B)
+### 8-1. Linker LLM rerank — ✅ **fallback(rung ②)은 Phase 8A 완료** · ✅ **나머지 사다리(재정의된 8B)도 완료**
 - **Phase 8A에서 한 것:** 기호적 gate가 실패할 때만 도는 **LLM rerank fallback**을 추가. 기호적
   3-tier를 통째로 **교체**한 게 아니라, gate 애매 시 같은 후보셋을 LLM으로 재채점하는 이음매.
   실코드: `discovery/rerank.py`(`LLMReranker`), `linker.py`(`Reranker` Protocol + `ground()` 배선).
   채택 winner는 별도 `RERANK_CONF_MIN`/`RERANK_MARGIN_MIN` gate 통과 필수. injection-safety는
   **구조적 봉쇄**로 보존(후보 텍스트=data, qid 집합 전단사 검증, gate). `GroundingResult.method`는
   `Literal["symbolic","rerank"]`로 확장, `fallback_used` 필드 신설.
-- **아직 (Phase 8B):** 기호적 confidence를 **매 질의 listwise reranker로 완전 대체** + alias-aware
-  tier 재도입 → `EntitySummary`/`EntitySuggestion`에 `match_kind`/aliases 투영(memory-api 계약
-  협의) + 비결정 eval 전략. Phase 8A는 fallback-only라 eval을 결정적으로 유지함.
-- **그라운딩 모드 재설계 (2026-07-08 결정 · 상세는 별도 문서):** grounding을 **search-only 정밀
+- **원래 8B — 폐기(2026-07-08 재설계):** "기호적 confidence를 매 질의 listwise reranker로 **완전
+  대체**"하려던 원안은 폐기됐다. 정밀 코어(결정성·popularity-free·감사가능성)를 버리는 비용이 raw
+  quality 이득보다 크고, 그 이득은 더 값싸게 재현 가능하다(memory-api recall + expansion). alias /
+  cross-language recall은 discovery confidence tier가 아니라 **memory-api search 개선**의 몫으로 이동.
+- **재정의된 8B — 그라운딩 폴백 사다리 (✅ Tracks 1–4 구현 완료):** 정밀 코어는 영구 유지하고, LLM
+  작업을 **게이트·신호가 걸린 폴백 rung**으로만 한정한다: `symbolic → rung ② rerank → rung ③ query
+  expansion → rung ④ substitution → silence`. **rerank②는 serving live(8A)**, **expansion③ ·
+  substitution④는 opt-in·dormant(default OFF — `EXPANSION_ENABLED`/`SUBSTITUTION_ENABLED`,
+  composition root에서만 주입)**. eval 결정성 유지(폴백 컴포넌트는 gold 게이트에 절대 미주입 →
+  `baseline.json` byte-identical); 품질은 주입·비결정 **report-only stratum**에서만 측정. **rung
+  라우팅(Decision A, 확정): exact 1개+margin→symbolic 채택 / exact 1개+margin 실패→terminal(대체
+  안 함) / exact ≥2(homonym tie)→rerank / exact 0(recall miss)→expansion, 그리고 rerank·expansion
+  의 모든 terminal→substitution-or-raise.** rung ④ `proxy`는 `substitution`으로 개명(LLM
+  게이트웨이 transport "proxy"와 충돌 회피 + expansion과 경계 선명 = same-topic 회복 vs
+  related-topic 교체). 실행 세부·티켓은 코드 repo `tasks/todo.md`.
+  - **범위 경계 (섞지 말 것):** **8B = discovery 폴백 사다리 _구현_**(rerank/expansion/substitution — 구현 완료).
+    **memory-api search relevance/alias/cross-language 개선 + 그 뒤 real-anchor 재측정은 8B의 _선행
+    dependency_이지 8B의 일부가 아니다** — 소유는 memory-api 팀이고 discovery 8B는 그 작업을 책임지지
+    않는다. 아래 "먼저" 표현은 우선순위가 아니라 **의존성**을 뜻한다(둘을 섞으면 discovery 8B가
+    memory-api 작업까지 지는 것처럼 오독됨).
+- **그라운딩 모드 재설계 (2026-07-08 결정 → 구현 완료):** grounding을 **search-only 정밀
   코어**(exact-label winner만 채택 — suggest는 grounding에서 제거, autocomplete 전용) + **폴백
-  사다리**로 재정의하기로 함: rerank(=disambiguation, 후보에 정답 有) → **query expansion**(=recall
-  회복; LLM은 검색어만 제안, 최종 QID는 `/knowledge/entities` 재검색+gate에서) → **proxy**(=best-effort
-  대체, 별도 method/gate·항상 신호). 각 계층이 별도 `method`/`grounding_mode`. **memory-api search
-  relevance/alias/cross-language 개선을 먼저**(최고 ROI — alias는 이미 검색되나 흔한 이름은 label^3에
-  밀림). 8B의 alias-aware tier·listwise 교체는 이 사다리 안에 자리잡음. 전체 설계·근거·데이터:
+  사다리**로 재정의: rerank(=disambiguation, 후보에 정답 有) → **query expansion**(=recall 회복;
+  LLM은 검색어만 제안, 최종 QID는 `/knowledge/entities` 재검색+gate에서) → **substitution**(=best-effort
+  대체, 별도 method/gate·항상 신호; `grounding_mode="best_effort_substitution"`). 각 계층이 별도
+  `method`/`grounding_mode`. **memory-api search relevance/alias/cross-language 개선은 별도
+  dependency**(최고 ROI — alias는 이미 검색되나 흔한 이름은 label^3에 밀림; 8B 잔여 튜닝을 gating).
+  원래 8B가 노렸던 alias-aware/listwise 품질은 이 사다리 + memory-api recall로 흡수되며 **symbolic
+  전면 교체는 하지 않는다**. 전체 설계·근거·데이터:
   `findings-real-anchor-grounding-ties.md` → "Recommended behavior".
 
 ### 8-2. `fallback_used` teeth — ✅ **Phase 8A 완료**
@@ -124,12 +153,13 @@ real provider 교체를 아래 "Open Beta 및 그 이후"에 두어 Roadmap의 A
   2026-07-03 rec-signal 계약(owner_id-only, agent_id는 bourbon-api `personal_agent_id` 파생).
   **핵심 안건 = maturity 소유**(memory-api가 제공 vs discovery측 계산). 계약 협의는 리드타임이
   기니(rec-signal 계약도 한 라운드) 코드 작업과 무관하게 즉시 시작.
-- **8B/8-4와의 순서:** 후보가 mock인 상태에서 linker 품질(8B)·judge 분모(8-4)를 올리는 것은
-  end-to-end 레버리지가 낮음 — **real edge 이후**로 미룸.
+- **8B 잔여 튜닝·8-4와의 순서:** 8B 사다리 _구현_은 끝났다. 남은 8B **튜닝**(expansion threshold +
+  expansion stratum)과 judge 분모(8-4)는 후보가 mock인 상태에선 end-to-end 레버리지가 낮아 **real
+  edge(Phase 10) 이후**로 미룬다. 8B 튜닝은 memory-api relevance fix에도 의존.
 - **Push shadow(로드맵 단계 7):** Phase 10 이후로 **명시 이월**. Alpha 기간에는 query DTO 계약
   초안 합의만 한다.
 
-### 권장 착수 순서 (2026-07-07 기준)
+### 권장 착수 순서 (2026-07-07 기준 — ⚠️ 2026-07-09 합의 순서로 대체; 위 마일스톤 블록 참조 · 이력 보존용)
 
 1. **real-anchor backfill** (`build-anchors`) — memory-api dev 배포로 언블록. Phase 9 / 8-4 /
    8A `ambiguous_fallback_rate` teeth의 공통 선행. 현 ratchet은 전부 천장(top1/top3=1.0,
@@ -137,13 +167,13 @@ real provider 교체를 아래 "Open Beta 및 그 이후"에 두어 Roadmap의 A
 2. **Phase 9** (eval gate → CI) — 얇음(yaml 위주), 이후 작업의 안전망.
 3. **Phase 10 계약 협의 킥오프** — 1·2와 병행 시작, 계약 확정 시 구현.
 4. 8-3 / 8-5 — 독립·얇음, 틈새에.
-5. 8-4 → 8B — real anchor/edge 이후.
+5. 8-4 → 8B 잔여 튜닝 — real anchor/edge 이후 (8B 사다리 구현은 이미 완료).
 
 > **2026-07-08 보강:** real-anchor backfill(1)은 real 앵커가 **동음이의 exact-label 동점**을
 > 드러냄을 전제로 해야 함(오프라인에서 7/25만 ground — 상세 `findings-real-anchor-grounding-ties.md`).
 > 실질 선행 2가지: **(a) discovery search-only 그라운딩 정렬**(정밀 코어·결정적·작음; 코드 repo
 > `tasks/todo.md`), **(b) memory-api search relevance 개선**(최고 ROI). 이후 real-anchor 재측정 →
-> 남는 하드 케이스만 LLM 폴백 사다리(rerank→expansion→proxy).
+> 남는 하드 케이스만 LLM 폴백 사다리(rerank→expansion→substitution — 구현 완료).
 
 ---
 
