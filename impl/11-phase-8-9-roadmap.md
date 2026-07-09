@@ -17,26 +17,40 @@ additive이고, 계약 struct는 대체로 안 바뀝니다.
 ## Phase 8 — LLM rerank / stance / B2 silver judge
 
 Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 깨우는 단계입니다. **Phase 8A가
-8-1의 rerank fallback과 8-2를 이미 착지**시켰습니다 (아래 ✅). 남은 것은 8-1의 full listwise 교체
-(8B) · stance(8-3) · judge(8-4) · rich reason(8-5) · gate 필드(8-6).
+8-1의 rerank fallback과 8-2를 이미 착지**시켰습니다 (아래 ✅). 남은 것은 **8B — 그라운딩 폴백
+사다리(expansion + proxy; 아래 재설계)** · stance(8-3) · judge(8-4) · rich reason(8-5) ·
+gate 필드(8-6).
 
-### 8-1. Linker LLM rerank — ✅ **fallback은 Phase 8A 완료** (full 교체는 8B)
+### 8-1. Linker LLM rerank — ✅ **fallback(rung ②)은 Phase 8A 완료** · 나머지 사다리 = 재정의된 8B
 - **Phase 8A에서 한 것:** 기호적 gate가 실패할 때만 도는 **LLM rerank fallback**을 추가. 기호적
   3-tier를 통째로 **교체**한 게 아니라, gate 애매 시 같은 후보셋을 LLM으로 재채점하는 이음매.
   실코드: `discovery/rerank.py`(`LLMReranker`), `linker.py`(`Reranker` Protocol + `ground()` 배선).
   채택 winner는 별도 `RERANK_CONF_MIN`/`RERANK_MARGIN_MIN` gate 통과 필수. injection-safety는
   **구조적 봉쇄**로 보존(후보 텍스트=data, qid 집합 전단사 검증, gate). `GroundingResult.method`는
   `Literal["symbolic","rerank"]`로 확장, `fallback_used` 필드 신설.
-- **아직 (Phase 8B):** 기호적 confidence를 **매 질의 listwise reranker로 완전 대체** + alias-aware
-  tier 재도입 → `EntitySummary`/`EntitySuggestion`에 `match_kind`/aliases 투영(memory-api 계약
-  협의) + 비결정 eval 전략. Phase 8A는 fallback-only라 eval을 결정적으로 유지함.
+- **원래 8B — 폐기(2026-07-08 재설계):** "기호적 confidence를 매 질의 listwise reranker로 **완전
+  대체**"하려던 원안은 폐기됐다. 정밀 코어(결정성·popularity-free·감사가능성)를 버리는 비용이 raw
+  quality 이득보다 크고, 그 이득은 더 값싸게 재현 가능하다(memory-api recall + expansion). alias /
+  cross-language recall은 discovery confidence tier가 아니라 **memory-api search 개선**의 몫으로 이동.
+- **재정의된 8B — 그라운딩 폴백 사다리:** 정밀 코어는 영구 유지하고, LLM 작업을 **게이트·신호가 걸린
+  폴백 rung**으로만 한정한다: rung ② rerank(8A 완료) → **rung ③ query expansion** → **rung ④ proxy**.
+  eval 결정성 유지(폴백 컴포넌트는 gold 게이트에 미주입 → `baseline.json` byte-identical); 품질은
+  주입·비결정 stratum에서만 측정. 실행 계획(트랙 1–4)·미해결 결정(rung 라우팅·proxy 선택방식·proxy
+  응답 노출)은 코드 repo `tasks/todo.md`.
+  - **범위 경계 (섞지 말 것):** **8B = discovery 폴백 사다리 _구현만_**(rerank/expansion/proxy).
+    **memory-api search relevance/alias/cross-language 개선 + 그 뒤 real-anchor 재측정은 8B의 _선행
+    dependency_이지 8B의 일부가 아니다** — 소유는 memory-api 팀이고 discovery 8B는 그 작업을 책임지지
+    않는다. 아래 "먼저" 표현은 우선순위가 아니라 **의존성**을 뜻한다(둘을 섞으면 discovery 8B가
+    memory-api 작업까지 지는 것처럼 오독됨).
 - **그라운딩 모드 재설계 (2026-07-08 결정 · 상세는 별도 문서):** grounding을 **search-only 정밀
   코어**(exact-label winner만 채택 — suggest는 grounding에서 제거, autocomplete 전용) + **폴백
   사다리**로 재정의하기로 함: rerank(=disambiguation, 후보에 정답 有) → **query expansion**(=recall
   회복; LLM은 검색어만 제안, 최종 QID는 `/knowledge/entities` 재검색+gate에서) → **proxy**(=best-effort
   대체, 별도 method/gate·항상 신호). 각 계층이 별도 `method`/`grounding_mode`. **memory-api search
   relevance/alias/cross-language 개선을 먼저**(최고 ROI — alias는 이미 검색되나 흔한 이름은 label^3에
-  밀림). 8B의 alias-aware tier·listwise 교체는 이 사다리 안에 자리잡음. 전체 설계·근거·데이터:
+  밀림). 원래 8B가 노렸던 alias-aware/listwise 품질은 이 사다리 + memory-api recall로 흡수되며
+  **symbolic 전면 교체는 하지 않는다**. **rung 라우팅(잠정, 코드 repo 확정): exact 동점→rerank,
+  exact 0(miss)→expansion.** proxy는 이번 사이클 스코프(opt-in·항상 신호). 전체 설계·근거·데이터:
   `findings-real-anchor-grounding-ties.md` → "Recommended behavior".
 
 ### 8-2. `fallback_used` teeth — ✅ **Phase 8A 완료**

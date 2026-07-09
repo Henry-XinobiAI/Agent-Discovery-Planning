@@ -69,7 +69,7 @@ _CONF_NON_EXACT   = 0.55  # exact-label match가 아닌 backend search hit
 - **popularity 신호 절대 안 씀**: `importance`/`pageview`/`pagerank`가 선택을 조종하지
   않음 → 앵커 선택이 popularity prior를 물려받지 않음.
 - alias/cross-language recall은 search backend의 몫이지 여기의 별도 confidence tier가 아님
-  (`EntitySummary` 투영에 aliases 없음). 더 세밀한 tier는 Phase 8B LLM rerank / `match_kind` 투영에서 재도입.
+  (`EntitySummary` 투영에 aliases 없음). 더 세밀한 tier는 후속 `match_kind` 투영 / LLM 폴백에서 재도입(memory-api recall 개선이 선행).
 - **injection-safe by construction**: 기호적 경로에서 후보 텍스트는 오직 *비교*(정규화 문자열 동등)만
   되고 절대 해석되지 않음 → 적대적 label이 제어 흐름을 못 바꿈. Phase 8A rerank fallback도 이를
   **구조적으로 봉쇄**함 — 후보 텍스트는 data(고정 system 프롬프트·user turn JSON), 응답은 후보 qid
@@ -117,7 +117,8 @@ class GroundingResult:
 - **permanent (구조):** gate/margin *구조*, injection-safety, popularity 배제.
 
 Phase 8A가 gate 실패 시 LLM rerank **fallback**을 붙였습니다 — gate/margin 골격은 그대로, 별도
-`RERANK_*` 상수로 재심. 기호적 confidence를 listwise reranker로 **완전 대체**하는 건 Phase 8B.
+`RERANK_*` 상수로 재심. 기호적 confidence를 listwise reranker로 **완전 대체**하려던 원안은
+폐기됐고(2026-07-08 재설계), 재정의된 8B는 정밀 코어 위 폴백 사다리(rerank→expansion→proxy)다.
 ([11 로드맵](11-phase-8-9-roadmap.md) 참조.)
 
 ---
