@@ -1,6 +1,6 @@
 # 구현 이해 가이드 — bourbon-agent-recommendation-api (Alpha)
 
-이 문서는 지금까지(Phase 0–8A) 구현한 것을 **개념이 쌓이는 순서**로 정리한 것입니다.
+이 문서는 지금까지(Phase 0–8A + 재설계된 8B 폴백 사다리 Track 1–4) 구현한 것을 **개념이 쌓이는 순서**로 정리한 것입니다.
 빌드 순서(Phase 0→7)는 "계약을 먼저 얼리고 의존성 역순으로 짓는" 순서라서 처음 이해하기엔
 거꾸로입니다. 아래는 "무엇을 왜 만드는가 → 무엇이 흐르는가 → 어떻게 처리하는가 →
 어떻게 서빙/평가하는가" 순입니다.
@@ -144,11 +144,14 @@ stance/drop_reason), ⑥에서 감사 row로 굳습니다.
 
 ---
 
-## 6. LLM 레이어 — rerank leg는 깨어남(Phase 8A), 나머지는 잠듦
+## 6. LLM 레이어 — rerank leg는 라이브(Phase 8A), expansion·substitution은 실렸으나 잠듦
 
 memory-api `memory/llm`에서 structured-completion spine만 포팅. proxy default, direct는 비활성.
-grounding은 기본 기호적 매칭이지만, gate가 애매해서 실패하면 **LLM rerank fallback**(Phase 8A)이
-serving에서 돎 — e3llm-api proxy 경유, keyless Gemini 기본. stance normalizer / B2 judge는 아직 잠듦.
+grounding은 기본 기호적 매칭이지만, gate가 애매해서 실패하면 **LLM rerank fallback②**(Phase 8A)이
+serving에서 돎 — e3llm-api proxy 경유, keyless Gemini 기본. 재설계된 8B 폴백 사다리의
+**expansion③ + substitution④는 opt-in으로 실렸으나 기본 OFF로 잠듦**(composition root 전용,
+eval 미진입 → baseline.json 바이트 불변, 주입된 report-only 스트라텀에서만 측정). 아직 안 지은 것은
+stance normalizer(8-3)와 B2 judge(8-4)뿐.
 
 **→ 자세히: [08. LLM 레이어](08-llm-layer.md)**
 
@@ -165,10 +168,13 @@ serving에서 돎 — e3llm-api proxy 경유, keyless Gemini 기본. stance norm
 
 ---
 
-## 8. 앞으로 — Phase 8–10 (미구현)
+## 8. 앞으로 — 남은 미구현 (8-3/8-4/8-5/8-6 + Phase 9–10)
 
-아직 구현하지 않은 것(LLM 품질 슬라이스 + CI 게이트 + **real edge 통합 = user-facing Alpha
-성립의 마지막 조각**)과, 기존 코드/계약이 어떻게 바뀔지:
+8B 폴백 사다리(rerank②→expansion③→substitution④→silence)는 이제 구현됨. 남은 미구현은 LLM 품질
+슬라이스(8-3 free-form stance normalizer / 8-4 B2 silver judge / 8-5 rich per-need reason /
+8-6 Open-Beta gate fields) + **Phase 9 (eval→CI 게이트)** + **Phase 10 (real edge 통합 =
+user-facing Alpha 성립의 마지막 조각)**. 합의된 다음 순서는 **Phase 9 → Phase 10 → 8B 잔여 튜닝**
+(expansion threshold/stratum, memory-api relevance fix에 블록됨). 기존 코드/계약이 어떻게 바뀔지:
 
 **→ [11. Phase 8–10 로드맵](11-phase-8-9-roadmap.md)**
 

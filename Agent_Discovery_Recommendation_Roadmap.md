@@ -168,7 +168,7 @@ Open Beta(외부 공개)에서 더하는 범위:
 
 공통 파이프라인은 두 내부 단계로 나뉜다. **Discovery 단계**가 후보 공간을 만들고, **Recommendation 단계**가 그 후보를 need에 맞게 선택·서빙한다(§1).
 
-> **Grounding 방식 (2026-07-08 결정):** 아래 2단계 "anchor 해소"는 **search-only 정밀 코어**(유일 exact-label match만 결정적 채택; suggest는 autocomplete 전용) + 실패 시 **LLM 폴백 사다리**(rerank=동음이의 해소 → query expansion=recall 회복[LLM은 검색어만 제안, 최종 QID는 재검색+gate] → proxy=best-effort 대체·항상 신호)로 구체화됨. **memory-api search relevance/alias 개선이 선행**(최고 ROI). 상세 설계·근거·데이터: `impl/findings-real-anchor-grounding-ties.md` → "Recommended behavior"; 단계 로드맵: `impl/11-phase-8-9-roadmap.md`.
+> **Grounding 방식 (2026-07-08 결정 → 구현 완료):** 아래 2단계 "anchor 해소"는 **search-only 정밀 코어**(유일 exact-label match만 결정적 채택; suggest는 autocomplete 전용) + 실패 시 **LLM 폴백 사다리** `symbolic → rerank② → expansion③ → substitution④ → silence`로 구현됨(rerank=동음이의 해소 → query expansion=recall 회복[LLM은 검색어만 제안, 최종 QID는 재검색+gate] → substitution=best-effort 대체·항상 신호). **rerank②는 serving live(Phase 8A)**, **expansion③·substitution④는 opt-in·dormant(default OFF, composition root에서만 주입; eval 미주입 → baseline byte-identical)**. rung ④는 `proxy`에서 `substitution`으로 개명(LLM 게이트웨이 transport와 충돌 회피). **memory-api search relevance/alias 개선은 8B 잔여 튜닝의 선행 dependency**(최고 ROI). 상세 설계·근거·데이터: `impl/findings-real-anchor-grounding-ties.md` → "Recommended behavior"; 단계 로드맵: `impl/11-phase-8-9-roadmap.md`.
 
 ```text
 [Discovery 단계 — 후보 공간 구성]
@@ -404,17 +404,26 @@ safety / privacy verdict의 lifecycle은 해당 기능을 도입하는 시점에
 > Provider 인터페이스 + mock provider + 가드 역산 fixture로 먼저 개발하고, 실제 API가 준비되면 provider 구현만 교체한다.
 > 단, QID vocabulary 합의는 mock과 별개인 Alpha 선결 조건이다. 상세는 `agent_discovery_recommendation_implementation.md` §7.
 
-> **현황·결정 (2026-07-07):** 코드 repo(Phase 0–8A)가 단계 1·3·5·6을 착지시켰다 — 계약 동결,
-> real anchor grounding(+LLM rerank fallback), for/against ordering, serving + decision log +
-> 평가 게이트. 단, 후보 substrate(edge/eligibility/persona)는 아직 mock이라 배포된 Pull API는
-> grounding 후 후보 단계에서 503을 반환한다. user-facing Alpha 성립에 남은 것은 **단계 2·4의
-> real edge + maturity + allow-all eligibility 배선**이며, 이를 코드 repo **Phase 10**으로
-> 승격했다(상세: `impl/11-phase-8-9-roadmap.md`). 최소 범위: `MemoryEdgeProvider`만 real
-> 교체(협의 출발점 = 2026-07-03 rec-signal 계약), eligibility는 `discoverable=true` 가정의 얇은
-> stub 배선(visibility 보류 합의; 현 배포는 hard-required `Unavailable*`라 real edge만으로는
-> gate에서 여전히 503), persona는 NullProvider 유지(Alpha ranking no-op). 핵심 협의 안건 = **maturity 소유**
-> (memory-api가 제공하는가 vs discovery측 translation layer가 계산하는가). 단계 7(Push DTO +
-> shadow)은 Phase 10 이후로 **명시 이월** — query DTO 계약 초안 합의만 Alpha 기간에 한다.
+> **현황·결정 (2026-07-09 갱신):** 코드 repo가 단계 1·3·5·6을 착지시켰다 — 계약 동결, real anchor
+> grounding(+LLM rerank fallback), for/against ordering, serving + decision log + 평가 게이트.
+> 이후 **재정의된 Phase 8B(그라운딩 폴백 사다리 `symbolic → rerank② → expansion③ → substitution④
+> → silence`)까지 구현 완료**(Tracks 1–4; rerank②는 serving live, expansion③·substitution④는
+> opt-in·default OFF로 dormant; report-only eval stratum; 브랜치 push·PR 대기). 단, 후보
+> substrate(edge/eligibility/persona)는 아직 mock이라 배포된 Pull API는 grounding 후 후보 단계에서
+> 503을 반환한다. user-facing Alpha 성립에 남은 것은 **단계 2·4의 real edge + maturity + allow-all
+> eligibility 배선**이며, 이를 코드 repo **Phase 10**으로 승격했다(상세: `impl/11-phase-8-9-roadmap.md`).
+> 최소 범위: `MemoryEdgeProvider`만 real 교체(협의 출발점 = 2026-07-03 rec-signal 계약), eligibility는
+> `discoverable=true` 가정의 얇은 stub 배선(visibility 보류 합의; 현 배포는 hard-required
+> `Unavailable*`라 real edge만으로는 gate에서 여전히 503), persona는 NullProvider 유지(Alpha ranking
+> no-op). 핵심 협의 안건 = **maturity 소유**(memory-api가 제공하는가 vs discovery측 translation
+> layer가 계산하는가). 단계 7(Push DTO + shadow)은 Phase 10 이후로 **명시 이월** — query DTO 계약
+> 초안 합의만 Alpha 기간에 한다.
+>
+> **다음 순서 (2026-07-09 합의):** **Phase 9(eval→CI gate) → Phase 10(real edge/maturity) →
+> Phase 8B 잔여 튜닝**(expansion threshold + harness expander seam + expansion stratum, memory-api
+> relevance fix 대기). CI 게이트를 Phase 10의 integration surface 확대 전에 잠근다. 그 뒤 Open Beta는
+> 단계 7(Push DTO + shadow) → §11 safety/privacy 외부 게이트 결정(cross-team) → 단계 8–11(candidate
+> safety+discoverability gate · Push user-facing · orthogonal 조건부 · feedback logging + Need별 평가).
 
 **Open Beta (외부 공개)**
 

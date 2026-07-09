@@ -118,8 +118,9 @@ class GroundingResult:
 
 Phase 8A가 gate 실패 시 LLM rerank **fallback**을 붙였습니다 — gate/margin 골격은 그대로, 별도
 `RERANK_*` 상수로 재심. 기호적 confidence를 listwise reranker로 **완전 대체**하려던 원안은
-폐기됐고(2026-07-08 재설계), 재정의된 8B는 정밀 코어 위 폴백 사다리(rerank→expansion→proxy)다.
-([11 로드맵](11-phase-8-9-roadmap.md) 참조.)
+폐기됐고(2026-07-08 재설계), 재정의된 8B는 정밀 코어 위 폴백 사다리(rerank→expansion→substitution)다.
+이 사다리는 이제 구현됨 — **rerank②는 라이브**(Phase 8A), **expansion③/substitution④는
+기본 OFF로 잠듦**(opt-in, composition root 전용). ([11 로드맵](11-phase-8-9-roadmap.md) 참조.)
 
 ---
 

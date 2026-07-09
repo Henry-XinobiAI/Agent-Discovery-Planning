@@ -1,6 +1,6 @@
 # Finding: real anchor grounding — exact-label homonym ties (2026-07-08)
 
-**Status:** open finding / feeds Phase 9 (real-anchor eval) and Phase 8B (grounding policy).
+**Status:** actioned — the recommended ladder is now implemented (redesigned Phase 8B, dormant). Remaining feed: Phase 9 (real-anchor eval) + post-memory-api 8B tuning.
 **Repo:** bourbon-agent-recommendation-api. **memory-api:** `bc9110c` (dev, port-forward `localhost:3000`).
 
 ## What was tried
@@ -66,22 +66,22 @@ Grounding is redesigned as a **precision core + fallback ladder**, each layer ow
 meaning, log field, and eval treatment. Do NOT collapse them into one `method` / one gate.
 
 **Each layer stamps a distinct `method` / `grounding_mode` in the decision log** —
-`symbolic` / `rerank` / `expansion` / `best_effort_proxy` — so logs and eval strata can tell
+`symbolic` / `rerank` / `expansion` / `best_effort_substitution` — so logs and eval strata can tell
 disambiguation from recall-recovery from best-effort substitution. `rerank` is NEVER reused for
-expansion or proxy; each also has its own adoption gate.
+expansion or substitution; each also has its own adoption gate.
 
 ```
 query → [search-only symbolic grounding]   ← deterministic, no LLM (Alpha, now)
           │  adopt ONLY a unique exact-label match
-          └─ fail (ambiguous or miss) → fallback ladder (LLM, Phase 8B/9):
-               1. rerank          — answer IS in pool but tied → LLM picks intended QID   [disambiguation]
-               2. query expansion — answer NOT in pool → LLM proposes SEARCH TERMS →
-                                     re-search /knowledge/entities → re-ground             [recall recovery]
-               3. proxy (opt-in)  — still unrecoverable → adopt closest related, SIGNALED  [best-effort product]
-               4. silence         — if proxy not enabled, fail honestly
+          └─ fail (ambiguous or miss) → fallback ladder (LLM, Phase 8B — implemented, dormant):
+               1. rerank                — answer IS in pool but tied → LLM picks intended QID   [disambiguation]
+               2. query expansion       — answer NOT in pool → LLM proposes SEARCH TERMS →
+                                           re-search /knowledge/entities → re-ground             [recall recovery]
+               3. substitution (opt-in) — still unrecoverable → adopt closest related, SIGNALED  [best-effort product]
+               4. silence               — if substitution not enabled, fail honestly
 ```
 
-### Now — discovery, deterministic, no LLM (search-only alignment) — ✅ SHIPPED (branch `feat/linker-search-only-grounding`)
+### Shipped — discovery, deterministic, no LLM (search-only alignment) — ✅ (branch `feat/linker-search-only-grounding`)
 - Grounding uses `/knowledge/entities` (search) only. suggest removed from grounding recall +
   confidence (measured recall contribution = 0; suggest = autocomplete per memory-api).
 - Confidence: `exact(1.0)` vs `non-exact(0.55)`; retire the both-routes tier.
@@ -105,30 +105,38 @@ query → [search-only symbolic grounding]   ← deterministic, no LLM (Alpha, n
 - **Do this first**, then re-measure real-anchor grounding — it may dissolve most misses without any
   discovery LLM work.
 
-### Later — discovery LLM fallback ladder (Phase 8B/9; injected, eval-deterministic-preserving)
-- **rerank (built, 8A):** answer in pool, tied → LLM picks the intended QID → must clear `RERANK_*`
-  gate; in-set qid only.
+### Implemented (dormant) — discovery LLM fallback ladder (redesigned Phase 8B, Tracks 1–4 complete; injected, eval-deterministic-preserving)
+This ladder is now **implemented in the code repo** (redesigned Phase 8B, Tracks 1–4 complete):
+rerank② is **live in serving** (Phase 8A); expansion③ and substitution④ **shipped opt-in and
+DORMANT** (default OFF via `EXPANSION_ENABLED` / `SUBSTITUTION_ENABLED`, wired only in the
+composition root, never in eval → `baseline.json` byte-identical; quality measured only in injected
+report-only eval strata). Branch pushed, PR pending. Each rung's technical description below is
+unchanged.
+- **rerank (live in serving, 8A):** answer in pool, tied → LLM picks the intended QID → must clear
+  `RERANK_*` gate; in-set qid only.
 - **query expansion:** miss → the LLM proposes **search terms** (distinctive alias / other-language
   label / synonyms), NOT anchors. Re-search `/knowledge/entities`; the final QID comes from the
   search result and must clear the gate + map to the original topic. The LLM never picks the QID
   directly — it only suggests queries. (E.g. `"JavaScript"` → `"자바스크립트"` → Q2005 recovered at rank
-  1.) Runs BEFORE proxy.
-- **proxy (opt-in product decision):** answer unrecoverable → adopt the closest related anchor only
-  with explicit honesty signals: `grounding_mode="best_effort_proxy"`, expose original_topic + adopted
-  proxy anchor, decision-log `proxy_used` / `original_topic` / `proxy_anchor_qid` / `proxy_reason`.
+  1.) Runs BEFORE substitution.
+- **substitution (opt-in product decision):** answer unrecoverable → adopt the closest related anchor only
+  with explicit honesty signals: `grounding_mode="best_effort_substitution"`, expose original_topic + adopted
+  substitute anchor, decision-log `substitution_used` / `original_topic` / `substitute_anchor_qid` / `substitution_reason`.
   Distinct `method`, distinct gate — never folded into `method="rerank"`. Preferred direction: allow,
   but as the LAST resort after expansion, always signaled.
 
 ### Eval
 - Deterministic gold gate stays as-is (manual-seed, `reranker=None`) = regression floor.
-- Real-anchor: disambiguation / expansion-recovery / proxy each a **separate stratum**, judged by
+- Real-anchor: disambiguation / expansion-recovery / substitution each a **separate stratum**, judged by
   B2 / human — not by the deterministic gate. Reintroduce the homonym-tie set as a dedicated stratum.
 
-### Sequencing
-1. discovery search-only alignment (deterministic, small) — now.
-2. memory-api relevance / alias / cross-language fix — highest ROI; coordinate with their team.
-3. re-measure real-anchor grounding.
-4. discovery LLM ladder: rerank → expansion → proxy (in that order), with quality eval.
+### Sequencing (2026-07-08 plan → current status)
+1. ✅ discovery search-only alignment (deterministic, small) — **shipped**.
+2. memory-api relevance / alias / cross-language fix — highest ROI; coordinate with their team. **(still pending — their team)**
+3. re-measure real-anchor grounding — after step 2.
+4. ✅ discovery LLM ladder: rerank → expansion → substitution — **shipped** (Tracks 1–4; rerank live, expansion/substitution dormant/default-OFF).
+
+**Remaining now (2026-07-09):** the ladder _implementation_ (steps 1 & 4) is done. What is left is **measurement + memory-api-gated tuning** — step 2 (memory-api relevance, their team) → step 3 (re-measure real-anchor) → Phase 9 (real-anchor eval into CI) → 8B tuning (thresholds + expansion stratum). This matches the agreed Phase 9 → Phase 10 → 8B-tuning order in `11-phase-8-9-roadmap.md`.
 
 ## Spike findings — rerank feasibility + ambiguity behavior (2026-07-08)
 

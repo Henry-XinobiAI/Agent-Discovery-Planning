@@ -86,7 +86,7 @@ memory-api 라우터 `api/routers/knowledge/router.py` (prefix `/knowledge`)에 
 > 2. 이웃 확장은 `Entity.linked_qids`(역시 full Entity 필드)가 아니라 **`/connections` endpoint**로 한다. Alpha는 full `Entity`를 안 부르므로 `linked_qids`를 직접 보지 않는다.
 > 3. `importance`가 후보 순서에 미치는 영향은 **memory-api 서버측**에서 일어난다(§2.2). discovery의 Linker 자신은 popularity를 **전혀 안 읽고** symbolic label-match confidence로만 채점한다(D2).
 
-**우리가 직접 계산하는 것**(memory-api가 안 줌): **linker confidence / margin** — "이 주제로 확정해도 되나?"를 판단하는 채택 게이트(시나리오 A ①). Alpha는 deterministic symbolic confidence다(LLM rerank는 Phase 8, build_plan §4①).
+**우리가 직접 계산하는 것**(memory-api가 안 줌): **linker confidence / margin** — "이 주제로 확정해도 되나?"를 판단하는 채택 게이트(시나리오 A ①). Alpha의 채택 코어는 deterministic symbolic confidence다(exact-label symbolic core가 기본). LLM rerank는 Phase 8A에서 **폴백**으로 이미 shipped됐다 — ambiguity(모호) 시 rung ②로만 뜨고, 평상시엔 symbolic core가 그대로 결정한다(build_plan §4①).
 
 ### 2.2 그 anchor 값들은 memory-api 안에서 어떻게 만들어지나
 
@@ -122,7 +122,7 @@ importance(qid) = 0.5·norm(log1p(pageview)) + 0.3·norm(pagerank) + 0.2·norm(l
 
 ### 2.3 아직 memory-api에 없어서 mock으로 채우는 것 (추천 신호)
 
-추천의 **핵심 신호**는 memory-api에 **필드 자체가 존재하지 않는다**(리포 전체 grep에서 0건). 그래서 Alpha는 local/eval mock fixture로 채우고, real 연동은 Open Beta로 미룬다:
+추천의 **핵심 신호**는 memory-api에 **필드 자체가 존재하지 않는다**(리포 전체 grep에서 0건). 그래서 Alpha는 local/eval mock fixture로 채우고, edge의 real 연동은 **Phase 10**(user-facing Alpha의 마지막 조각)으로 간다. Alpha에서 real이 되는 건 edge뿐이고, eligibility는 allow-all stub·persona는 NullProvider로 남는다:
 
 | 계약(provider) | 쓰는 단계 | 미래 endpoint | 필드 | memory-api 실재 |
 |---|---|---|---|---|
@@ -150,7 +150,7 @@ memory-api에서 agent-edge에 **가장 가까운 실재 소스**는 personal gr
 2. 키가 다르다 — memory는 `owner_id`(UUID) 기준이고 `agent_id`가 없다. `agent_id`는 bourbon-api에서 `owner_id→personal_agent_id`로 파생해야 한다.
 3. 이 신호들은 personal graph 빌드(대화 → windowing → LLM 추출 → Wikidata grounding → positioning → connect)의 산물이라, "agent의 주제별 전문성/입장" 축은 **아직 만들어지지도 않는다**.
 
-→ 결론: 이름만 매핑하면 되는 게 아니라 **별도 신호 추출/집계 레이어(또는 전용 discovery 엔드포인트)** 가 필요하다. 그래서 edge/persona/eligibility의 real 연동은 **Open Beta 스코프**이고, Alpha는 mock으로 둔다.
+→ 결론: 이름만 매핑하면 되는 게 아니라 **별도 신호 추출/집계 레이어(또는 전용 discovery 엔드포인트)** 가 필요하다. 그래서 edge의 real 연동은 **Phase 10**(user-facing Alpha) 스코프이고, 그때까지 Alpha는 mock으로 둔다. (eligibility는 Phase 10에서도 allow-all stub, persona는 NullProvider로 남고 — real이 되는 건 edge뿐이다.)
 
 ---
 
@@ -398,7 +398,7 @@ memory-api에서 agent-edge에 **가장 가까운 실재 소스**는 personal gr
 2. **주제(anchor)의 인기도는 추천 신호가 아니다.** `importance`/`pageview`는 "어느 주제인지 알아맞히기"에만 쓰고, agent 추천 순서에는 절대 안 들어간다.
 3. **safety/privacy/maturity는 게이트지 가중치가 아니다.** 통과 아니면 탈락. 점수로 trade-off하지 않는다. (Alpha에서 safety는 inactive, discoverable만 active.)
 4. **stance(for/against)는 hard filter다.** 안 맞으면 빠진다. 통과 후 1순위는 전문성(maturity), stance_confidence는 신뢰도 guard + 막판 tie-break.
-5. **Alpha의 추천 신호(edge/persona/eligibility)는 mock**이다. 진짜 추천 품질이 아니라 **동작·회귀(regression)** 를 검증한다. real 연동은 Open Beta.
+5. **Alpha의 추천 신호(edge/persona/eligibility)는 mock**이다. 진짜 추천 품질이 아니라 **동작·회귀(regression)** 를 검증한다. edge의 real 연동은 **Phase 10**(user-facing Alpha; persona=Null·eligibility=stub 유지), 실사용 품질 평가는 Open Beta.
 6. **422 vs 200(빈 목록):** 주제를 못 풀면 422(에러), 주제는 풀었는데 줄 게 없으면 200+침묵(정상).
 
 ---
