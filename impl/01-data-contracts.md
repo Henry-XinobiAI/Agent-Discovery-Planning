@@ -34,6 +34,12 @@ class Query(ApiModel):
     context: dict[str, Any] | None = None  # eligibility용 호출 컨텍스트
 ```
 
+> **예약(계획) — `topic_context`:** grounding 맥락 전달용 optional 자연어 필드 `topic_context: str | None`을
+> 추가 예정. client가 "주제가 등장한 문장/맥락"을 실어 보내면 rerank(또는 memory-api grounder)가 동음이의
+> sense 선택에 사용. **주의:** 위 `context`(dict, eligibility 전용)와 다름 — 오버로딩하지 말 것. 자연어
+> 텍스트이지 구조화 type 힌트가 아님. Alpha에선 계약에 예약 + 로그만, 소비는 rerank 튜닝/Phase 10.
+> ([Forward 로드맵 §8-7](11-phase-8-9-roadmap.md), 근거 [findings](findings-real-anchor-grounding-ties.md)).
+
 ### enum들
 - `NeedType`: `depth` / `experience` / `for` / `against` / `coverage`
 - `MaturityBand`: `high` / `medium` / `low` (raw maturity를 cutoff로 자른 밴드)

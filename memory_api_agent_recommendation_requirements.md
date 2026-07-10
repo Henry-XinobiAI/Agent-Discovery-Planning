@@ -22,7 +22,7 @@ agent-recommendation compute `AgentTopicEdge` candidates itself.
 
 ## What Memory API Already Provides
 
-The public knowledge anchor path is already sufficient for recommendation.
+The public knowledge anchor path exists, but entity search relevance needs improvement for reliable grounding recall.
 
 `agent-recommendation-api` can use the existing knowledge routes as its
 `KnowledgeEntityProvider` substrate:
@@ -121,6 +121,60 @@ features:
 - statement counts by kind and epistemic type
 - statement text/confidence/provenance for experience and stance derivation
 - evidence refs for explanations, decision logs, and eval replay
+
+## Public entity search relevance — grounding recall (added 2026-07-10)
+
+Agent-recommendation grounding starts by mapping topic text to a QID via `GET /knowledge/entities`. In some
+cases that search **fails to surface the obvious canonical entity**, so grounding fails at the very first
+step. This is a **separate requirement**, independent of the personal signal projection below.
+
+### Symptoms (live against localhost:3000, 2026-07-10)
+
+| query | wanted (canonical) | actual top | outcome |
+|---|---|---|---|
+| `JavaScript` | JS language (Q2005, label "자바스크립트") | "JavaScript framework/library/engine/syntax"… | canonical **absent from top-50** |
+| `TypeScript` | TS language (Q978185, imp 0.456) | rank 1 = a disambiguation page (Q64624307, imp 0.281) | canonical at rank 2 |
+| `Python` | Python language (Q28865) | many exact-label "Python" (language/missile/myth/snake) | rank 1 correct, but by importance alone |
+
+- `q=자바스크립트` (Korean) returns Q2005 at rank 1 → the JavaScript miss is purely **cross-language**.
+- Q2005's importance (0.488) exceeds every result shown (0.24–0.40), yet it is buried → ranking is dominated
+  by label match, not importance.
+- Adding context words does not help: `q=python language` "works" only because "language" matches no label
+  (inert) and importance already ranked the language #1; `q=javascript programming language` instead pulls in
+  generic "programming language" entities (Q2005 still absent).
+
+### Cause (current scoring)
+`multi_match(fields=["label^3","aliases"]) × function_score(importance)`, sort `_score`. importance = offline
+wiki-popularity blend (pageview .5 / pagerank .3 / sitelink .2).
+- **label^3 vs alias^1 asymmetry** → a canonical entity whose label is in another language (query word only in
+  `aliases`) loses to entities carrying the query word in their label.
+- **importance is a multiplier, not a rescue** → a higher-importance canonical entity loses when its text
+  score is lower (TypeScript).
+- no CJK analyzer on the entity index; the multilingual `labels` map is stored but not indexed.
+- `categories`/`description` are returned (a disambiguation page is cleanly tagged `Disambiguation pages`) but
+  the **ranking does not use them**.
+
+### Requirement
+Improve search recall/ranking so a bare query surfaces the obvious canonical entity (implementation is
+memory-api's call). Example directions (one or more):
+- strengthen cross-language / alias-only canonical recall — index the multilingual labels, raise alias weight,
+  or add an exact surface-form bonus.
+- demote disambiguation / `Template:` / `Category:` documents (already marked in `categories`).
+
+### Out of scope — context disambiguation is NOT requested here
+Choosing which sense of a homonym (`Python` language vs snake) requires context and is excluded from this
+search requirement.
+- Once candidates are recalled well (above), sense selection can be done by the caller (agent-recommendation)
+  rerank using context.
+- memory-api already has a context-aware disambiguator on the **ingest** path,
+  `Grounder.ground(mention, *, context=)` (offline-only; it created the `/personal/groundings` edges). Its
+  candidate step uses the **same lexical recall**, so the search improvement above is a prerequisite for it
+  too. Exposing it as a read endpoint is a separate discussion. Details/evidence:
+  `impl/findings-real-anchor-grounding-ties.md`.
+
+### Acceptance (search relevance)
+- Common tech queries like `JavaScript`, `TypeScript` surface the canonical entity near the top (e.g. top-3).
+- Disambiguation / Template / Category documents do not rank above the real concept.
 
 ## Required Memory API Addition
 
@@ -599,8 +653,10 @@ It can defer:
 
 ## Summary
 
-Memory API already provides the public knowledge substrate needed for topic
-grounding. The missing piece is a QID-level, agent-recommendation-oriented raw
+Memory API provides the public knowledge substrate needed for topic grounding, but
+public entity **search relevance** has a gap (cross-language/alias canonical misses —
+see "Public entity search relevance" above) that must be fixed first for grounding
+recall. The other missing piece is a QID-level, agent-recommendation-oriented raw
 signal projection over personal knowledge.
 
 Memory API should provide memory-derived candidate source material. Agent

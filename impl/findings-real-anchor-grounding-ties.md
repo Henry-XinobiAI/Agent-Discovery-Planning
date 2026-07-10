@@ -110,8 +110,7 @@ This ladder is now **implemented in the code repo** (redesigned Phase 8B, Tracks
 rerank② is **live in serving** (Phase 8A); expansion③ and substitution④ **shipped opt-in and
 DORMANT** (default OFF via `EXPANSION_ENABLED` / `SUBSTITUTION_ENABLED`, wired only in the
 composition root, never in eval → `baseline.json` byte-identical; quality measured only in injected
-report-only eval strata). Branch pushed, PR pending. Each rung's technical description below is
-unchanged.
+report-only eval strata). Each rung's technical description below is unchanged.
 - **rerank (live in serving, 8A):** answer in pool, tied → LLM picks the intended QID → must clear
   `RERANK_*` gate; in-set qid only.
 - **query expansion:** miss → the LLM proposes **search terms** (distinctive alias / other-language
@@ -207,3 +206,73 @@ success rate**) — an ops/reliability item for Phase 10.
   non-deterministic stratum.
 - Rerank stratum stays **non-deterministic / injected-reranker / B2-or-human judged**, separate from
   the deterministic manual-seed gold gate (which keeps `reranker=None`).
+
+## Memory-api public search relevance — live findings (2026-07-10)
+
+The Spikes above probe **rerank** (choosing among *recalled* candidates). This section probes the step
+*before* it — **`/knowledge/entities` search recall/ranking** — because some real anchors fail to ground
+for a reason rerank cannot fix: the canonical entity never enters the candidate set. Tested live against
+`localhost:3000`.
+
+### What came back (3 examples)
+
+| query | wanted (canonical) | actual top results | outcome |
+|---|---|---|---|
+| `JavaScript` | JS language (Q2005, label "자바스크립트") | "JavaScript framework / library / engine / syntax" … | canonical **absent from top-50** |
+| `TypeScript` | TS language (Q978185, imp 0.456) | rank 1 = a **disambiguation page** (Q64624307, imp 0.281) | canonical at rank 2 |
+| `Python` | Python language (Q28865) | many exact-label "Python" (language / missile / Delphi dragon / snake genus) | rank 1 correct, but by importance alone |
+
+- `q=자바스크립트` (Korean) returns Q2005 at rank 1 → the JavaScript miss is purely **cross-language**.
+- Q2005's importance (0.488) is higher than every result shown (0.24–0.40), yet it is buried → ranking is
+  dominated by label match, not importance.
+- Adding context words does NOT help: `q=python language` "works" only because "language" matches no label
+  (inert) and importance already ranked the language #1; `q=javascript programming language` instead pulls
+  in generic "programming language" entities and Q2005 stays absent.
+
+### Root cause (current scoring)
+`entity_repository.py`: `multi_match(fields=["label^3","aliases"]) × function_score(importance)`, sort
+`_score` desc. `importance` = offline wiki-popularity blend (pageview .5 / pagerank .3 / sitelink_count .2).
+- **label^3 vs alias^1 asymmetry** → a canonical entity whose label is in another language (query word only
+  in `aliases`) loses to any entity carrying the query word in its label.
+- **importance is a multiplier, not a rescue** → a higher-importance canonical entity loses when its text
+  score is lower (TypeScript).
+- **no CJK analyzer** on the entity index; the multilingual `labels` map is stored but not indexed.
+- `categories` / `description` ARE returned (a disambiguation page is cleanly tagged `Disambiguation pages`)
+  but the **ranking does not use them**.
+
+### Two distinct problems — do not conflate
+- **(A) context-independent recall/ranking bug** — JavaScript (cross-language burial), TypeScript
+  (disambiguation page #1). A bare query should surface the canonical entity; it doesn't. **Fixable in
+  memory-api ranking alone**, no context anywhere. → this is the ask in
+  `memory_api_agent_recommendation_requirements*.md` ("공개 엔티티 검색 relevance").
+- **(B) context-dependent sense selection** — Python homonyms. Choosing language-vs-snake genuinely needs
+  context; the bare `q` interface cannot express intent (see Spike 2's dominant-sense finding). This is NOT
+  a memory-api ranking ask.
+
+### Write-side already has context-aware disambiguation (but offline-only)
+memory-api's **ingest/build** path has `Grounder.ground(mention, *, context=...)`
+(`memory/knowledge/personal/grounding.py`): it feeds the surrounding text + a rich candidate projection
+(description / types / abstract) to an LLM, applies a score+margin gate, and returns the best QID. It is
+what created the `/personal/groundings` edges. Two caveats for reuse:
+- **No request-serving endpoint** — it runs only in the offline per-owner build. Exposing it would be a thin
+  HTTP wrapper (the method is self-contained), at the cost of one LLM round-trip per call.
+- **Its candidate step reuses the SAME lexical recall** (`label^3` + aliases + `description^0.5`). So problem
+  (A) is a prerequisite even for it — if Q2005 isn't recalled, the LLM can't pick it. Context disambiguation
+  only helps (B), never (A).
+
+### Consequence for our contract (decision)
+Sense selection (B) needs context, but `/recommend` grounding sees only `topic_text` today (the `context`
+dict on `Query` is eligibility-scoped and never reaches grounding). So (B) is blocked at our entry
+regardless of memory-api. Plan:
+- **Reserve an optional natural-language `topic_context` on `/recommend`** — the shape memory-api's grounder
+  expects (free text = "the sentence/context the topic arose in", NOT a structured type hint). Additive hook
+  now; consume it at rerank-tuning / Phase 10. See [01](01-data-contracts.md),
+  [11 §8-7](11-phase-8-9-roadmap.md).
+- **Where (B) is resolved is deferred (B-vs-C):** (B) our own rerank consumes `topic_context`; (C) memory-api
+  exposes its `Grounder` as a read endpoint and we call it. C's pull: the `/personal/groundings` edges were
+  grounded by that same `Grounder`, so grounding the query the same way maximizes QID join-consistency
+  (relevant at Phase 10 real edge). The `topic_context` hook is agnostic to B/C — it just carries context
+  inward.
+
+**Net asks:** memory-api → **(A) only** (search recall/ranking; prerequisite for everything). discovery →
+reserve `topic_context`, decide B-vs-C at Phase 10.
