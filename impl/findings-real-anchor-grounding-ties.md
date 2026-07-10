@@ -1,6 +1,6 @@
 # Finding: real anchor grounding — exact-label homonym ties (2026-07-08)
 
-**Status:** actioned — the recommended ladder is now implemented (redesigned Phase 8B, dormant). Remaining feed: Phase 9 (real-anchor eval) + post-memory-api 8B tuning.
+**Status:** actioned — the recommended ladder is now implemented (redesigned Phase 8B, dormant), and Phase 9 (eval → CI gate) shipped on the manual-seed corpus. Remaining feed: real-anchor eval into the shipped CI gate + post-memory-api 8B tuning.
 **Repo:** bourbon-agent-recommendation-api. **memory-api:** `bc9110c` (dev, port-forward `localhost:3000`).
 
 ## What was tried
@@ -135,7 +135,7 @@ report-only eval strata). Each rung's technical description below is unchanged.
 3. re-measure real-anchor grounding — after step 2.
 4. ✅ discovery LLM ladder: rerank → expansion → substitution — **shipped** (Tracks 1–4; rerank live, expansion/substitution dormant/default-OFF).
 
-**Remaining now (2026-07-09):** the ladder _implementation_ (steps 1 & 4) is done. What is left is **measurement + memory-api-gated tuning** — step 2 (memory-api relevance, their team) → step 3 (re-measure real-anchor) → Phase 9 (real-anchor eval into CI) → 8B tuning (thresholds + expansion stratum). This matches the agreed Phase 9 → Phase 10 → 8B-tuning order in `11-phase-8-9-roadmap.md`.
+**Remaining now (2026-07-10):** the ladder _implementation_ (steps 1 & 4) is done, and **Phase 9 (eval → CI gate) shipped on the manual-seed corpus**. What is left is **measurement + memory-api-gated tuning** — step 2 (memory-api relevance, their team) → step 3 (re-measure real-anchor) → feed real-anchor eval into the existing CI gate → 8B tuning (thresholds + expansion stratum). Note Phase 9 gates the manual-seed corpus today; real-anchor eval is the post-Phase-9 feed, not part of the shipped gate. This matches the agreed Phase 10 → 8B-tuning order in `11-phase-8-9-roadmap.md`.
 
 ## Spike findings — rerank feasibility + ambiguity behavior (2026-07-08)
 
