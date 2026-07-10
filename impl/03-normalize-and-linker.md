@@ -163,6 +163,9 @@ rerank·expansion의 **모든 비채택 경로**는 침묵하기 전에 `_substi
 - **활성화:** flag 없음 — composition root가 `LLMReranker()`를 **항상** 주입 (Phase 8A에서 착지).
 - **신호:** `method="rerank"`, `fallback_used=True`.
 - **injection-safe:** 후보 텍스트=data, 응답은 후보 qid 집합에 전단사 검증, winner는 여전히 gate 통과 필수.
+- **맥락 한계(현재):** rerank는 `topic_text` + 후보만 보고 **dominant sense로 확정**한다(예: `Python`→언어).
+  사용자의 국소 의도와 다를 수 있음(근거: [findings](findings-real-anchor-grounding-ties.md) Spike 2). 맥락
+  전달(`topic_context`)은 forward hook — [11 §8-7](11-phase-8-9-roadmap.md).
 
 ### rung ③ expansion — recall miss 회복 · **opt-in, 기본 OFF**
 - **언제:** exact-label 후보가 0개(검색 결과에 원 주제와 exact-label로 채택 가능한 후보가 없음).

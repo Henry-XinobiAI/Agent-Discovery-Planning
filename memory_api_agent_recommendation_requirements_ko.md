@@ -23,7 +23,7 @@ raw-signal projection을 제공해야 한다.
 
 ## 현재 Memory API가 이미 제공하는 것
 
-public knowledge anchor 경로는 현재 recommendation에 충분하다.
+public knowledge anchor 경로는 존재하지만, 안정적인 grounding recall을 위해 entity search relevance 개선이 필요하다.
 
 `agent-recommendation-api`는 기존 knowledge route를 `KnowledgeEntityProvider`
 substrate로 그대로 사용할 수 있다.
@@ -117,6 +117,55 @@ projection이다. recommendation feature 계산에 필요한 raw material이 빠
 - statement kind / epistemic type별 count
 - experience와 stance derivation을 위한 statement text/confidence/provenance
 - explanation, decision log, eval replay를 위한 evidence refs
+
+## 공개 엔티티 검색 relevance — grounding recall (2026-07-10 추가)
+
+Agent-recommendation의 grounding은 주제 텍스트를 `GET /knowledge/entities` 검색으로 QID에 매핑하는
+데서 시작한다. 그런데 이 검색이 **명백한 정본(canonical) 엔티티를 상위에 올리지 못하는** 경우가 있어
+grounding이 시작부터 실패한다. 이는 아래 personal signal projection과 **독립된 별개 요구**다.
+
+### 증상 (localhost:3000 실측, 2026-07-10)
+
+| 쿼리 | 원하는 정본 | 실제 top | 결과 |
+|---|---|---|---|
+| `JavaScript` | JS 언어 (Q2005, label "자바스크립트") | "JavaScript framework/library/engine/syntax"… | 정본 **top-50 밖 (완전 누락)** |
+| `TypeScript` | TS 언어 (Q978185, imp 0.456) | rank 1 = disambiguation 페이지 (Q64624307, imp 0.281) | 정본 rank 2 |
+| `Python` | Python 언어 (Q28865) | 같은 label "Python" 다수(언어/미사일/신화/뱀속) | rank 1은 맞으나 importance만으로 갈림 |
+
+- `q=자바스크립트`(한국어)로 치면 Q2005가 rank 1 → JavaScript 누락은 순수 **cross-language** 문제.
+- Q2005의 importance(0.488)가 상위 결과들(0.24–0.40)보다 높은데도 누락 → 순위를 지배하는 건 importance가
+  아니라 label 매칭.
+- 맥락어를 붙여도 안 됨: `q=python language`가 되는 건 "language"가 label에 없어 무력 + 원래 importance로
+  1위였을 뿐이고, `q=javascript programming language`는 오히려 일반 "programming language" 개념을
+  끌어옴(Q2005 여전히 누락).
+
+### 원인 (현 스코어링)
+`multi_match(fields=["label^3","aliases"]) × function_score(importance)`, sort `_score`. importance =
+오프라인 위키 인기도 blend(pageview .5 / pagerank .3 / sitelink .2).
+- **label 3배 vs alias 1배 비대칭** → 정본 label이 비-쿼리 언어면(쿼리어가 alias로만 매칭) label에 쿼리어를
+  담은 엔티티들에 밀림.
+- **importance는 배수라 구제 못 함** → 더 유명한 정본이 텍스트 점수 낮으면 밀림(TypeScript).
+- entity 인덱스에 CJK analyzer 없음, 다국어 `labels` 맵은 저장되나 색인 안 됨.
+- 응답에 `categories`/`description`이 오지만(disambiguation 페이지는 `Disambiguation pages`로 명확히
+  태깅) **랭킹이 활용 안 함**.
+
+### 요구
+bare 쿼리로도 명백한 정본이 상위에 오도록 **검색 recall/ranking을 개선**한다(구현 방식은 memory-api 팀
+판단). 방향 예시(택1 이상):
+- cross-language / alias-only 정본 recall 보강 — 다국어 label 색인, alias 가중 상향, exact surface-form 보너스.
+- disambiguation / `Template:` / `Category:` 류 문서 demote(이미 `categories`에 표시됨).
+
+### 범위 밖 — context disambiguation은 이 요구에 포함하지 않음
+동음이의(`Python` 언어 vs 뱀)에서 **어느 sense인지** 고르는 것은 맥락이 필요하며, 이 검색 요구에 넣지 않는다.
+- 후보만 잘 recall되면(위 요구), sense 선택은 호출자(agent-recommendation)의 rerank가 맥락으로 수행 가능.
+- 또한 memory-api는 이미 **ingest 경로에 맥락 기반 disambiguator** `Grounder.ground(mention, *, context=)`를
+  갖고 있음(현재 오프라인 전용, `/personal/groundings` edge를 만든 바로 그것). 단 이 candidate 단계도 위와
+  **같은 lexical recall**을 쓰므로 위 검색 개선이 이것의 선결이기도 함. 이를 read 엔드포인트로 노출하는 건
+  별도 논의. 상세·근거: `impl/findings-real-anchor-grounding-ties.md`.
+
+### Acceptance (검색 relevance)
+- `JavaScript`, `TypeScript` 같은 흔한 tech 쿼리에서 **정본 엔티티가 상위(예: top-3)에 노출**.
+- disambiguation / Template / Category 문서가 실제 개념보다 위에 오지 않음.
 
 ## Memory API에 추가로 필요한 것
 
@@ -590,7 +639,9 @@ agent-recommendation-api:
 
 ## 요약
 
-Memory API는 이미 topic grounding에 필요한 public knowledge substrate를 충분히 제공한다.
+Memory API는 topic grounding에 필요한 public knowledge substrate를 제공한다. 단 공개 엔티티 **검색
+relevance**에 gap이 있어(cross-language/alias 정본 누락 — 위 "공개 엔티티 검색 relevance" 섹션), 그
+개선이 grounding recall의 선결이다.
 
 부족한 것은 personal knowledge 위에서 QID별 agent-recommendation-oriented raw signal
 projection을 제공하는 것이다.
