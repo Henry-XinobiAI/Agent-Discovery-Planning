@@ -180,6 +180,30 @@ relevance fix에 블록됨). 기존 코드/계약이 어떻게 바뀔지:
 
 ---
 
+## 부록: 용어 규범 (glossary lock)
+
+문서·코드·메모리가 다시 어긋나지 않도록 grounding/linker/response/log/CI 전반의 canonical 용어를
+여기 한곳에 고정한다. 다른 impl/ 문서(예: [10. eval](10-eval-metrics-and-gates.md))는 이 glossary를 따른다.
+
+- **canonical grounding 사다리:** `symbolic → rerank → expansion → best_effort_substitution → silence`
+  (정밀 코어 → 폴백 rung ②③④ → 침묵). enum 원본은 `discovery/structs/grounding.py`의
+  `GroundingMode = Literal["symbolic", "rerank", "expansion", "best_effort_substitution"]`.
+- **method vs mode:** 내부/로그는 `GroundingResult.method`, 응답 view는 `grounding.mode` (둘은 **같은
+  enum 값**). **top-level `grounding_mode` 필드는 없다.**
+- **expansion vs substitution:** expansion③ = *같은* 주제를 다른 검색어로 회복(LLM은 검색어만 제안,
+  최종 QID는 재검색+gate가 결정). substitution④ = *관련* 주제로의 대체이며 **반드시**
+  `substitute_anchor_qid` + 비어있지 않은 `substitution_reason`을 동반한 *신호된* swap.
+- **proxy:** 오직 LLM **transport**(`discovery.llm.proxy` gateway)만 가리킨다 — grounding rung 이름이 아니다.
+- **"Phase 8B 완료"의 정확한 의미:** fallback ladder *mechanics* implemented · rerank **live**(8A) ·
+  expansion·substitution **shipped dormant**(default OFF) · memory-api relevance fix 후 **tuning pending**.
+  "8B 완료"만 쓰면 오해되므로 위 4단으로 표기한다.
+- **금지/stale 표현:** `best_effort_proxy`, `proxy_reason`, `proxy_anchor_qid`, top-level `grounding_mode`,
+  "full listwise replacement"(구 8B 원안, 폐기됨), "expansion이 QID를 고른다"(expansion은 검색어만 제안),
+  "CI가 품질을 증명한다"(CI = 회귀 tripwire). gate/ratchet 문맥의 "teeth"도 → regression signal / coverage로.
+  단 substrate-hardness 문맥의 **"real anchor = teeth"** 는 별개 개념으로 유지한다.
+
+---
+
 ## 부록: 빌드 순서 vs 이해 순서
 
 | 이해 순서 (이 문서) | 빌드 순서 (실제 Phase) | 왜 다른가 |
