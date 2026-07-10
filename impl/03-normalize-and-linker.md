@@ -104,25 +104,125 @@ if top.confidence != _CONF_EXACT_LABEL or margin < LINKER_MARGIN_MIN:
 ```python
 class GroundingResult:
     qid / label / confidence / margin
-    method: Literal["symbolic","rerank"]  # "rerank" = LLM fallback으로 채택 (Phase 8A)
-    fallback_used: bool                   # rerank fallback이 grounding을 구제했을 때만 True
-    considered: list[ScoredCandidate]     # confidence-desc, 로그용
+    method: GroundingMode   # Literal["symbolic","rerank","expansion","best_effort_substitution"]
+    fallback_used: bool     # 폴백 rung(rerank/expansion/substitution)이 구제하면 True
+    considered: list[ScoredCandidate]   # confidence-desc, 로그용
+    # ↓ 폴백 rung이 채우는 출처 필드 (symbolic 채택이면 전부 None)
+    original_topic: str | None          # expansion·substitution이 원 주제를 보존
+    expanded_query: str | None          # expansion에서 winner를 띄운 검색어
+    substitute_anchor_qid: str | None   # substitution이 고른 대체 QID
+    substitution_reason: str | None     # substitution의 필수 사유
 ```
+- **`method`가 곧 모드**입니다 — 별도 `grounding_mode` 필드는 없음. 침묵은 결과 struct가 아니라
+  `GroundingFailedError`로 표현.
+
+---
+
+## grounding 폴백 사다리 (rung ②–④) — 구현 완료
+
+위의 기호적 채택이 사다리의 **rung ①**입니다. 정밀 코어가 후보를 확정하지 못하면(동음이의 동점 또는
+recall miss), 점점 best-effort해지는 **LLM rung을 한 칸씩** 올라갑니다. 각 rung은 **자기 gate와
+신호(`method`/`fallback_used`)** 를 갖고, 어떤 rung도 구제하지 못하면 `GroundingFailedError`(= 침묵)로
+끝납니다. 정밀 코어(결정성·popularity-free·감사가능성)는 **영구 유지**되고, LLM은 이 폴백 rung에서만 돕니다.
+
+```
+symbolic ① → rerank ② → expansion ③ → substitution ④ → 침묵
+```
+
+### 어느 rung으로 갈지 — Decision A (exact-label 후보 수로 분기)
+
+기호적 채택이 실패하면 `Linker.ground()`가 **exact-label 후보 개수(`n_exact`)** 로 다음 rung을 고릅니다.
+
+| 상황 | 분기 | 이유 |
+|---|---|---|
+| exact 1개 · margin 통과 | **rung ① 채택** (`method="symbolic"`) | 정상 경로 |
+| exact 1개 · margin 실패 | **종료(침묵) — 대체 안 함** | 유일 정답이 margin을 못 내면 "애매"가 아니라 "확신 부족"이라, 억지 대체는 오히려 해로움 |
+| exact ≥2개 (동음이의 동점) | **rung ② rerank** | 원 주제 exact-label 후보가 *여럿* → 같은 풀을 재정렬해 하나를 고름 |
+| exact 0개 (recall miss) | **rung ③ expansion** | 원 주제 exact-label 후보가 *없음* → 검색어를 넓혀 exact-label 후보를 다시 찾음 |
+| rung ②·③가 gate 실패 | **rung ④ substitution → 그래도 실패면 침묵** | 마지막으로 근접 대체 시도, 안 되면 원래 실패를 raise |
+
+핵심은 **"원 주제 exact-label 후보가 여럿이라 못 고르나(≥2 → rerank) / 아예 없나(0 → expansion)"** 라는 서로 다른 실패를 서로 다른 rung으로
+보내는 것입니다. 그리고 **exact 1개인데 margin 실패는 terminal**이라 사다리를 타지 않습니다.
+
+실제 제어 흐름 (`discovery/linker.py`, `Linker.ground()`):
+```python
+if n_exact == 1:
+    if _margin(scored) >= LINKER_MARGIN_MIN:
+        return _adopt(scored, method="symbolic", fallback_used=False)
+    raise _grounding_failed(...)          # 유일 exact + margin 실패 = 종료 (사다리 안 탐)
+if n_exact >= 2:
+    return await self._rerank(...)        # 동음이의 → rung ②
+return await self._expand(...)            # recall miss (n_exact == 0) → rung ③
+```
+rerank·expansion의 **모든 비채택 경로**는 침묵하기 전에 `_substitute_or_raise(...)`(rung ④)를 거칩니다.
+
+### rung ② rerank — 동음이의 정리 · **serving 상시 ON**
+- **언제:** exact-label이 2개+로 margin이 0에 무너질 때.
+- **무엇을:** LLM이 **같은 후보 풀**을 재채점해 하나를 고름(recall을 늘리는 게 아니라 *정리*). 채택은
+  별도 `RERANK_CONF_MIN`(0.50)/`RERANK_MARGIN_MIN`(0.15) gate 통과 필수.
+- **활성화:** flag 없음 — composition root가 `LLMReranker()`를 **항상** 주입 (Phase 8A에서 착지).
+- **신호:** `method="rerank"`, `fallback_used=True`.
+- **injection-safe:** 후보 텍스트=data, 응답은 후보 qid 집합에 전단사 검증, winner는 여전히 gate 통과 필수.
+
+### rung ③ expansion — recall miss 회복 · **opt-in, 기본 OFF**
+- **언제:** exact-label 후보가 0개(검색 결과에 원 주제와 exact-label로 채택 가능한 후보가 없음).
+- **무엇을:** LLM이 **대체 검색어만** 제안(최대 5개; **QID는 절대 제안 안 함**) → linker가 그 검색어로
+  `/knowledge/entities`를 재검색해 풀을 넓힘 → **원 주제의 exact-label gate를 넓힌 풀에 다시 적용**.
+  즉 최종 QID는 여전히 검색+기호적 gate가 정하고, LLM은 recall만 돕니다.
+- **활성화:** `EXPANSION_ENABLED` (기본 **False**). composition root에서만 주입.
+- **신호:** `method="expansion"`, `fallback_used=True`, `original_topic`=원 주제,
+  `expanded_query`=winner를 띄운 검색어.
+
+### rung ④ best-effort substitution — 침묵 직전 대체 · **opt-in, 기본 OFF**
+- **언제:** rerank②·expansion③이 gate를 못 넘어 원래대로면 침묵할 자리.
+- **무엇을:** LLM이 풀 안에서 **가장 가까운 관련 대체 앵커**를 **필수 사유와 함께** 고름(같은 주제 복원이
+  아니라 related-topic *교체* — 그래서 이름이 substitution). 별도 `SUBSTITUTION_CONF_MIN`(0.50)/
+  `SUBSTITUTION_MARGIN_MIN`(0.15) gate. 못 넘으면 원래 실패를 raise(= 침묵).
+- **활성화:** `SUBSTITUTION_ENABLED` (기본 **False**). composition root에서만 주입.
+- **신호:** `method="best_effort_substitution"`, `fallback_used=True`, `original_topic`·
+  `substitute_anchor_qid`·`substitution_reason` 채움 — **항상 대체임이 티나게** 신호(조용한 강등 금지).
+- **개명 유래:** 구 이름 `proxy`는 LLM 게이트웨이 transport의 "proxy"와 충돌 → `substitution`으로 개명.
+  expansion(same-topic 회복) vs substitution(related-topic 교체) 경계도 이름으로 선명해짐.
+
+### 활성화 상태 & eval 결정성
+
+| rung | serving | eval (결정적 gold gate) |
+|---|---|---|
+| ① symbolic | 항상 | 항상 |
+| ② rerank | **항상 주입** | **미주입** (`reranker=None`) |
+| ③ expansion | `EXPANSION_ENABLED` (기본 OFF) | 미주입 |
+| ④ substitution | `SUBSTITUTION_ENABLED` (기본 OFF) | 미주입 |
+
+폴백 rung은 **결정적 gold 게이트에 절대 주입되지 않습니다** → `baseline.json` byte-identical 유지. 품질은
+주입·비결정 **report-only stratum**에서만 측정(게이트에 안 올라탐). 오프라인에서 real 앵커가 7/25만
+ground되는 것은 `reranker=None`인 eval artifact이지 serving 능력이 아닙니다 — serving 경로는 rerank로
+동음이의를 복구합니다.
+
+### 관측 — "응답은 거짓말하지 않는다"
+- **decision log** (`LoggedGrounding`): `method`(무엇이 실제로 일어났나) · `fallback_used` ·
+  `substitution_used`(=`method == "best_effort_substitution"`, 필터용으로 파생) · `original_topic` ·
+  `expanded_query` · `substitute_anchor_qid` · `substitution_reason` · `considered`.
+- **response** (`GroundingView.mode`): substitution인데 `substitute_anchor_qid != qid`이거나 사유가
+  비면 `serving._grounding_view()`가 `ValueError`로 막습니다 → 사용자에게 나가는 grounding은 실제 일어난
+  것과 항상 일치.
 
 ---
 
 ## 무엇이 provisional이고 무엇이 permanent인가
 
-- **provisional (바뀔 수 있음):** confidence *함수* (binary exact/non-exact 값), threshold seed.
-- **permanent (구조):** gate/margin *구조*, injection-safety, popularity 배제.
+- **provisional (바뀔 수 있음):** confidence *함수*(binary exact/non-exact 값), threshold seed
+  (`LINKER_MARGIN_MIN`·`RERANK_*`·`SUBSTITUTION_*` = eval ratchet 대상, 학습 weight 아님).
+- **permanent (구조):** 기호적 정밀 코어, gate/margin *구조*, injection-safety, popularity 배제, 그리고
+  "LLM은 폴백 rung에서만 돈다"는 사다리 골격.
 
-Phase 8A가 gate 실패 시 LLM rerank **fallback**을 붙였습니다 — gate/margin 골격은 그대로, 별도
-`RERANK_*` 상수로 재심. 기호적 confidence를 listwise reranker로 **완전 대체**하려던 원안은
-폐기됐고(2026-07-08 재설계), 재정의된 8B는 정밀 코어 위 폴백 사다리(rerank→expansion→substitution)다.
-이 사다리는 이제 구현됨 — **rerank②는 라이브**(Phase 8A), **expansion③/substitution④는
-기본 OFF로 잠듦**(opt-in, composition root 전용). ([11 로드맵](11-phase-8-9-roadmap.md) 참조.)
+기호적 confidence를 listwise reranker로 **완전 대체**하려던 원안(구 Phase 8B)은 폐기됐습니다(2026-07-08
+재설계) — 정밀 코어를 버리는 비용이 raw quality 이득보다 크고, 그 이득은 위 사다리 + memory-api recall
+개선으로 더 값싸게 얻습니다. 앞으로의 forward work(미구현 Phase 8 잔여·9·10·Open Beta)는
+[11 로드맵](11-phase-8-9-roadmap.md)에.
 
 ---
 
 **요점:** normalize는 입력을 정리하고, linker는 진짜 provider 출력에 대해 결정적으로 QID를
-확정합니다. 다음: QID로 후보 에이전트를 모으는 [04. retrieval](04-retrieval.md).
+확정합니다 — 기호적 정밀 코어(rung ①)가 정상 경로이고, 애매하면 gate·신호가 걸린 LLM 폴백
+사다리(rerank ②/expansion ③/substitution ④)를 오르며 아무것도 못 구제하면 침묵합니다.
+다음: QID로 후보 에이전트를 모으는 [04. retrieval](04-retrieval.md).

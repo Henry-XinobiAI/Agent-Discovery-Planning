@@ -63,10 +63,10 @@ Full excluded list: `bourbon-agent-recommendation-api/tmp/excluded_homonym_ties.
 ## Recommended behavior — grounding modes + fallback ladder (decided 2026-07-08)
 
 Grounding is redesigned as a **precision core + fallback ladder**, each layer owning a distinct
-meaning, log field, and eval treatment. Do NOT collapse them into one `method` / one gate.
+meaning, log field, and eval treatment. Do NOT collapse distinct meanings into one `method` value or one gate.
 
-**Each layer stamps a distinct `method` / `grounding_mode` in the decision log** —
-`symbolic` / `rerank` / `expansion` / `best_effort_substitution` — so logs and eval strata can tell
+**Each layer stamps a distinct `method` in the decision log** (the `method` field IS the mode — there is
+no separate `grounding_mode`) — `symbolic` / `rerank` / `expansion` / `best_effort_substitution` — so logs and eval strata can tell
 disambiguation from recall-recovery from best-effort substitution. `rerank` is NEVER reused for
 expansion or substitution; each also has its own adoption gate.
 
@@ -75,7 +75,7 @@ query → [search-only symbolic grounding]   ← deterministic, no LLM (Alpha, n
           │  adopt ONLY a unique exact-label match
           └─ fail (ambiguous or miss) → fallback ladder (LLM, Phase 8B — implemented, dormant):
                1. rerank                — answer IS in pool but tied → LLM picks intended QID   [disambiguation]
-               2. query expansion       — answer NOT in pool → LLM proposes SEARCH TERMS →
+               2. query expansion       — no exact-label answer surfaced → LLM proposes SEARCH TERMS →
                                            re-search /knowledge/entities → re-ground             [recall recovery]
                3. substitution (opt-in) — still unrecoverable → adopt closest related, SIGNALED  [best-effort product]
                4. silence               — if substitution not enabled, fail honestly
@@ -120,7 +120,7 @@ unchanged.
   directly — it only suggests queries. (E.g. `"JavaScript"` → `"자바스크립트"` → Q2005 recovered at rank
   1.) Runs BEFORE substitution.
 - **substitution (opt-in product decision):** answer unrecoverable → adopt the closest related anchor only
-  with explicit honesty signals: `grounding_mode="best_effort_substitution"`, expose original_topic + adopted
+  with explicit honesty signals: `method="best_effort_substitution"`, expose original_topic + adopted
   substitute anchor, decision-log `substitution_used` / `original_topic` / `substitute_anchor_qid` / `substitution_reason`.
   Distinct `method`, distinct gate — never folded into `method="rerank"`. Preferred direction: allow,
   but as the LAST resort after expansion, always signaled.

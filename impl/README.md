@@ -176,7 +176,7 @@ stance normalizer(8-3)와 B2 judge(8-4)뿐.
 user-facing Alpha 성립의 마지막 조각)**. 합의된 다음 순서는 **Phase 9 → Phase 10 → 8B 잔여 튜닝**
 (expansion threshold/stratum, memory-api relevance fix에 블록됨). 기존 코드/계약이 어떻게 바뀔지:
 
-**→ [11. Phase 8–10 로드맵](11-phase-8-9-roadmap.md)**
+**→ [11. Forward 로드맵](11-phase-8-9-roadmap.md)**
 
 ---
 
