@@ -168,13 +168,13 @@ stance normalizer(8-3)와 B2 judge(8-4)뿐.
 
 ---
 
-## 8. 앞으로 — 남은 미구현 (8-3/8-4/8-5/8-6 + Phase 9–10)
+## 8. 앞으로 — 남은 미구현 (8-3/8-4/8-5/8-6 + Phase 10)
 
-8B 폴백 사다리(rerank②→expansion③→substitution④→silence)는 이제 구현됨. 남은 미구현은 LLM 품질
-슬라이스(8-3 free-form stance normalizer / 8-4 B2 silver judge / 8-5 rich per-need reason /
-8-6 Open-Beta gate fields) + **Phase 9 (eval→CI 게이트)** + **Phase 10 (real edge 통합 =
-user-facing Alpha 성립의 마지막 조각)**. 합의된 다음 순서는 **Phase 9 → Phase 10 → 8B 잔여 튜닝**
-(expansion threshold/stratum, memory-api relevance fix에 블록됨). 기존 코드/계약이 어떻게 바뀔지:
+8B 폴백 사다리(rerank②→expansion③→substitution④→silence)와 **Phase 9 (eval→CI 게이트)**는 이제 구현됨.
+남은 미구현은 LLM 품질 슬라이스(8-3 free-form stance normalizer / 8-4 B2 silver judge / 8-5 rich
+per-need reason / 8-6 Open-Beta gate fields) + **Phase 10 (real edge 통합 = user-facing Alpha 성립의
+마지막 조각)**. 합의된 다음 순서는 **Phase 10 → 8B 잔여 튜닝**(expansion threshold/stratum, memory-api
+relevance fix에 블록됨). 기존 코드/계약이 어떻게 바뀔지:
 
 **→ [11. Forward 로드맵](11-phase-8-9-roadmap.md)**
 
