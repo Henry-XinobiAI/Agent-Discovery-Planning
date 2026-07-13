@@ -14,13 +14,14 @@
 순수, provider-free 조립 단계. ranked survivor + grounding → `Recommendation`.
 
 ```python
-def serve(ranked, *, grounding, query):
+def serve(ranked, *, grounding, query, reasons_by_agent=None):   # reasons_by_agent: 8-5 (아래 (3))
     returned = ranked[: query.limit]          # top-limit 잘라냄
-    items = [_item(c, rank, is_stance=...) for rank, c in enumerate(returned, start=1)]
+    items = [_item(c, rank, is_stance=..., reasons_by_agent=reasons_by_agent)
+             for rank, c in enumerate(returned, start=1)]
     return Recommendation(
         anchor=AnchorView(qid=grounding.qid, label=grounding.label),
         need_type=query.need_type,
-        recommendations=items,
+        recommendations=items,                 # 각 item = signals(항상) + reasons + stance?
         silence=SilenceView(silent=not items, reason=None if items else "no_candidates"),
     )
 ```
@@ -33,12 +34,35 @@ ranking을 0으로 잘라도 응답이 자기 일관적. (리뷰 Medium 반영.)
 **(2) top-limit 비대칭** — *로그*는 전체 ordering trace를 유지하고, *payload*는 top-N만.
 `serving.returned`는 실제 반환된 top-N만 기록.
 
-**(3) 결정적 reason (no-LLM)**:
+**(3) reason + signals (Phase 8-5 — 보강 + `signals` always-on)**:
+
+각 item은 **원 신호(`signals`)를 항상** 싣고, 그 위에 reason을 얹습니다.
+
 ```python
-def _reason(edge):
+def _signals(edge):   # 단일 소스 — 응답과 LLM 입력이 이 함수 하나에서 나옴
+    return EdgeSignalsView(maturity=edge.maturity, evidence_strength=edge.evidence_strength,
+                           freshness=edge.freshness,
+                           experience_source_type=edge.experience_source_type,       # presence-based
+                           experience_specificity=edge.experience_specificity)
+
+def _reason(edge):    # 기본 = 결정적 문자열 (no-LLM)
     return f"maturity {edge.maturity:.2f} · evidence {edge.evidence_strength:.2f} · freshness {edge.freshness:.2f}"
 ```
-항상 존재하는 정렬 신호로 만든 문자열. 풍부한 per-need reason은 Phase 8.
+
+- **`signals` = 원 신호만, `maturity_band` 제외.** band는 신호가 아니라 현재 cutoff의 정렬 artifact라
+  응답에 실으면 클라이언트가 튜닝값에 결합됨 → 뺌(band는 `feature_breakdown` = 로그/튜닝 관심사로 남음).
+  이 덕에 `serve`는 **settings-free** 유지. 경험 필드는 presence-based(추상 edge면 `None`, need 무관).
+- **reason = 기본 결정적, generator 주입 시 리치.** `serve`는 sync·순수 유지 — `reasons_by_agent`
+  맵을 소비만 하고, 각 item은 `reasons_by_agent.get(agent_id) or _reason(edge)`(per-item 폴백).
+- **sync-core + async-sibling** (normalize의 `normalize_query`/`_async`와 동형). 파이프라인이 `serve`
+  **전에** `generate_reasons_async(returned, *, grounding, query, reason_generator)`를 await해 맵을 만든 뒤
+  주입. `returned`는 **top-N 서빙 슬라이스만**(LLM은 서빙될 것만 봄). LLM 입력은 위 **같은 `_signals`**로
+  지음 → 프로즈는 함께 실린 신호만 말할 수 있음("response never lies"를 생성 레이어까지 확장).
+- **strict coverage → 전량 폴백.** batch 1콜. 응답이 서빙 agent_id 전체를 non-blank로 정확히 커버 못하면
+  → `None` → 전원 결정적(부분 혼합 금지). generator가 throw해도 좁게 잡아 degrade(200을 500으로 악화 안 함).
+- **dormant flag** `ServingSettings.REASON_GENERATOR_ENABLED`(기본 OFF) — composition root가 ON일 때만
+  `LLMReasonGenerator` 주입. `signals`는 flag 무관 **항상** 실림(프로즈만 gated). eval은 미주입 →
+  결정적 → `baseline.json` byte-identical. LLM wire 스키마·프롬프트는 [08. LLM](08-llm-layer.md).
 
 **(4) stance 누락 loud fail** — for/against 응답인데 stance가 없으면 계약 위반이므로 조용히 서빙
 안 하고 `ValueError`. (ranked stance 후보는 need-filter를 통과했으니 stance가 있어야 함.)
