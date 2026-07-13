@@ -313,7 +313,9 @@ run_id=run_… corpus_version=manual-seed scenarios=111 completed=111 errored=0
       "expected_anchor_qid": "Q28865",
       "adopted_anchor_qid": "Q28865",         // grounding이 실제 채택한 것 (errored면 null)
       "recommendations": [
-        // rank만 — 절대 score 아님 (§4.2); reason은 결정적 문자열, LLM 없음
+        // rank만 — 절대 score 아님 (§4.2). API 응답엔 signals(원 신호)가 항상 있지만 eval execution
+        // summary는 rank/reasons만 투영(ScenarioRecommendation). reason generator는 미주입이라 reason은
+        // 결정적 문자열(8-5 리치 reason은 flag OFF·eval에서 dead).
         { "agent_id": "a00", "rank": 1, "reasons": ["maturity 0.90 · evidence 0.85 · freshness 0.80"] }
       ],
       "silent": false,

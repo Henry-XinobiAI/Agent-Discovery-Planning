@@ -150,8 +150,9 @@ memory-api `memory/llm`에서 structured-completion spine만 포팅. proxy defau
 grounding은 기본 기호적 매칭이지만, gate가 애매해서 실패하면 **LLM rerank fallback②**(Phase 8A)이
 serving에서 돎 — e3llm-api proxy 경유, keyless Gemini 기본. 재설계된 8B 폴백 사다리의
 **expansion③ + substitution④는 opt-in으로 실렸으나 기본 OFF로 잠듦**(composition root 전용,
-eval 미진입 → baseline.json 바이트 불변, 주입된 report-only 스트라텀에서만 측정). 아직 안 지은 것은
-stance normalizer(8-3)와 B2 judge(8-4)뿐.
+eval 미진입 → baseline.json 바이트 불변, 주입된 report-only 스트라텀에서만 측정). free-form stance
+normalizer(8-3)·rich per-need reason generator(8-5)도 같은 dormant-ship으로 착지(기본 OFF). 아직 안 지은
+것은 B2 judge(8-4)·Open-Beta gate 필드(8-6)·grounding context(8-7)뿐.
 
 **→ 자세히: [08. LLM 레이어](08-llm-layer.md)**
 
@@ -168,13 +169,13 @@ stance normalizer(8-3)와 B2 judge(8-4)뿐.
 
 ---
 
-## 8. 앞으로 — 남은 미구현 (8-3/8-4/8-5/8-6 + Phase 10)
+## 8. 앞으로 — 남은 미구현 (8-4/8-6/8-7 + Phase 10)
 
-8B 폴백 사다리(rerank②→expansion③→substitution④→silence)와 **Phase 9 (eval→CI 게이트)**는 이제 구현됨.
-남은 미구현은 LLM 품질 슬라이스(8-3 free-form stance normalizer / 8-4 B2 silver judge / 8-5 rich
-per-need reason / 8-6 Open-Beta gate fields) + **Phase 10 (real edge 통합 = user-facing Alpha 성립의
-마지막 조각)**. 합의된 다음 순서는 **Phase 10 → 8B 잔여 튜닝**(expansion threshold/stratum, memory-api
-relevance fix에 블록됨). 기존 코드/계약이 어떻게 바뀔지:
+8B 폴백 사다리(rerank②→expansion③→substitution④→silence)·**Phase 9 (eval→CI 게이트)**·자유형 stance
+정규화(8-3)·풍부한 per-need reason(8-5)은 이제 구현됨. 남은 미구현은 LLM 품질 슬라이스(8-4 B2 silver
+judge / 8-6 Open-Beta gate fields / 8-7 grounding context) + **Phase 10 (real edge 통합 = user-facing
+Alpha 성립의 마지막 조각)**. 합의된 다음 순서는 **Phase 10 → 8B 잔여 튜닝**(expansion threshold/stratum,
+memory-api relevance fix에 블록됨). 기존 코드/계약이 어떻게 바뀔지:
 
 **→ [11. Forward 로드맵](11-phase-8-9-roadmap.md)**
 
