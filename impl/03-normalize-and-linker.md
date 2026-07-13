@@ -34,6 +34,36 @@ if query.need_type in (FOR, AGAINST):
 - 다른 need에 stray `user_stance_ref`가 와도 무시 (에러 아님). 원시 `Query`에는 남아서 로그에
   기록되지만 `NormalizedQuery`로는 절대 넘어가지 않음.
 
+### 자유형 stance 정규화 (Phase 8-3) — **구현 완료 · 기본 OFF**
+
+위 문법은 **canonical(결정적) 경로**로 유지되고, 그 위에 자유 문장(`"암호화폐 규제에 반대하는 입장"`)을
+받는 **LLM normalizer 폴백**이 얹혀 있습니다. rerank(rung ②)와 같은 dormant-ships 계약 —
+`NormalizeSettings.STANCE_NORMALIZER_ENABLED`(기본 `False`), composition root가 ON일 때만
+`LLMStanceNormalizer` 주입, 꺼진 배포 동작은 오늘과 byte-identical.
+
+- **sync 코어 + async sibling.** `normalize_query`는 **sync·문법 전용으로 그대로** 두고
+  (`eval/corpus/structs.py`의 sync `@model_validator`가 부르므로 통째 async화 불가), 새
+  `async normalize_query_async(query, *, stance_normalizer=None)`가 LLM 폴백을 얹는다. 파이프라인만
+  이 async sibling을 `await`(blast radius 1줄).
+- **문법 우선 → 실패 시에만 LLM.** async 경로는 `need ∈ {for, against}` ∧ `user_stance_ref 존재` ∧
+  `normalizer 주입` **세 조건을 parse 전에** 게이트하고, 그 분기에서만 `_parse_user_stance_ref`를
+  **직접** 호출한다. 문법 파싱이 `InvalidNeedError`로 실패할 때만 `await normalizer.normalize(raw)`;
+  `None`(proxy 오류/malformed/사용 불가)이면 **다시 `InvalidNeedError`**(자유형 실패는 문법 실패보다
+  무르지 않다). 나머지(ref 없음·non-stance·normalizer 없음·구조 오류)는 전부 sync `normalize_query`에
+  위임 → LLM 미접촉. **broad try/except가 아니라 명시 분기**라서, 문법이 성공적으로 파싱한
+  `dir=neutral`(의미적 거부)은 LLM으로 **되살아나지 않는다**(회귀 가드로 고정).
+- **neutral 가드는 양 경로 공유.** 공유 helper가 resolved `UserStanceRef`에 한 번 적용 → LLM이
+  neutral을 내도 문법 `dir=neutral`과 **동일하게** 거부.
+- **`confidence`는 관측값이지 제어값이 아니다.** LLM 경로가 `UserStanceRef.confidence`를 채우고(문법
+  경로는 `None`=결정적 파스), 이 값은 **decision log(audit)에만** 흐른다 — `/recommend` 응답
+  (`StanceView`는 `{axis, dir}` 유지)·gate·ranking 어디에도 노출/입력되지 않는다. 저신뢰 파스를
+  거부하지 않으며, 거부는 오직 axis/dir 추출 실패에서만 일어난다. "parser지 policy가 아니다."
+- **주입 안전 = 구조적 봉쇄** (expansion/rerank과 동형): 고정 system prompt + 원문 stance 텍스트를
+  user turn에 JSON **data**로 실음 + strict 스키마(`extra="forbid"`) → 유도된 LLM도 `{axis, dir, text,
+  confidence}`만 낼 수 있고 지시문·QID를 낼 수 없다. `StanceNormalizer` **Protocol은 소비자
+  (`normalize.py`)가 소유**하고 concrete `LLMStanceNormalizer`(`stance_normalize.py`)는 그것을
+  import하지 않는 duck-type — linker의 `Reranker`/`Expander`/`Substituter` 관례와 동일.
+
 ---
 
 ## ① linker (`discovery/linker.py`) — 주제 텍스트 → QID 하나
