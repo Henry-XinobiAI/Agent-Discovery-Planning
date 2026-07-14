@@ -169,6 +169,8 @@ Open Beta(외부 공개)에서 더하는 범위:
 공통 파이프라인은 두 내부 단계로 나뉜다. **Discovery 단계**가 후보 공간을 만들고, **Recommendation 단계**가 그 후보를 need에 맞게 선택·서빙한다(§1).
 
 > **Grounding 방식 (2026-07-08 결정 → 구현 완료):** 아래 2단계 "anchor 해소"는 **search-only 정밀 코어**(유일 exact-label match만 결정적 채택; suggest는 autocomplete 전용) + 실패 시 **LLM 폴백 사다리** `symbolic → rerank② → expansion③ → substitution④ → silence`로 구현됨(rerank=동음이의 해소 → query expansion=recall 회복[LLM은 검색어만 제안, 최종 QID는 재검색+gate] → substitution=best-effort 대체·항상 신호). **rerank②는 serving live(Phase 8A)**, **expansion③·substitution④는 opt-in·dormant(default OFF, composition root에서만 주입; eval 미주입 → baseline byte-identical)**. rung ④는 `proxy`에서 `substitution`으로 개명(LLM 게이트웨이 transport와 충돌 회피). **memory-api search relevance/alias 개선은 8B 잔여 튜닝의 선행 dependency**(최고 ROI). 상세 설계·근거·데이터: `impl/findings-real-anchor-grounding-ties.md` → "Recommended behavior"; 단계 로드맵: `impl/11-phase-8-9-roadmap.md`.
+>
+> **★2026-07-14 갱신 (memory-api 감사 `bc9110c`→`2f268fe`):** ⑴ 위 "suggest autocomplete 전용"의 `/knowledge/entities/suggest` 라우트는 memory-api에서 **삭제됨**(#87) — grounding은 search-only라 무영향(discovery provider `suggest()`만 stale cleanup). ⑵ "memory-api search relevance/alias 개선이 8B 선행"은 **대부분 shipped**: 다국어 인덱스 overwrite 버그 fix + 재색인(#78, cross-language recall·meta-page 제외)이 landing했고, `entities` search에 `context=`/`types=`도 배포됨. 남은 8B 튜닝은 memory-api의 BM25 ranking 후속 튜닝에만 의존. ⑶ importance 독립 tiebreak는 폐기(context-반영 backend 순서 신뢰)·#64 competence vector 신설으로 Phase 10 협의가 "edge 신설→competence 투영"으로 이동. 상세: `impl/11-phase-8-9-roadmap.md` Phase 10 + `impl/findings-real-anchor-grounding-ties.md` "Update (2026-07-14)".
 
 ```text
 [Discovery 단계 — 후보 공간 구성]

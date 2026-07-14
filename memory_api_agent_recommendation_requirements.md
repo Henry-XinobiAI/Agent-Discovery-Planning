@@ -44,6 +44,13 @@ topic_text
 
 No major additional memory-api work is required for public anchor grounding.
 
+> **Update 2026-07-14 (audit `bc9110c`→`2f268fe`):**
+> - **Superseded:** `GET /knowledge/entities/suggest` was **removed** (memory-api #87) — drop it
+>   from the substrate list. Grounding never used it (search-only), so there is no recall impact.
+> - **Shipped:** the "search relevance needs improvement" caveat above is **largely resolved** (see the
+>   §"Public entity search relevance" update below). `GET /knowledge/entities` now also accepts `context=`
+>   (sense biasing) and `types=` (`instance_of` class filter) params.
+
 ## What Agent Recommendation Computes
 
 The recommendation pipeline ultimately needs internal `AgentTopicEdge`
@@ -122,7 +129,26 @@ features:
 - statement text/confidence/provenance for experience and stance derivation
 - evidence refs for explanations, decision logs, and eval replay
 
+> **Update 2026-07-14 (#64 competence vector):** the "omits" list above is **partially delivered**.
+> memory-api added a Discovery-targeted `Competence` vector on `PersonalEntity` (exposed via
+> `PersonalEntitySummary` / `GroundingMatch`): `{frequency, breadth, depth, consistency, sentiment +
+> depth/consistency_rationale, aspects_covered, open_questions, persona_blurb, support_ids}` plus Tier-2
+> `degree`/`hands_on_ratio`/`last_seen`/`opinion_ratio`. That now covers the freshness source (`last_seen`),
+> statement-kind/experiential share (`hands_on_ratio`), and evidence refs (`support_ids`). It does **not**
+> by itself yield an `AgentTopicEdge` — see the reframed "Required Addition" update below.
+
 ## Public entity search relevance — grounding recall (added 2026-07-10)
+
+> **Update 2026-07-14 — largely resolved (audit).** The root cause below (canonical buried) was a
+> **multilingual index-overwrite bug**, now fixed + re-indexed (#78): a multilingual index (EN/KO/JA) +
+> all-language `names` recall fields + a `SEARCH_EXCLUDED_CLASS_QIDS` meta-page exclusion. Measured:
+> `JavaScript`→Q2005 rank 1, `TypeScript`→Q978185 rank 1, disambiguation/Category pages demoted.
+> vs the requirement below: cross-language recall ✅, demote-disambiguation ✅; ranking is still
+> untuned BM25 (memory-api's continuing work). **The §"Out of scope — context NOT requested" note below
+> is now reversed:** context disambiguation *is* shipped as a search-layer bias — `context=` (prose
+> `should` boost 0.5) + `types=` (positive `instance_of` filter). Detail:
+> `impl/findings-real-anchor-grounding-ties.md` "Update (2026-07-14)". **Remaining ask** here: a query-time
+> relevance/`_score` projection onto `EntitySummary` (for the linker's tie margin).
 
 Agent-recommendation grounding starts by mapping topic text to a QID via `GET /knowledge/entities`. In some
 cases that search **fails to surface the obvious canonical entity**, so grounding fails at the very first
@@ -261,6 +287,22 @@ Example shape:
 The shape can be flattened if that better matches current API conventions. The
 important part is ownership: all fields above are memory facts or bounded
 memory-derived aggregations.
+
+> **Update 2026-07-14 (#64) — this addition is partially shipped; reframe the remaining ask.**
+> memory-api's cross-owner grounding search already exists: `GET /personal/groundings/{qid}?owner_ids=…`
+> (omit to span all owners) → `Page[GroundingMatch]{owner_id, entity: PersonalEntitySummary}`, and
+> `PersonalEntitySummary` now carries the `Competence` vector + Tier-2 signals (#64). So much of the
+> "recommendation-signals" shape below (grounding facts, statement-kind counts, experiential share,
+> `last_seen`, `support_ids`) is **already delivered** through that route — a separate
+> `/recommendation-signals` endpoint may be unnecessary.
+> - **Superseded:** the standalone route proposal (prefer the existing `/personal/groundings/{qid}` +
+>   competence projection).
+> - **Remaining ask (memory-api):** a query-time relevance `_score` projection (tie margin); an
+>   evidence-ref **exposure/dereference contract** for `support_ids` (statement/message ids, tenant/owner
+>   boundary).
+> - **Remaining work (discovery/bourbon-api/persona, not memory-api):** the **competence→`AgentTopicEdge`
+>   translation layer**, plus the true gaps — eligibility (discoverable/privacy/safety) and stance
+>   axis/dir/confidence (`sentiment` is not a stance axis). `agent_id` stays owner_id-derived.
 
 ## Required Signal Groups
 

@@ -35,9 +35,13 @@ class Query(ApiModel):
 ```
 
 > **예약(계획) — `topic_context`:** grounding 맥락 전달용 optional 자연어 필드 `topic_context: str | None`을
-> 추가 예정. client가 "주제가 등장한 문장/맥락"을 실어 보내면 rerank(또는 memory-api grounder)가 동음이의
-> sense 선택에 사용. **주의:** 위 `context`(dict, eligibility 전용)와 다름 — 오버로딩하지 말 것. 자연어
-> 텍스트이지 구조화 type 힌트가 아님. Alpha에선 계약에 예약 + 로그만, 소비는 rerank 튜닝/Phase 10.
+> 추가 예정. **agent moderator**(대화를 보유한 상위 계층)가 "주제가 등장한 문장/맥락"을 실어 보내면 grounding이
+> 동음이의 sense 선택에 사용. discovery는 대화를 직접 보지 않고 이 필드를 **나르기만** 한다 → memory-api
+> `/knowledge/entities?context=`(prose bias·2026-07-14 코드 landing 확인 = router `context: str|None` +
+> repo prose `should` boost 0.5). **주의:** 위 `context`(dict, eligibility 전용)와 다름 — 오버로딩하지 말 것.
+> 자연어 텍스트이지 구조화 type 힌트가 아님. Alpha에선 계약에 예약 + 로그, 소비는 Phase 10에서
+> `search_candidates(context=…, types=…)` 스레딩(현 provider는 `{text,limit}`만 → additive 확장 필요) +
+> linker 채택 계약 변경으로.
 > ([Forward 로드맵 §8-7](11-phase-8-9-roadmap.md), 근거 [findings](findings-real-anchor-grounding-ties.md)).
 
 ### enum들
@@ -121,9 +125,11 @@ class Candidate(StrictBaseModel):
 - **`PersonaPrior`** (`persona.py`) — `prior_stance`, `stable_traits`, `expertise_claims`.
   **hollow guard**: stance/특성을 힌트할 뿐 topic `maturity`를 세울 수 없음. 랭킹은 밴드 내
   late tiebreak로만 쓰고, 밴드를 가로질러 승격시키지 못함. Alpha에선 사실상 no-op.
-- **`entity.py`** — memory-api 전송 타입(`Entity`, `EntitySummary`, `EntitySuggestion`,
-  `EntityConnections`, `ArticleHit`, `EntityCandidate`). 도메인어로는 "anchor", 코드 타입으로는
-  `Entity*`.
+- **`entity.py`** — memory-api 전송 타입(`Entity`, `EntitySummary`, `EntityConnections`, `ArticleHit`,
+  `EntityCandidate`). 도메인어로는 "anchor", 코드 타입으로는 `Entity*`. **주의(2026-07-14):** memory-api가
+  `/knowledge/entities/suggest` 라우트 + `EntitySuggestion` struct를 **삭제**함(#87) — discovery의
+  `EntitySuggestion`/`suggest()`(providers/base·entity_http·structs/entity)는 이제 stale, code repo
+  cleanup 필요(grounding은 search-only라 런타임 무영향).
 - **`decision_log.py`** — 감사 기록 미러(순수 record). [06 문서](06-serving-and-decision-log.md).
 - **`base.py`** — `StrictBaseModel`(strict 타입), `ApiModel`, `UtcDateTime`(discovery측 소유로
   역의존 차단).
