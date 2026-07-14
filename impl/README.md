@@ -124,7 +124,9 @@ stance/drop_reason), ⑥에서 감사 row로 굳습니다.
 
 ## 4. 파이프라인 단계 상세
 
-각 단계가 코드에서 어떻게 생겼는지, 비자명한 결정의 "왜"까지:
+각 단계가 코드에서 어떻게 생겼는지, 비자명한 결정의 "왜"까지. 먼저 **[00. 파이프라인 I/O
+참조](00-pipeline-io-reference.md)** 가 전 단계를 **INPUT → 처리 → OUTPUT** 한 틀로 요약합니다(shape/흐름
+관점, ① linker는 rung별로 분해). 그다음 아래 서술형 deep-dive에서 "왜"를 봅니다:
 
 - **[03. normalize + linker (grounding)](03-normalize-and-linker.md)** — ⓠ 문자열 파싱 + ①
   기호적 label 매칭으로 QID 확정, adoption gate(confidence/margin).
