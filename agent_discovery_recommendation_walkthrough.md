@@ -64,12 +64,12 @@
 
 ### 2.1 실제로 있고 Alpha가 real로 쓰는 것 — `/knowledge/*` (anchor)
 
-memory-api 라우터 `api/routers/knowledge/router.py` (prefix `/knowledge`)에 아래가 **전부 실재**한다. Alpha 파이프라인이 실제로 호출하는 건 이 중 **2개**다(`search_candidates`·`expand_connections`; `suggest`는 provider 메서드로 남지만 grounding path가 호출하지 않는다):
+memory-api 라우터 `api/routers/knowledge/router.py` (prefix `/knowledge`)에 아래가 실재한다. Alpha 파이프라인이 실제로 호출하는 건 이 중 **2개**다(`search_candidates`·`expand_connections`). **★2026-07-14 갱신:** `/knowledge/entities/suggest` 라우트 + `EntitySuggestion` struct는 memory-api에서 **삭제됨(#87)** — grounding은 이미 search-only라 런타임 무영향이나, discovery provider의 `suggest()`/`EntitySuggestion`(providers/base·entity_http·structs/entity)는 이제 stale(code repo cleanup 필요). 또한 `GET /knowledge/entities` search가 `context=`/`types=` 파라미터를 추가로 받게 됐다(§2.2):
 
 | 값(응답 모델) | 쓰는 단계 | endpoint (params) | 실제 존재 | Alpha가 호출? |
 |---|---|---|---|---|
-| 후보 검색 `Page[EntitySummary]` | ① Linker recall | `GET /knowledge/entities` (`q`,`limit`) | ✅ | ✅ `search_candidates` |
-| 자동완성 `Page[EntitySuggestion]` | autocomplete 전용(① Linker recall 아님, D2) | `GET /knowledge/entities/suggest` (`q`,`limit`) | ✅ | ⛔ grounding 미호출 (Protocol 유지, D3) |
+| 후보 검색 `Page[EntitySummary]` | ① Linker recall | `GET /knowledge/entities` (`q`,`limit`,`context`,`types`) | ✅ | ✅ `search_candidates` (현재 `context`/`types` 미전달 → 확장 예정) |
+| ~~자동완성 `Page[EntitySuggestion]`~~ | autocomplete 전용(① recall 아님) | ~~`GET /knowledge/entities/suggest`~~ | ❌ **삭제됨(#87)** | ⛔ provider 메서드 stale |
 | 이웃 `EntityConnections` | ② 이웃 확장(직접 edge가 희박할 때만) | `GET /knowledge/entities/{qid}/connections` (`limit`) | ✅ | ✅ `expand_connections` |
 | 단건 상세 `Entity` | (계약엔 있으나 Alpha 경로 미사용) | `GET /knowledge/entities/{qid}` | ✅ | ⛔ 아직 안 부름 |
 | 기사 검색 `Page[ArticleHit]` | (계약엔 있으나 Alpha 경로 미사용) | `GET /knowledge/articles` (`q`,`qid`,`lang`,`limit`) | ✅ | ⛔ 아직 안 부름 |
@@ -82,7 +82,7 @@ memory-api 라우터 `api/routers/knowledge/router.py` (prefix `/knowledge`)에 
 - `Page[T]{items,limit,truncated}` — list 응답 봉투. provider가 `.items`만 꺼내고 봉투(limit/truncated)는 버린다.
 
 > **주의 — 흔한 오해 3개(실제 코드 기준 정정):**
-> 1. `aliases`·`labels`(다국어 표기)는 **full `Entity`에만** 있고 `EntitySummary`/`EntitySuggestion` 투영엔 없다. 즉 별칭은 memory-api **서버 안에서** 검색 recall을 높이는 데 쓰일 뿐, discovery 쪽엔 **별칭 목록이 넘어오지 않는다**.
+> 1. `aliases`·`labels`(다국어 표기)는 **full `Entity`에만** 있고 `EntitySummary` 투영엔 없다. 즉 별칭은 memory-api **서버 안에서** 검색 recall을 높이는 데 쓰일 뿐, discovery 쪽엔 **별칭 목록이 넘어오지 않는다**.
 > 2. 이웃 확장은 `Entity.linked_qids`(역시 full Entity 필드)가 아니라 **`/connections` endpoint**로 한다. Alpha는 full `Entity`를 안 부르므로 `linked_qids`를 직접 보지 않는다.
 > 3. `importance`가 후보 순서에 미치는 영향은 **memory-api 서버측**에서 일어난다(§2.2). discovery의 Linker 자신은 popularity를 **전혀 안 읽고** symbolic label-match confidence로만 채점한다(D2).
 
@@ -118,7 +118,7 @@ importance(qid) = 0.5·norm(log1p(pageview)) + 0.3·norm(pagerank) + 0.2·norm(l
 ```
 (pageview·sitelink_count는 heavy-tail이라 `log1p` 압축 후, pagerank는 그대로 — 모두 코퍼스 min-max 정규화 [0,1].)
 
-이 `importance`는 **검색 시점**에 OpenSearch `function_score`(`field_value_factor`, `modifier: ln2p`)로 BM25 관련도를 부스트한다. 즉 `GET /knowledge/entities`가 돌려주는 **후보의 순서**가 이 popularity blend로 정해진다 — 그래서 §2.1의 "importance는 후보 순서에만 영향"이 성립한다. discovery의 Linker는 이 순서를 **결정적 tie-break**로만 받고(D2), 그 위에 자기 symbolic confidence를 얹는다.
+이 `importance`는 **검색 시점**에 OpenSearch `function_score`(`field_value_factor`, `modifier: ln2p`, `boost_mode: multiply`)로 텍스트 관련도를 부스트한다. 즉 `GET /knowledge/entities`가 돌려주는 **후보의 순서**가 이 popularity blend로 정해진다. discovery의 Linker는 이 순서를 **결정적 tie-break**로만 받고(D2), 그 위에 자기 symbolic confidence를 얹는다. **★2026-07-14 갱신:** 검색이 이제 `context=`(prose 필드에 `should` multi_match, boost 0.5)·`types=`(`instance_of` **positive** 필터)도 받아 그 순서를 sense 쪽으로 편향시킬 수 있다(§8-7·[11 §8-7](impl/11-phase-8-9-roadmap.md)). 그리고 **별도의 importance tie-break 신설은 §8-7에서 폐기**됐다 — context-무시 popularity prior라 저인기 의도를 오검색시키고, 어차피 backend `_score`에 이미 접혀 있어 중복. 채택은 "context-반영 backend 순서로 동점 깨기"로 가고 importance는 backend `_score` 성분으로만 관여한다.
 
 ### 2.3 아직 memory-api에 없어서 mock으로 채우는 것 (추천 신호)
 
@@ -126,7 +126,7 @@ importance(qid) = 0.5·norm(log1p(pageview)) + 0.3·norm(pagerank) + 0.2·norm(l
 
 | 계약(provider) | 쓰는 단계 | 미래 endpoint | 필드 | memory-api 실재 |
 |---|---|---|---|---|
-| `AgentTopicEdge` (`get_edges`) | ② Retrieve | (미정 — §2.4 참고) | `maturity`·`evidence_strength`·`freshness`·`experience_source_type`·`experience_specificity`·`observed_stance`·`stance_axis`·`stance_summary`·`stance_confidence`·`evidence_refs`·`discoverable` | ❌ 전부 없음 |
+| `AgentTopicEdge` (`get_edges`) | ② Retrieve | (미정 — §2.4 참고) | `maturity`·`evidence_strength`·`freshness`·`experience_source_type`·`experience_specificity`·`observed_stance`·`stance_axis`·`stance_summary`·`stance_confidence`·`evidence_refs`·`discoverable` | ❌ edge 필드로는 없음 (단 #64 competence vector가 투영 입력 제공 → §2.4) |
 | — (agent 식별) | ②~ | — | `agent_id` | ❌ 없음(memory엔 `owner_id`만; `agent_id`는 bourbon-api `personal_agent_id`로 **downstream 파생**) |
 | `PersonaPrior` (`get_prior`) | ③ Gate에서 fetch → ④ Rank에서 소비(보조) | (미정) | `prior_stance`·`stable_traits`·`expertise_claims` | ❌ 개념 자체 없음 |
 | `Eligibility` (`check`) | ③ Gate | (미정) | `discoverable`·(향후 `privacy_clearance`/`safety_verdict`) | ❌ 개념 자체 없음 |
@@ -140,17 +140,17 @@ importance(qid) = 0.5·norm(log1p(pageview)) + 0.3·norm(pagerank) + 0.2·norm(l
 
 ### 2.4 가장 가까운 실제 소스, 그리고 왜 그대로는 못 쓰나 (edge)
 
-memory-api에서 agent-edge에 **가장 가까운 실재 소스**는 personal graph의 grounding이다:
+memory-api에서 agent-edge에 **가장 가까운 실재 소스**는 personal graph의 grounding이고, **★2026-07-14 감사 기준 그 소스가 상당히 자라났다**(#64 competence vector):
 
-- `GET /personal/groundings/{qid}` → `Page[GroundingMatch]{ owner_id, entity: PersonalEntitySummary }` — "이 QID에 grounding된 owner들"을 준다(owner 단위·엔티티 중심).
-- 실제로 주는 신호: grounding `confidence`/`margin`/`method`/`depth`, entity `salience`(+구성 카운트), statement의 `epistemic`(fact|opinion)·`statement_kind`(declarative|procedural|**experiential**|preference|intention).
+- `GET /personal/groundings/{qid}?owner_ids=…`(생략 시 **전 owner**) → `Page[GroundingMatch]{ owner_id, entity: PersonalEntitySummary }` — "이 QID에 grounding된 owner들"을 **cross-owner로** 준다.
+- 실제로 주는 신호: grounding `confidence`/`margin`/`method`/`depth`, entity `salience`, 그리고 **#64 competence vector** — `Competence{frequency, breadth, depth, consistency, sentiment + depth/consistency_rationale, aspects_covered, open_questions, persona_blurb, support_ids}` + Tier-2(`degree`=centrality, `hands_on_ratio`=경험/실무 비중, `last_seen`, `opinion_ratio`). 커밋(`8092bc3`)이 이를 명시적으로 "salience-orthogonal expertise axis **for Discovery**"라 부른다.
 
-**왜 `AgentTopicEdge`를 대신 못 채우나:**
-1. `maturity`·`evidence_strength`·`freshness`·`observed_stance`·`stance_confidence`·`experience_*`·`discoverable` — **하나도 없다**. (개념상 근접한 건 `statement_kind=experiential` 정도인데, 이건 edge 필드가 아니라 문장 modality 값이다.)
-2. 키가 다르다 — memory는 `owner_id`(UUID) 기준이고 `agent_id`가 없다. `agent_id`는 bourbon-api에서 `owner_id→personal_agent_id`로 파생해야 한다.
-3. 이 신호들은 personal graph 빌드(대화 → windowing → LLM 추출 → Wikidata grounding → positioning → connect)의 산물이라, "agent의 주제별 전문성/입장" 축은 **아직 만들어지지도 않는다**.
+**그래서 Phase 10은 "edge를 새로 만들어달라"가 아니라 "이 신호를 `AgentTopicEdge`로 투영하는 계약 + translation layer"다** (2026-07-14 감사로 재정의 — §2.3 표의 "❌ 전부 없음"은 이제 부분적으로만 참):
+1. **매핑 가능(직접 대체는 아님·translation layer 입력):** maturity←`depth`(+breadth+consistency), evidence_strength←`support_ids` 수+confidence+consistency/frequency, experience_source_type/specificity←`hands_on_ratio`(**strong candidate**이지 1:1 아님 — `StatementKind.EXPERIENTIAL/PROCEDURAL` 원자료 필요), freshness←`last_seen`(now−last_seen decay/normalize transform), coverage/reason 재료←`breadth`/`aspects_covered`/`persona_blurb`.
+2. **agent 식별은 갭 아님:** `owner_id`가 오므로 bourbon-api가 `personal_agent_id`로 파생(rec-signal owner_id-only 계약 그대로).
+3. **진짜 남은 갭:** ⓐ eligibility(discoverable/privacy/safety) ⓑ stance axis/dir/confidence(`sentiment`만 있고 축이 아님) ⓒ `support_ids`(UUID)의 외부 노출·dereference 계약 ⓓ query-time relevance `_score` projection(tie margin용·`EntitySummary` 필드 불변). 대부분 discovery·bourbon-api·persona 몫.
 
-→ 결론: 이름만 매핑하면 되는 게 아니라 **별도 신호 추출/집계 레이어(또는 전용 discovery 엔드포인트)** 가 필요하다. 그래서 edge의 real 연동은 **Phase 10**(user-facing Alpha) 스코프이고, 그때까지 Alpha는 mock으로 둔다. (eligibility는 Phase 10에서도 allow-all stub, persona는 NullProvider로 남고 — real이 되는 건 edge뿐이다.)
+→ 결론: 이름만 매핑하면 되는 게 아니라 **competence→edge translation layer + Discovery edge projection(eligibility·stance)**이 필요하다. 그래서 edge의 real 연동은 **Phase 10**(user-facing Alpha) 스코프이고, 그때까지 Alpha는 mock으로 둔다. (eligibility는 Phase 10에서도 allow-all stub, persona는 NullProvider로 남고 — real이 되는 건 edge뿐이다.)
 
 ---
 

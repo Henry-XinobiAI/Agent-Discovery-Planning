@@ -45,6 +45,13 @@ topic_text
 
 따라서 public anchor grounding 쪽에는 큰 추가 작업이 필요하지 않다.
 
+
+> **Update 2026-07-14 (감사 `bc9110c`→`2f268fe`):**
+> - **Superseded:** `GET /knowledge/entities/suggest`가 **삭제됨**(memory-api #87) — substrate 목록에서 제거.
+>   grounding은 이를 쓴 적 없음(search-only)이라 recall 영향 없음.
+> - **Shipped:** 위의 "search relevance 개선 필요" 단서는 **대부분 해소**됨(아래 §"공개 엔티티 검색 relevance"
+>   Update 참조). `GET /knowledge/entities`가 이제 `context=`(sense 편향)·`types=`(`instance_of` 클래스
+>   필터) 파라미터도 받는다.
 ## Agent Recommendation이 계산하는 것
 
 추천 파이프라인은 최종적으로 내부 `AgentTopicEdge` 후보가 필요하다.
@@ -118,7 +125,24 @@ projection이다. recommendation feature 계산에 필요한 raw material이 빠
 - experience와 stance derivation을 위한 statement text/confidence/provenance
 - explanation, decision log, eval replay를 위한 evidence refs
 
+
+> **Update 2026-07-14 (#64 competence vector):** 위 "빠져 있음" 목록은 **부분 실현**됨. memory-api가
+> Discovery용 `Competence` 벡터를 `PersonalEntity`에 추가(→`PersonalEntitySummary`/`GroundingMatch`로 노출):
+> `{frequency, breadth, depth, consistency, sentiment + depth/consistency_rationale, aspects_covered,
+> open_questions, persona_blurb, support_ids}` + Tier-2 `degree`/`hands_on_ratio`/`last_seen`/`opinion_ratio`.
+> 이로써 freshness source(`last_seen`)·statement-kind/experiential 비중(`hands_on_ratio`)·evidence
+> refs(`support_ids`)가 커버됨. 단 이것만으로 `AgentTopicEdge`가 되지는 않음 — 아래 "추가 필요" Update 참조.
 ## 공개 엔티티 검색 relevance — grounding recall (2026-07-10 추가)
+
+> **Update 2026-07-14 — 대부분 해소(감사).** 아래 근본원인(canonical 매몰)은 **다국어 인덱스 overwrite
+> 버그**였고, fix + 전체 재색인됨(#78): 다국어 인덱스(EN/KO/JA) + 전언어 `names` recall 필드 +
+> `SEARCH_EXCLUDED_CLASS_QIDS` meta-page 제외. 실측: `JavaScript`→Q2005 rank 1, `TypeScript`→Q978185 rank 1,
+> disambiguation/Category 페이지 강등. 아래 요구 대비: cross-language recall ✅, demote-disambiguation ✅;
+> 랭킹은 아직 튜닝 전 BM25(memory-api 후속). **아래 §"범위 밖 — context 미포함" 노트는 이제 반대가 됨:**
+> context disambiguation이 검색-레이어 bias로 배포됨 — `context=`(prose `should` boost 0.5) +
+> `types=`(positive `instance_of` 필터). 상세: `impl/findings-real-anchor-grounding-ties.md`
+> "Update (2026-07-14)". **남은 ask:** query-time relevance/`_score`를 `EntitySummary`에 실어주는 projection
+> (linker tie margin용).
 
 Agent-recommendation의 grounding은 주제 텍스트를 `GET /knowledge/entities` 검색으로 QID에 매핑하는
 데서 시작한다. 그런데 이 검색이 **명백한 정본(canonical) 엔티티를 상위에 올리지 못하는** 경우가 있어
@@ -251,6 +275,19 @@ GET /personal/groundings/{qid}/recommendation-signals
 현재 API convention에 더 잘 맞는다면 shape는 flat하게 바꿀 수 있다. 중요한 것은
 ownership이다. 위 필드는 모두 memory fact이거나 bounded memory-derived aggregation이다.
 
+
+> **Update 2026-07-14 (#64) — 이 추가는 부분 shipped·남은 ask 재정의.** memory-api의 cross-owner grounding
+> 검색이 이미 존재: `GET /personal/groundings/{qid}?owner_ids=…`(생략 시 전 owner)
+> → `Page[GroundingMatch]{owner_id, entity: PersonalEntitySummary}`, 그리고 `PersonalEntitySummary`가 이제
+> `Competence` 벡터 + Tier-2 신호(#64)를 보유. 아래 "recommendation-signals" shape의 상당수(grounding
+> facts, statement-kind counts, experiential 비중, `last_seen`, `support_ids`)가 이 라우트로 **이미
+> 제공**됨 — 별도 `/recommendation-signals` 엔드포인트는 불필요할 수 있음.
+> - **Superseded:** 독립 라우트 제안(기존 `/personal/groundings/{qid}` + competence projection 선호).
+> - **남은 ask (memory-api):** query-time relevance `_score` projection(tie margin); `support_ids`의
+>   evidence-ref **노출·dereference 계약**(statement/message id·tenant/owner 경계).
+> - **남은 작업 (discovery/bourbon-api/persona, memory-api 아님):** **competence→`AgentTopicEdge` translation
+>   layer** + 진짜 갭 — eligibility(discoverable/privacy/safety)·stance axis/dir/confidence(`sentiment`은
+>   stance 축 아님). `agent_id`는 owner_id 파생 유지.
 ## 필요한 signal 그룹
 
 ### 1. Candidate 식별 정보

@@ -288,7 +288,9 @@ The cross-language burial was **not** a ranking-weight problem. EN/KO labels wer
 OpenSearch index not designed for multiple languages, so the later-written language **overwrote** the
 earlier one — when the canonical label was in the other language it vanished entirely. A multilingual
 index (EN/KO/JA) + full re-index fixed it. Ranking is still untuned BM25 (their next step), but the
-canonical entity now surfaces:
+canonical entity now surfaces. (Code-confirmed on `main`, not just the pod: `#78` adds all-language
+`names` recall fields per-analyzer and a `SEARCH_EXCLUDED_CLASS_QIDS` meta-page exclusion — the latter
+also drops the Category/disambiguation pollution flagged in the 2026-07-10 section.)
 
 | query | 2026-07-10 | 2026-07-14 |
 |---|---|---|
@@ -297,7 +299,10 @@ canonical entity now surfaces:
 | `자바스크립트` | Q2005 rank 1 | Q2005 rank 1 (unchanged; cross-language now works both ways) |
 
 ### (B) shipped as a working search-layer bias — `context=` and `types=`
-memory-api's public search now takes two new params (verified deployed and effective):
+memory-api's public search now takes two new params (verified deployed and effective; since
+code-confirmed landed on `main` — router `search_entities(types: list[Q\d+] max 20, context: str|None
+max 2000)`, repo `_importance_scored` = `function_score` `field_value_factor(importance, ln2p, multiply)`,
+`types` = a positive `{"terms":{"instance_of": …}}` filter):
 - **`context: str | None`** (max 2000) — a `should` `multi_match` over prose fields
   (`description_*` / `abstract_*`) at **boost 0.5**, folded into `_score = text × importance(ln2p)`.
 - **`types=<QID>`** — restrict candidates by `instance_of` class.
@@ -373,9 +378,16 @@ Three-layer flow: **agent moderator** (owns the conversation; extracts a snippet
 `search_candidates(context=…)`) → **memory-api** (`context=` search). discovery holds no conversation
 store — consistent with the mode-B moderation runtime hook.
 
-**Revised net asks (Phase 10 critical path, all cross-team, long lead time):**
-- memory-api → **maturity edge** contract (unchanged, the primary ask); **relevance/`_score` projection**
-  onto `EntitySummary` (new, for the tie margin); (A) ranking tuning continues on their side.
+**Revised net asks (Phase 10 critical path, all cross-team, long lead time — reframed by the 2026-07-14
+memory-api audit, see [11 Phase 10](11-phase-8-9-roadmap.md)):**
+- memory-api → the expertise-edge inputs are **already available**: cross-owner grounding
+  (`/personal/groundings/{qid}?owner_ids`), owner_id (→ agent identity, bourbon-api derived), and the #64
+  **competence vector** (depth/breadth/consistency/frequency/sentiment + Tier-2 degree/hands_on_ratio/
+  last_seen/opinion_ratio). So this is no longer "build a maturity edge"; the remaining asks are a
+  **relevance/`_score` projection** onto `EntitySummary` (for the tie margin — confirmed still missing) and
+  an **evidence-ref exposure/dereference contract** for `support_ids`. (A) ranking tuning continues on
+  their side. The gaps that fall to *us*/bourbon-api/persona — Discovery edge projection (eligibility +
+  stance axis/dir/confidence) and the competence→edge translation layer — are not memory-api asks.
 - agent moderator → **supply `topic_context`** on `/recommend` (context quality is bounded by the
   moderator's extraction — this is the real limit on Class-2 disambiguation strength).
 - discovery → thread `topic_context` into `search_candidates(context=, types=)` and change the linker

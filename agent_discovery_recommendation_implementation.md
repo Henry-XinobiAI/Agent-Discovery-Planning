@@ -75,13 +75,13 @@ request(topic_text, need_type, user_stance_ref?)
 
 ```
 search_candidates(text, limit?)      -> [EntitySummary{ qid, label, importance, pageview, … }]       # GET /knowledge/entities      (Page→.items)
-suggest(text, limit?)                -> [EntitySuggestion{ qid, source, label, description }]         # GET /knowledge/entities/suggest (Page→.items; prefix/alias)
+suggest(text, limit?)                -> [EntitySuggestion...]   # ⚠ DELETED memory-api #87 — route+struct 삭제; discovery 메서드만 stale(cleanup only)
 get(qid)                             -> Entity{ qid, label, labels, aliases, linked_qids, … }        # GET /knowledge/entities/{qid}    (bare)
 expand_connections(qid, limit)       -> EntityConnections{ center, broader, narrower, links_*, limit, truncated }  # GET /knowledge/entities/{qid}/connections (bare)
 search_articles(q, qid?, lang?, limit=10) -> [ArticleHit]                                            # GET /knowledge/articles (Page→.items; 보조; limit ge=1 le=100)
 ```
 
-`KnowledgeEntityProvider`는 full entity linker가 아니라 **memory-api entity substrate adapter**다 — entity 검색(`search_candidates`)·prefix autocomplete(`suggest`)·단건 조회·connections 호출을 감쌀 뿐 disambiguation을 결정하지 않는다. Query-side linker(모듈 1)가 candidate generation을 `search_candidates`(search-only)로 모으고, 필요 시 별도 entity linker(§4.1)를 조합해 최종 QID를 정한다(구현 계획에서는 `EntityCandidate`로 정규화 — build_plan §3.1). `suggest`는 autocomplete 전용이라 linker recall에는 쓰지 않는다(D2; provider 메서드는 유지 D3). **`lang`은 `search_articles`에만 있다** — entity 검색/suggest 계약엔 `lang` 파라미터가 없고 핵심 파라미터는 `q`다(계약 drift 방지).
+`KnowledgeEntityProvider`는 full entity linker가 아니라 **memory-api entity substrate adapter**다 — entity 검색(`search_candidates`)·prefix autocomplete(`suggest`)·단건 조회·connections 호출을 감쌀 뿐 disambiguation을 결정하지 않는다. Query-side linker(모듈 1)가 candidate generation을 `search_candidates`(search-only)로 모으고, 필요 시 별도 entity linker(§4.1)를 조합해 최종 QID를 정한다(구현 계획에서는 `EntityCandidate`로 정규화 — build_plan §3.1). `suggest`는 **memory-api #87로 라우트가 삭제됨** — 원래도 linker recall 미사용(D2)이었고, discovery provider 메서드/`EntitySuggestion`는 이제 stale(cleanup 대상). **`lang`은 `search_articles`에만 있다** — entity 검색/suggest 계약엔 `lang` 파라미터가 없고 핵심 파라미터는 `q`다(계약 drift 방지).
 
 `expand_connections(qid, limit)`의 `limit`은 memory-api 기준으로 associative links(`links_out`/`links_in`)만 제한한다(`EntityConnections.limit`/`truncated`가 이 cap을 echo). taxonomy 방향의 `broader`/`narrower`는 memory-api 내부 cap을 따른다.
 
@@ -107,7 +107,7 @@ get_prior(agent_id) -> PersonaPrior{ prior_stance?, stable_traits, expertise_cla
 check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privacy / (safety)
 ```
 
-`EntitySummary`·`Entity`·`EntitySuggestion`·`EntityConnections`·`ArticleHit`만 real 응답(§2.6의 현재 API 표면)에 묶인다. 나머지 타입은 contract로 합의하고, **local/eval에서는 mock fixture로 채우되 배포 앱은 real 통합 전까지**: `edge`·`eligibility`는 hard-required라 **`Unavailable*` provider로 503**, `persona`는 optional/degradable이라 **`NullPersonaProvider`로 `None` degrade(503 아님)**(build_plan §3 — provider 필수성 구분)(§2.5 표·§7.2). 필드별 `source_owner` 규칙은 §7.2.
+`EntitySummary`·`Entity`·`EntityConnections`·`ArticleHit`만 real 응답(§2.6의 현재 API 표면)에 묶인다(`EntitySuggestion`은 memory-api #87로 삭제 — stale). 나머지 타입은 contract로 합의하고, **local/eval에서는 mock fixture로 채우되 배포 앱은 real 통합 전까지**: `edge`·`eligibility`는 hard-required라 **`Unavailable*` provider로 503**, `persona`는 optional/degradable이라 **`NullPersonaProvider`로 `None` degrade(503 아님)**(build_plan §3 — provider 필수성 구분)(§2.5 표·§7.2). 필드별 `source_owner` 규칙은 §7.2.
 
 ### 2.5 경계 요약표
 
@@ -115,7 +115,7 @@ check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privac
 
 | Provider / 호출 | 뒷단 | Alpha local/eval | 배포 앱(deployed) |
 |---|---|---|---|
-| `KnowledgeEntityProvider` (topic→QID, suggest, entity 단건, connections, articles) | `bourbon-memory-api` `/knowledge/entities*` | real / pinned `anchors.json` | **real** |
+| `KnowledgeEntityProvider` (topic→QID, ~~suggest~~[#87 삭제], entity 단건, connections, articles) | `bourbon-memory-api` `/knowledge/entities*` | real / pinned `anchors.json` | **real** |
 | `MemoryEdgeProvider` (agent-topic edge) | Memory (미통합) | eval mock | **unavailable → 503** (real 통합 전) |
 | `PersonaProvider` (persona prior) | Persona (미통합) | eval mock | **`NullPersonaProvider` → `None`** (degradable, 503 아님) |
 | `EligibilityProvider` (discoverability) | owner/privacy (미통합) | eval mock | **unavailable → 503** |
@@ -129,6 +129,8 @@ check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privac
 > **이 절은 `bourbon-memory-api`의 특정 시점 스냅샷(2026-07-07 재확인, main `bc9110c`(#60) 기준 — public entity 계약은 `8ffcec8`(`/knowledge`·`/personal` unify + anchor/node→**entity** rename) 이후 불변; `8ffcec8`→…→`d66b2c1`→`bc9110c` 모두 조상이고, `d66b2c1`→`bc9110c`(29커밋·288파일)은 image/vision·SDK 추출(`#52`)·conversation/artifact·webapp·eval 등 대형 변경을 포함하나 **모두 미러 계약 밖**이다 — read model `structs.py`/`entity_repository.py`+`/knowledge` router diff 0, `Page[T]`(`{items,limit,truncated}`)도 불변(`base.py`는 artifact `ArtifactContentResponse` 추가로만 변경)이며 live-tracking 문서가 아니다.** 직전 스냅샷(`d8135bb`)의 `Anchor*` / `/knowledge/anchors` 표면은 `Entity*` / `/knowledge/entities`로 갱신됐다. Discovery는 memory-api 진행 상황을 계속 따라가며 맞추는 방식이 아니라, §2.4 provider contract와 §7 mock-first 전략을 기준으로 구현한다. memory/persona가 통합 가능한 시점에 contract를 재검증하고 mock provider를 real로 교체한다(§7.6). 그때까지 **능동 조율이 필요한 건 두 checkpoint뿐**이고 나머지 현황 변화는 추적하지 않는다:
 > 1. **QID vocabulary / anchor 의미 계약** — query-side ↔ producer-side QID가 같은 disambiguation 기준인지, alias/redirect/local anchor 처리(아래 "QID 계약" + §7.4). mock으로 숨길 수 없어 **Alpha 중 한 번은 Memory와 합의**해야 한다.
 > 2. **edge contract shape** — 아래 "아직 없는 것" 표의 필드(`maturity`/`evidence_strength`/`freshness`/`observed_stance`/`evidence_refs`/`discoverability` 등)를 실제로 줄 수 있는지와 **필드별 source owner**. (`routing_target`은 계약에서 제거됨.)
+
+> **★2026-07-14 감사 정정 (`bc9110c`→`2f268fe`, 38커밋):** 위 "router diff 0 / 계약 불변"은 이 구간에서 처음 깨졌다 — `/knowledge/entities/suggest` 라우트 + `EntitySuggestion` struct **삭제**(#87), `entities` search에 `context=`/`types=` landing(#78 다국어 fix 포함), `neighbors`/`typed-relations` 라우트 신규. **`EntitySummary`(linker/search 소비)만 필드 불변**(query-time `_score` 없음). 또한 #64 **competence vector**(Discovery expertise 축)가 personal KG에 신설 — 아래 future-edge 메모 갱신. 상세 = memory-api-state 메모 `2f268fe` 블록.
 
 필요시 `../bourbon-memory-api`에서 직접 확인할 수 있고, 아래는 통합 상황 이해를 돕는 요약이다. 핵심 결론은 **anchor substrate는 real로 바로 쓸 수 있고, agent-topic edge substrate는 아직 없다**는 것이다.
 
@@ -144,7 +146,7 @@ check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privac
 | API | 용도 | Discovery 적용 |
 |---|---|---|
 | `GET /knowledge/entities?q=…` → `Page[EntitySummary]` | label/description full-text 검색, `importance` 정렬 | topic → QID 후보 생성 |
-| `GET /knowledge/entities/suggest?q=…` → `Page[EntitySuggestion]` | label/aliases prefix autocomplete(typeahead) | autocomplete 전용 — grounding linker recall에는 미사용(D2; provider 메서드는 유지 D3) |
+| ~~`GET /knowledge/entities/suggest`~~ → ~~`Page[EntitySuggestion]`~~ | ~~autocomplete~~ | **삭제됨(memory-api #87)** — 라우트/struct 제거. grounding 미사용(search-only)이라 무영향; discovery provider `suggest()`는 stale cleanup |
 | `GET /knowledge/entities/{qid}` → `Entity` (bare) | QID 단건 조회 | 선택 anchor 검증, label/description 표시 |
 | `GET /knowledge/entities/{qid}/connections` → `EntityConnections` (bare) | `linked_qids` + hierarchy 기반 typed ego connections(`broader`/`narrower`/`links_out`/`links_in`) | sparse anchor fallback, 관련 anchor 확장 |
 | `GET /knowledge/articles?q=…` → `Page[ArticleHit]` | Wikipedia article chunk BM25 검색 | topic 설명/axis hint 보조. agent 추천 근거로 직접 쓰지 않음 |
@@ -154,7 +156,7 @@ check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privac
 list 라우트(`entities`/`suggest`/`articles`)는 `Page[T]={items,limit,truncated}` transport envelope을 반환하고, detail(`Entity`)·connections(`EntityConnections`)는 bare 모델을 직접 반환한다(응답 표면이 다름). **`Page[T]` unwrap은 provider 책임**(`.items`만 도메인에 전달).
 
 - **`GET /knowledge/entities?q=…` → `Page[EntitySummary]`** (`.items` 언랩); 각 `EntitySummary`: `qid`, `source`, `label`, `description`, `importance`, `pageview`, `pagerank`, `sitelink_count`, `categories`, `instance_of`, `abstract`.
-- **`GET /knowledge/entities/suggest?q=…` → `Page[EntitySuggestion]`** (`.items` 언랩); 각 `EntitySuggestion`: `qid`, `source`, `label`, `description` (display/ranking 신호 생략 — typeahead용 경량).
+- **~~`GET /knowledge/entities/suggest`~~ → `Page[EntitySuggestion]`** — **삭제됨(memory-api #87)**: 라우트와 struct 모두 제거. grounding은 search-only라 런타임 무영향이나 discovery의 `EntitySuggestion`/`suggest()`(providers/base·entity_http·structs/entity)는 stale → code repo cleanup.
 - **`GET /knowledge/entities/{qid}` → `Entity`**: `qid`, `source`, `label`, `labels`, `description`, `aliases`, `instance_of`, `subclass_of`, `occupations`, `sitelink_count`, `sitelinks`, `pageview`, `pagerank`, `importance`, `categories`, `linked_qids`, `abstract`, `fetched_at`. (`occupations`는 P106·people-only로 `EntitySummary`엔 없고 detail `Entity`에만 있다; memory-api `positioning.py`가 `instance_of`와 함께 broader positioning seed로 쓴다 — Alpha 미사용이나 향후 axis/coverage 신호 후보.)
 - **`GET /knowledge/entities/{qid}/connections` → `EntityConnections`**: `center`, `broader`, `narrower`, `links_out`, `links_in`, `limit`, `truncated`; 각 node는 `EntitySummary`.
 - **`GET /knowledge/articles?q=…` → `Page[ArticleHit]`** (`.items` 언랩); 각 `ArticleHit`: `chunk_id`, `qid`, `title`, `lang`, `section_path`, `ordinal`, `text`.
@@ -181,6 +183,8 @@ list 라우트(`entities`/`suggest`/`articles`)는 `Page[T]={items,limit,truncat
 즉 `bourbon-memory-api`의 Vision/Roadmap은 L0 → L1 → L2 → L3 흐름과 anchor routing 방향을 이미 갖고 있고, `8ffcec8` 시점엔 **Personal Knowledge(L2) `/personal` API가 추가됐다**(personal entity graph + public QID grounding). 다만 Discovery가 필요한 **agent-topic edge**는 여전히 직접 제공되지 않는다.
 
 > **Future real edge source 후보(메모).** memory-api `GET /personal/groundings/{qid}?owner_ids=&sort=confidence&limit=` → `Page[GroundingMatch]`(`={owner_id: UUID, entity: PersonalEntitySummary}`)는 특정 public QID에 grounded된 owner personal entity를 cross-owner로 찾는다 — "anchor에 연결된 personal knowledge로 expert routing"의 초기 substrate에 가깝다. **2026-07-02 갱신(main `d66b2c1`)**: `PersonalEntitySummary`가 이제 `confidence`/`margin`/`depth`/`broader_qids`/`pagerank`/`salience`를 담아 cross-owner grounded search로 꽤 쓸 만해졌고, `#36` 계열로 statement가 **public-KG-by-QID로 직결**된다(`subject_qid`/`object_qid` 비정규화·`statement_edges.py` ASSERTED edge) — memory-api에서 "agent-topic edge"에 **가장 가까운 실체**가 됐다. 그러나 여전히 `maturity`·`evidence_strength`·`freshness`·`observed_stance`·`stance_confidence`가 빠져 있어 **`AgentTopicEdge`를 바로 대체하지 못한다.** translation layer 또는 전용 discovery endpoint가 여전히 필요하다(Phase 10 `MemoryEdgeProvider` real 통합 후보로만 메모). **`agent_id`는 memory가 아니라 `owner_id`에서 파생한다: bourbon-api `personal_agent_id(owner_id)`=결정적 `uuid5`**(owner_id==bourbon-api `users.id` 전제 — memory 팀과 확인 필요). `routing_target`은 계약에서 제거됐다 — recommendation은 `agent_id`만 반환하고 dispatch는 bourbon-api가 런타임 해석한다(agent에 endpoint 필드 없음). Alpha는 계속 `MockMemoryEdgeProvider` fixture로 선대체한다.
+
+> **★2026-07-14 감사 갱신 (`2f268fe`·#64 competence vector):** 위 메모의 "`AgentTopicEdge` 바로 대체 못 함"은 유지되나, memory-api가 **#64 competence vector**(`Competence{frequency,breadth,depth,consistency,sentiment + rationales/aspects/persona_blurb/support_ids}` + Tier-2 `degree`/`hands_on_ratio`/`last_seen`/`opinion_ratio`)를 `PersonalEntitySummary`/`GroundingMatch`로 노출하면서 위에서 "빠져 있다"던 신호의 상당수가 채워졌다: freshness←`last_seen`·experience←`hands_on_ratio`(candidate)·evidence←`support_ids`·maturity←`depth`(조합). 커밋이 명시적으로 "salience-orthogonal expertise axis for Discovery"라 부른다. ⇒ Phase 10 협의가 "edge 신설"→**"competence/groundings→`AgentTopicEdge` 투영 + translation layer"**로 이동. 매핑은 직접 대체 아님(hands_on_ratio=strong candidate·last_seen=transform). 진짜 남은 갭 = eligibility·stance axis/dir/confidence(`sentiment`만)·evidence-ref 노출·`_score` projection. 상세 = impl/11 Phase 10 + memory-api-state 메모.
 
 **privacy는 완전 백지가 아니다.** L0 conversation에는 이미 `PiiSensitivity`(PUBLIC/PERSONAL/SENSITIVE/SECRET) 기반 masking/clearance 모델이 있다. 다만 이건 message 마스킹 쪽이고, Discovery가 필요한 **agent-topic edge discoverability / candidate eligibility와는 직접 동일하지 않다.** 후자는 아직 없다. 나중에 eligibility contract(directions §11)는 새로 발명하지 말고 이 기존 PII sensitivity와 **정합**되게 둔다.
 
