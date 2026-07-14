@@ -1,5 +1,7 @@
 # Agent Discovery & Recommendation Roadmap
 
+> **📦 보관됨 (2026-07-14) — historical.** 이 로드맵은 초기 제품 빌드 페이징의 히스토리 기록이다. Phase 8 이후 현재 source of truth는 `../impl/11-phase-8-9-roadmap.md`(+ `../impl/README.md`)이다. 아래 내용은 당시 로드맵 그대로 두되 최신 상태와 어긋날 수 있다.
+
 > Agent Discovery & Recommendation은 사용자가 어떤 주제에 대해 대화할 만한 agent를 찾고, 대화 흐름 안에서 필요한 경우 적절한 agent를 추천하는 시스템이다.
 >
 > 핵심은 "비슷한 사람 추천"만이 아니다. 어떤 상황에서는 같은 입장을 강화해줄 agent가 필요하고, 어떤 상황에서는 반대 관점이나 완전히 다른 프레임을 열어줄 agent가 필요하다. 그래서 추천 목적은 대화 맥락과 need에 따라 달라진다.
