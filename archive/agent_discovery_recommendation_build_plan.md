@@ -1,5 +1,7 @@
 # Agent Discovery & Recommendation — Build Plan (Alpha)
 
+> **📦 보관됨 (2026-07-14) — historical.** 이 build plan은 Phase 1–7 실행 계획의 히스토리 기록이다. 현재 구현 계약·순서의 source of truth는 `../impl/`(특히 `../impl/README.md` + `01`–`11`)이고, 실제 구현 plan은 코드 레포 `tasks/todo.md`에 있다. 아래 내용은 당시 계획 그대로 두되 최신 상태와 어긋날 수 있다.
+
 > 이 문서는 **구현 실행 계획**이다. 설계 기준은 `agent_discovery_recommendation_directions.md`, 무엇을 짓는지·경계·후보 기술은 `agent_discovery_recommendation_implementation.md`(이하 **spec**)에 있다. 여기서는 그것들을 `bourbon-agent-recommendation-api` 레포에 **어떤 디렉토리·모듈·파일·순서로** 올릴지를 정한다. 설계 논거는 재진술하지 않고 spec 절 번호로 가리킨다.
 >
 > 구현 대상: `../bourbon-agent-recommendation-api` · 코드 스타일·LLM 레이어 기준: `../bourbon-memory-api`(`memory/llm/` OpenAI-compatible proxy 패턴 포팅; e3llm SDK 직접 의존 안 함, §5).

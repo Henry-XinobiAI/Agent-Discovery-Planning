@@ -243,7 +243,7 @@ Roadmap §10 Alpha 단계 2(agent-topic edge projection)·4(maturity gate)에 �
 ## Open Beta 로드맵 (Alpha 이후)
 
 Alpha(Pull + for/against, 내부)에서 Open Beta(외부)로 가려면 **새 기능 축**이 붙습니다.
-번호는 [Roadmap](../Agent_Discovery_Recommendation_Roadmap.md)의 단계와 맞춥니다.
+번호는 [Roadmap](../archive/Agent_Discovery_Recommendation_Roadmap.md)(보관됨)의 단계와 맞춥니다.
 
 ### OB 선행 — 계약·게이트 결정 (cross-team, 리드타임 김)
 - **Roadmap 단계 7 — Push DTO + shadow.** Alpha 기간엔 query DTO 계약 초안만 합의(shadow). Open Beta에서

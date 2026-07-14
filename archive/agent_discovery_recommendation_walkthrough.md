@@ -1,5 +1,7 @@
 # Agent Discovery & Recommendation — 동작 설명서 (시나리오 walkthrough)
 
+> **📦 보관됨 (2026-07-14) — historical.** 이 설명서는 초기 동작 설명(시나리오)의 히스토리 기록이며 유지보수 대상이 아니다. 현재 동작·계약은 `../impl/README.md` + `../impl/01`–`11`을 본다. 아래 내용은 최신 구현과 어긋날 수 있다.
+
 > 이 문서는 **"요청이 들어와서 응답이 나갈 때까지 실제로 무슨 일이 일어나는가"** 를 쉬운 말로, 시나리오별로 따라가는 문서다.
 > 정확한 필드/임계값/계약은 `agent_discovery_recommendation_build_plan.md`(이하 *build_plan*)가 source of truth이고, 여기서는 그 동작을 풀어 설명한다.
 > 대상 범위는 **Alpha**(Pull 모드, for/against까지). Push·orthogonal은 마지막에 미리보기로만 다룬다.
