@@ -197,6 +197,16 @@ rerank·expansion의 **모든 비채택 경로**는 침묵하기 전에 `_substi
   사용자의 국소 의도와 다를 수 있음(근거: [findings](findings-real-anchor-grounding-ties.md) Spike 2). 맥락
   전달(`topic_context`)은 forward hook — [11 §8-7](11-phase-8-9-roadmap.md).
 
+> **Forward (2026-07-14) — 채택 계약 변경 예정:** memory-api가 `/knowledge/entities`에 `context=`(prose
+> bias, boost 0.5)·`types=`(instance_of 필터) 검색을 배포함(실측: 맥락으로 `Python` sense 뒤집힘). 그러면
+> backend가 context+importance 반영 순서로 의도된 sense를 rank 1로 올려주는데, **현 채택 규칙(유일 exact-label
+> 만·동점은 margin 0으로 실패)은 그 순서를 버린다.** Phase 10에서 규칙을 *"exact-label 후보 중 context-반영
+> backend 1위를 relevance margin 게이트로 채택"* 으로 바꾼다 — **importance는 backend `_score` 성분으로만
+> 관여**(독립 importance tiebreak는 폐기; popularity prior 누수 방지). `types=`(positive `instance_of`
+> include)는 원하는 클래스 QID를 도출할 수 있을 때 결정적이나, memory-api는 publication을 제외하는 negative
+> 필터가 없어 Class 1(개념 vs 동명 출판물 casefold 충돌)의 일반 해법은 아니다 → 위 채택계약이 주된 경로. 상세·
+> 측정 = [11 §8-7](11-phase-8-9-roadmap.md) + [findings](findings-real-anchor-grounding-ties.md).
+
 ### rung ③ expansion — recall miss 회복 · **opt-in, 기본 OFF**
 - **언제:** exact-label 후보가 0개(검색 결과에 원 주제와 exact-label로 채택 가능한 후보가 없음).
 - **무엇을:** LLM이 **대체 검색어만** 제안(최대 5개; **QID는 절대 제안 안 함**) → linker가 그 검색어로

@@ -35,9 +35,11 @@ class Query(ApiModel):
 ```
 
 > **예약(계획) — `topic_context`:** grounding 맥락 전달용 optional 자연어 필드 `topic_context: str | None`을
-> 추가 예정. client가 "주제가 등장한 문장/맥락"을 실어 보내면 rerank(또는 memory-api grounder)가 동음이의
-> sense 선택에 사용. **주의:** 위 `context`(dict, eligibility 전용)와 다름 — 오버로딩하지 말 것. 자연어
-> 텍스트이지 구조화 type 힌트가 아님. Alpha에선 계약에 예약 + 로그만, 소비는 rerank 튜닝/Phase 10.
+> 추가 예정. **agent moderator**(대화를 보유한 상위 계층)가 "주제가 등장한 문장/맥락"을 실어 보내면 grounding이
+> 동음이의 sense 선택에 사용. discovery는 대화를 직접 보지 않고 이 필드를 **나르기만** 한다 → memory-api
+> `/knowledge/entities?context=`(prose bias·2026-07-14 배포 확인). **주의:** 위 `context`(dict, eligibility
+> 전용)와 다름 — 오버로딩하지 말 것. 자연어 텍스트이지 구조화 type 힌트가 아님. Alpha에선 계약에 예약 + 로그,
+> 소비는 Phase 10에서 `search_candidates(context=…)` 스레딩 + linker 채택 계약 변경으로.
 > ([Forward 로드맵 §8-7](11-phase-8-9-roadmap.md), 근거 [findings](findings-real-anchor-grounding-ties.md)).
 
 ### enum들

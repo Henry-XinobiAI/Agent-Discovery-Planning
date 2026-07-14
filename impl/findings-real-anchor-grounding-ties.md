@@ -276,3 +276,113 @@ regardless of memory-api. Plan:
 
 **Net asks:** memory-api → **(A) only** (search recall/ranking; prerequisite for everything). discovery →
 reserve `topic_context`, decide B-vs-C at Phase 10.
+
+## Update — memory-api fix landed + context/types shipped + full re-measurement (2026-07-14)
+
+memory-api shipped the fixes and re-indexed. Re-tested live against the deployed pod (`localhost:8081`,
+no auth). The picture has changed materially: **the bottleneck moved from recall to tie-breaking, and the
+lever that breaks ties is now context — not popularity.**
+
+### (A) largely resolved — root cause was a multilingual index-overwrite bug
+The cross-language burial was **not** a ranking-weight problem. EN/KO labels were pushed into an
+OpenSearch index not designed for multiple languages, so the later-written language **overwrote** the
+earlier one — when the canonical label was in the other language it vanished entirely. A multilingual
+index (EN/KO/JA) + full re-index fixed it. Ranking is still untuned BM25 (their next step), but the
+canonical entity now surfaces:
+
+| query | 2026-07-10 | 2026-07-14 |
+|---|---|---|
+| `JavaScript` | Q2005 absent from top-50 | **Q2005 rank 1** |
+| `TypeScript` | disambiguation page Q64624307 rank 1 | **Q978185 (language) rank 1**; disambiguation page gone from top-10 |
+| `자바스크립트` | Q2005 rank 1 | Q2005 rank 1 (unchanged; cross-language now works both ways) |
+
+### (B) shipped as a working search-layer bias — `context=` and `types=`
+memory-api's public search now takes two new params (verified deployed and effective):
+- **`context: str | None`** (max 2000) — a `should` `multi_match` over prose fields
+  (`description_*` / `abstract_*`) at **boost 0.5**, folded into `_score = text × importance(ln2p)`.
+- **`types=<QID>`** — restrict candidates by `instance_of` class.
+
+Measured strength on the `Python` homonym (baseline: reptile genus rank 1, language rank 2):
+
+| request | language (Q28865) | effect |
+|---|---|---|
+| `context=웹 개발 프로그래밍 코드` | rank 2 → **1** | context lifts the intended sense; CPython enters top-3 |
+| `context=반려 뱀 키우기 파충류` | rank 2 → **3** | "pythons (family of snakes)" jumps 10 → 2; language drops |
+| `types=Q16521` (taxon) | **removed** | only snakes returned — decisive |
+
+**So context is a real, working disambiguation bias — but a bias, not a verdict** (boost 0.5; a
+high-importance wrong sense still lingers). `types=` is the decisive lever when a class can be derived.
+This is **not** the offline LLM `Grounder`; it is a lighter context-biased search ("C-lite"). It resolves
+(B) at the candidate-generation layer without exposing the write-side Grounder.
+
+### Full deterministic re-measurement (committed 20-seed set, linker rule reproduced)
+Reproduced `Linker.ground` with `reranker=None / expander=None` (the eval/offline default): search-only,
+`LINKER_CANDIDATE_LIMIT=20`, `n_exact` = candidates whose casefold(label) == casefold(query);
+`n_exact==1` grounds, `>=2` → tie (rerank, terminal in eval), `0` → miss (expand, terminal in eval).
+
+```
+GROUND(correct) = 7   TIE = 10   MISS = 3   (GROUND→wrong = 0)   / 20 anchors
+```
+- **GROUND 7:** JavaScript, Linux, PostgreSQL, Kubernetes, Climate change, Cryptography, Blockchain.
+- **TIE 10:** Machine learning, Deep learning, Artificial intelligence, Renewable energy, Quantum
+  mechanics, Computer security, Molecular biology, Economics, Photography, Statistics — the runner-up
+  exact matches are almost all **Title-Case publications** (journals/books/albums, e.g. "Machine Learning"
+  the journal, "Artificial Intelligence" the album) that collide with the concept under casefold. The
+  canonical concept is rank 1 by importance in **all 10**.
+- **MISS 3:** `Python (programming language)`, `Docker (software)`, `React (software)` — the seed query
+  carries a Wikidata parenthetical the label lacks, so no exact match, though the expected entity IS
+  recalled at rank 1–2. (Seed hygiene / a paren-strip, or context territory.)
+
+**The failure mode shifted from recall to tie-breaking.** The canonical entity is now recalled at rank 1
+everywhere; what remains is exact-label ties our linker collapses to margin 0.
+
+### Two tie classes — and why importance tie-break is retired
+- **Class 1 — concept vs same-named publication** (the 10 ties above). Essentially no genuine sense
+  ambiguity; a casefold-collision artifact. `types=` is decisive when the caller can derive the desired
+  class QID (a **positive** `instance_of` include filter). For concept-vs-publication ties it is only a
+  *candidate* lever: current memory-api supports positive filters, **not** a negative "exclude publications"
+  filter, and does not guarantee subclass closure — so Phase 10 must either derive a reliable
+  non-publication class QID, add an exclusion/type-family contract, or fall back to backend-order +
+  relevance margin (below).
+- **Class 2 — genuine sense ambiguity** (`Python` = language/snake/missile/deity). Only **context**
+  resolves it correctly; importance actively mis-grounds low-popularity intended senses.
+
+**Lever priority (locked with the product owner, 2026-07-14):**
+1. **context (`context=`)** — primary; the only correct answer for Class 2.
+2. **type filter (`types=`)** — deterministic, popularity-free; decisive *when a class QID can be derived*
+   (positive `instance_of` include). Not a general Class-1 fix on its own — memory-api has no negative
+   "exclude publications" filter (see Class 1 above).
+3. **importance — retired as a standalone linker lever.** It is context-blind popularity (the exact leak
+   we reject) and is *already* baked into memory-api's `_score` multiplier. A separate linker-side
+   importance tie-break is both redundant and undesirable.
+
+### The real design change is the linker adoption contract (not a tie-break)
+memory-api now returns a **context+importance-blended ordering** that puts the intended sense at/near rank
+1. Our linker throws that ordering away for exact-label matches (recomputes binary confidence `1.0` →
+margin 0 → tie). To benefit, the linker's adoption rule must change from *"adopt only a unique exact-label
+match"* to *"among exact-label matches, adopt the one the context-informed backend ranks first, gated by a
+relevance margin."* Importance participates **only through the backend `_score`**, never as an isolated
+linker decision. Open nuance: for a proper *margin* gate (not blind rank-1 adoption), memory-api should
+project the query-time relevance/`_score` onto `EntitySummary` — today it returns only the static
+`importance` field, so the linker otherwise has only list-order to lean on. This is a small additional
+contract ask (see [11 §8-7](11-phase-8-9-roadmap.md), [Phase 10](11-phase-8-9-roadmap.md)).
+
+### Boundary and net asks (revised)
+Three-layer flow: **agent moderator** (owns the conversation; extracts a snippet and fills
+`topic_context`) → **discovery** (never sees the conversation; threads `topic_context` → linker →
+`search_candidates(context=…)`) → **memory-api** (`context=` search). discovery holds no conversation
+store — consistent with the mode-B moderation runtime hook.
+
+**Revised net asks (Phase 10 critical path, all cross-team, long lead time):**
+- memory-api → **maturity edge** contract (unchanged, the primary ask); **relevance/`_score` projection**
+  onto `EntitySummary` (new, for the tie margin); (A) ranking tuning continues on their side.
+- agent moderator → **supply `topic_context`** on `/recommend` (context quality is bounded by the
+  moderator's extraction — this is the real limit on Class-2 disambiguation strength).
+- discovery → thread `topic_context` into `search_candidates(context=, types=)` and change the linker
+  adoption contract as above (deterministic; no LLM). Retire the importance tie-break idea.
+
+**B-vs-C, revised:** the shipped `context=` search is effectively **C-lite** — memory-api resolves context
+at the search layer, giving discovery a context hook at candidate generation without exposing the offline
+LLM `Grounder`. Full C (calling the write-side `Grounder` for maximal QID join-consistency with the edges)
+remains a **later** option; the join-coherence caveat (query grounded by context-biased *search* vs edges
+grounded by the LLM *Grounder* — different mechanisms) is unmeasured until real edges land (Phase 10).
