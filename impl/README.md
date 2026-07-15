@@ -134,6 +134,7 @@ stance/drop_reason), ⑥에서 감사 row로 굳습니다.
 - **[05. gate + ranking](05-gate-and-ranking.md)** — ③ need-무관 탈락 vs ④ need-의존 순서
   (for/against 상대 stance, coverage round-robin, experience).
 - **[06. serving + decision log](06-serving-and-decision-log.md)** — ⑤ payload/침묵 + ⑥ 감사 기록.
+- **[12. agent recommendation algorithm](12-agent-recommendation-algorithm.md)** — 제품 관점: 현재 topic-expertise 축(구현 중) + 이후 personalization/social 축(future). 파이프라인 단계 위의 알고리즘 레이어링.
 
 ---
 
