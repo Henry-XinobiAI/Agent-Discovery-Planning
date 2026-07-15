@@ -12,8 +12,8 @@ Python `Protocol` 4개로 코드화했습니다.
 
 ```python
 class KnowledgeEntityProvider(Protocol):
-    async def search_candidates(self, text, *, limit=20) -> list[EntitySummary]: ...
-    async def suggest(self, text, *, limit=8) -> list[EntitySuggestion]: ...  # stale: memory-api #87이 라우트 삭제 → cleanup 대기 (01 참조)
+    async def search_candidates(self, text, *, limit=20) -> list[EntitySummary]: ...  # 단일-쿼리 POST /knowledge/entities/search
+    async def search_entities(self, queries, *, instance_of=None, fanout=0, limit=20) -> list[EntitySummary]: ...  # 멀티-쿼리 (+instance_of 필터)
     async def get(self, qid) -> Entity | None: ...
     async def expand_connections(self, qid, *, limit=30) -> EntityConnections: ...
     async def search_articles(self, q, *, qid=None, lang=None, limit=10) -> list[ArticleHit]: ...
@@ -76,11 +76,12 @@ provider마다 "없을 때" 행동이 다릅니다. 이건 **의미론적 결정
 
 - memory-api list 라우트는 wire에서 `Page[T]` 봉투를 반환 → provider가 `.items`를 unwrap해서
   도메인은 항상 `list[Entity*]`만 봄 (봉투는 transport).
-- **GET-only retry**: 429/5xx/transport 에러만 재시도, 4xx/404는 즉시 처리. `get()`만 404→None,
-  `expand_connections`는 404→raise.
+- **read-only retry**: GET(`get`/`expand_connections`/`search_articles`)과 entity 검색
+  (`POST /knowledge/entities/search`, 읽기 전용이라 재시도 안전) 모두 429/5xx/transport 에러만 재시도,
+  4xx/404는 즉시 처리. `get()`만 404→None, `expand_connections`는 404→raise.
 - 2xx인데 invalid → `UpstreamUnavailableError`로 래핑.
-- `lang`은 `search_articles`에만 노출 — entity/suggest 검색은 `q`만 받고 `lang` 없음 (계약 drift
-  가드). 후보 검색은 `lang`을 넘기면 안 됨.
+- `lang`은 `search_articles`에만 노출 — entity 검색(`POST /entities/search`)은 `queries`(+`instance_of`)만
+  받고 `lang` 없음 (계약 drift 가드). 후보 검색은 `lang`을 넘기면 안 됨.
 - 공유 httpx client 하나를 `from_settings()`로 만들고 async-with 생명주기로 관리.
 
 ---

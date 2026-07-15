@@ -106,9 +106,10 @@ search_candidates  (search-only recall; /knowledge/entities)
 ```python
 summaries = await self._knowledge.search_candidates(topic_text, limit=limit)
 ```
-`search_candidates`(`/knowledge/entities`, alias-aware)만 recall에 쓴다. `suggest`는 autocomplete
-전용이라(memory-api 계약) grounding recall에서 제외 — 실측 recall 기여 0. 후보는 qid로 dedupe하며
-provider(first-appearance) 순서를 보존해 confidence 동점 시 결정적 tie-break으로 쓴다.
+`search_candidates`(`POST /knowledge/entities/search`, alias-aware)만 recall에 쓴다 (멀티-쿼리 recall이
+필요한 rung은 `search_entities`). 구 `suggest`(autocomplete 전용)는 memory-api가 라우트를 삭제해(#87)
+discovery에서도 제거됨 — grounding recall과 무관. 후보는 qid로 dedupe하며 provider(first-appearance)
+순서를 보존해 confidence 동점 시 결정적 tie-break으로 쓴다.
 
 ### (2) confidence — 기호적 binary
 ```python
@@ -162,6 +163,7 @@ class GroundingResult:
     expanded_query: str | None          # expansion에서 winner를 띄운 검색어
     substitute_anchor_qid: str | None   # substitution이 고른 대체 QID
     substitution_reason: str | None     # substitution의 필수 사유
+    trajectory: GroundingTrajectory | None  # agentic 채택 시 tool-스텝 trace, 그 외 None
 ```
 - **`method`가 곧 모드**입니다 — 별도 `grounding_mode` 필드는 없음. 침묵은 결과 struct가 아니라
   `GroundingFailedError`로 표현.

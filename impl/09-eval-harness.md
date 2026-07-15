@@ -41,7 +41,8 @@ flat 디렉터리. 러너가 한 곳에서 읽음:
 ### scenario 필드
 - `need_type`, `anchor_query_id`(anchors.queries[]로 들어가는 안정 handle — 문구 편집이 링크를
   안 깸), `stratum`(easy/hard/ambiguous/guard), `is_needle`(정확히 1개가 rank-1), for/against면
-  `user_stance_ref`/`expected_axis`, guard면 `tags`.
+  `user_stance_ref`/`expected_axis`, guard면 `tags`, 그리고 `context_messages`(agentic grounder
+  stratum용 대화 맥락 — `None`이 기본이고 커밋 코퍼스는 미보유 → symbolic 경로).
 
 ### 9개 guard (두 레이어로 분리)
 - **coverage row** (`eval/builders/guards.py`) — guard당 태그된 시나리오 1개, 셈 가능. 동작 증명
@@ -57,7 +58,8 @@ flat 디렉터리. 러너가 한 곳에서 읽음:
 
 ### 흐름
 ```python
-async def run_eval(*, corpus_dir, anchors_path, run_id, corpus_version, generated_at) -> EvalExecution:
+async def run_eval(*, corpus_dir, anchors_path, run_id, corpus_version, generated_at,
+                   reranker=None, substituter=None, grounder=None) -> EvalExecution:  # LLM seam, 기본 미주입
     anchors = loader.load_anchors(anchors_path)
     scenarios = sorted(loader.load_scenarios(...), key=lambda s: s.scenario_id)
     agents, gold = loader.load_agents(...), loader.load_gold(...)
@@ -82,7 +84,7 @@ async def run_eval(*, corpus_dir, anchors_path, run_id, corpus_version, generate
 ```python
 knowledge = AnchoredKnowledgeProvider(anchors)   # real HTTP 아님, pinned 재생
 RecommendationPipeline(
-    linker=Linker(knowledge),
+    linker=Linker(knowledge, reranker=reranker, substituter=substituter, grounder=grounder),  # seam 기본 None → symbolic·결정적
     retriever=Retriever(MockMemoryEdgeProvider.from_fixtures(corpus_dir), knowledge),
     gate=Gate(MockEligibilityProvider.from_fixtures(corpus_dir), MockPersonaProvider.from_fixtures(corpus_dir)),
     ranker=Ranker(),

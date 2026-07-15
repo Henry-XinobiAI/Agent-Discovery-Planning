@@ -31,18 +31,18 @@ class Query(ApiModel):
     user_stance_ref: str | None = None   # "axis=…; dir=…; text=…" (§3.1), 나중에 파싱
     lang: str | None = "ko"
     limit: int = Field(default=10, ge=1, le=50)
-    context: dict[str, Any] | None = None  # eligibility용 호출 컨텍스트
+    eligibility_context: dict[str, Any] | None = None    # eligibility용 호출 컨텍스트 (③ gate까지 verbatim 전달)
+    context_messages: list[ContextMessage] | None = None # 최근 대화 턴 (agentic grounding용, ⓠ에서 grounding_context로 투영)
 ```
 
-> **예약(계획) — `topic_context`:** grounding 맥락 전달용 optional 자연어 필드 `topic_context: str | None`을
-> 추가 예정. **agent moderator**(대화를 보유한 상위 계층)가 "주제가 등장한 문장/맥락"을 실어 보내면 grounding이
-> 동음이의 sense 선택에 사용. discovery는 대화를 직접 보지 않고 이 필드를 **나르기만** 한다 → memory-api
-> `/knowledge/entities?context=`(prose bias·2026-07-14 코드 landing 확인 = router `context: str|None` +
-> repo prose `should` boost 0.5). **주의:** 위 `context`(dict, eligibility 전용)와 다름 — 오버로딩하지 말 것.
-> 자연어 텍스트이지 구조화 type 힌트가 아님. Alpha에선 계약에 예약 + 로그, 소비는 Phase 10에서
-> `search_candidates(context=…, types=…)` 스레딩(현 provider는 `{text,limit}`만 → additive 확장 필요) +
-> linker 채택 계약 변경으로.
-> ([Forward 로드맵 §8-7](11-phase-8-9-roadmap.md), 근거 [findings](findings-real-anchor-grounding-ties.md)).
+> **대화 맥락 (구현됨 — `context_messages`):** grounding에 대화 맥락을 싣는 필드는 위 `context_messages`로
+> **구현됐다**(Phase 8-7). **agent moderator**(대화를 보유한 상위 계층)가 최근 턴을 실어 보내면 ⓠ가
+> `NormalizedQuery.grounding_context`로 투영하고, linker가 동음이의 sense를 agentic grounder로 해소한다.
+> discovery는 대화를 직접 보지 않고 이 필드를 **나르기만** 한다. **주의:** 위 `eligibility_context`(dict,
+> eligibility 전용)와 직교 — 오버로딩하지 말 것.
+> (구 계획은 optional `topic_context` 자연어 필드 + memory-api `/knowledge/entities?context=` backend
+> 검색이었으나, memory-api가 `context=`를 제거하며 **폐기** — discovery측 agentic grounder로 대체.
+> [로드맵 §8-7](11-phase-8-9-roadmap.md), 근거 [findings](findings-real-anchor-grounding-ties.md)).
 
 ### enum들
 - `NeedType`: `depth` / `experience` / `for` / `against` / `coverage`
@@ -126,10 +126,10 @@ class Candidate(StrictBaseModel):
   **hollow guard**: stance/특성을 힌트할 뿐 topic `maturity`를 세울 수 없음. 랭킹은 밴드 내
   late tiebreak로만 쓰고, 밴드를 가로질러 승격시키지 못함. Alpha에선 사실상 no-op.
 - **`entity.py`** — memory-api 전송 타입(`Entity`, `EntitySummary`, `EntityConnections`, `ArticleHit`,
-  `EntityCandidate`). 도메인어로는 "anchor", 코드 타입으로는 `Entity*`. **주의(2026-07-14):** memory-api가
-  `/knowledge/entities/suggest` 라우트 + `EntitySuggestion` struct를 **삭제**함(#87) — discovery의
-  `EntitySuggestion`/`suggest()`(providers/base·entity_http·structs/entity)는 이제 stale, code repo
-  cleanup 필요(grounding은 search-only라 런타임 무영향).
+  `EntityCandidate`). 도메인어로는 "anchor", 코드 타입으로는 `Entity*`. memory-api가
+  `/knowledge/entities/suggest` 라우트 + `EntitySuggestion` struct를 삭제함에 따라(#87), discovery의
+  `EntitySuggestion`/`suggest()`도 **제거됨**(providers·structs·tests에서 삭제; grounding은 search-only라
+  런타임 무영향). recall은 `search_candidates`(단일)/`search_entities`(멀티)만 사용.
 - **`decision_log.py`** — 감사 기록 미러(순수 record). [06 문서](06-serving-and-decision-log.md).
 - **`base.py`** — `StrictBaseModel`(strict 타입), `ApiModel`, `UtcDateTime`(discovery측 소유로
   역의존 차단).

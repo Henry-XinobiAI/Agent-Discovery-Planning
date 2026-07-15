@@ -372,11 +372,12 @@ project the query-time relevance/`_score` onto `EntitySummary` — today it retu
 `importance` field, so the linker otherwise has only list-order to lean on. This is a small additional
 contract ask (see [11 §8-7](11-phase-8-9-roadmap.md), [Phase 10](11-phase-8-9-roadmap.md)).
 
-### Boundary and net asks (revised)
-Three-layer flow: **agent moderator** (owns the conversation; extracts a snippet and fills
-`topic_context`) → **discovery** (never sees the conversation; threads `topic_context` → linker →
-`search_candidates(context=…)`) → **memory-api** (`context=` search). discovery holds no conversation
-store — consistent with the mode-B moderation runtime hook.
+### Boundary and net asks (Historical — 2026-07-14, superseded 2026-07-15)
+The retired three-layer flow *was*: **agent moderator** (owns the conversation; extracts a snippet and
+fills `topic_context`) → **discovery** (never sees the conversation; threads `topic_context` → linker →
+`search_candidates(context=…)`) → **memory-api** (`context=` search). What replaced it — a discovery-side
+agentic grounder reading `context_messages` — is in the superseded note just below; discovery still holds
+no conversation store, consistent with the mode-B moderation runtime hook.
 
 > **★Superseded (2026-07-15):** the `context=`/`_score`-projection/`topic_context`-into-`search_candidates`
 > asks below were **retired** — memory-api removed search `context=` (`5530192`), so tie disambiguation moved

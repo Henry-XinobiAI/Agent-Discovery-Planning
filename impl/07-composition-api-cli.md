@@ -15,11 +15,21 @@ import하고 **절대 `eval/`을 안 함** → 서빙 그래프 mock-free.
 
 ```python
 def build_pipeline(knowledge: KnowledgeEntityProvider) -> RecommendationPipeline:
+    settings = LinkerSettings.get()
+    agent_on = GroundingAgentSettings.get().GROUNDING_AGENT_ENABLED   # ①이 agentic이면 symbolic ladder 은퇴
+    grounder    = LLMGrounder(knowledge) if agent_on else None
+    reranker    = None if agent_on else LLMReranker()                                            # 8A rerank fallback
+    expander    = None if agent_on else (LLMExpander()    if settings.EXPANSION_ENABLED    else None)  # 8B rung③ (dormant)
+    substituter = None if agent_on else (LLMSubstituter() if settings.SUBSTITUTION_ENABLED else None)  # 8B rung④ (dormant)
+    stance_normalizer = LLMStanceNormalizer() if NormalizeSettings.get().STANCE_NORMALIZER_ENABLED else None  # 8-3 (dormant)
+    reason_generator  = LLMReasonGenerator()  if ServingSettings.get().REASON_GENERATOR_ENABLED  else None     # 8-5 (dormant)
     return RecommendationPipeline(
-        linker=Linker(knowledge),
+        linker=Linker(knowledge, reranker=reranker, expander=expander, substituter=substituter, grounder=grounder),
         retriever=Retriever(UnavailableEdgeProvider(), knowledge),      # edge 미통합 → 503
         gate=Gate(UnavailableEligibilityProvider(), NullPersonaProvider()),  # elig 503, persona None
         ranker=Ranker(),
+        stance_normalizer=stance_normalizer,
+        reason_generator=reason_generator,
         log=DecisionLog(
             clock=lambda: datetime.now(UTC),
             id_factory=lambda: f"dl_{uuid4().hex}",
@@ -35,9 +45,14 @@ def build_pipeline(knowledge: KnowledgeEntityProvider) -> RecommendationPipeline
   미통합 → `Unavailable*` provider로 배선. 배포된 `/recommend`는 앵커를 grounding(real)한 뒤
   candidate 단계에서 **정직한 503**을 반환 (에이전트를 날조하지 않음). persona는 optional →
   `NullPersonaProvider`(항상 `None`, 503 아님).
+- **LLM leg는 전부 flag로 배선** — rerank(8A)는 상시, expansion③/substitution④/stance normalizer(8-3)/
+  reason generator(8-5)는 각 `*_ENABLED`(기본 OFF)일 때만. `GROUNDING_AGENT_ENABLED`(8-7)는 유일한
+  **비-additive** 스위치: ON이면 `LLMGrounder`가 ①의 primary가 되고 rerank/expansion/substitution rung을
+  전부 은퇴(`agent_on`이 게이트해 두 상태가 절대 안 겹침). 클라이언트는 아무도 안 들고 proxy를
+  `wrapper` 싱글턴으로 공유. eval은 이들을 하나도 주입하지 않음 → 결정적 baseline 불변.
 - **파이프라인은 startup에 1회 생성** (lifespan), `app.state`에 저장, `get_pipeline`이 매 요청에
-  같은 인스턴스 전달. 공유 httpx client 하나를 소유, shutdown에 `try/finally` close (D4). ownership
-  테스트로 검증.
+  같은 인스턴스 전달. 공유 httpx client **둘**(knowledge + rerank fallback이 lazily 만드는 LLM proxy
+  client)을 소유, shutdown에 `try/finally` close (D4). ownership 테스트로 검증.
 - **mock은 여기 안 들어옴** — 테스트는 `app.dependency_overrides[get_pipeline]`로 mock-backed
   파이프라인 주입. 이 모듈은 안 건드림.
 

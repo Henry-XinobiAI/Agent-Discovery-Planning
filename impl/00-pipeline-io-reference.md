@@ -25,7 +25,7 @@ rung별로 쪼갭니다. "왜 이렇게 설계했나"의 서술형 deep-dive는 
 | ⓠ | normalize | `normalize.py` | `Query` (raw) | `NormalizedQuery` |
 | ① | linker | `linker.py` | `topic_text: str` | `GroundingResult` *(또는 `GroundingFailedError` raise)* |
 | ② | retrieval | `retrieval.py` | `grounding.qid: str` | `list[EdgeHit]` |
-| ③ | gate | `gate.py` | `list[EdgeHit]` + `context` | `GateResult(survivors, dropped)` |
+| ③ | gate | `gate.py` | `list[EdgeHit]` + `eligibility_context` | `GateResult(survivors, dropped)` |
 | ④ | ranking | `ranking.py` | `survivors`, `NormalizedQuery` | `(ranked, filter_dropped)` |
 | ⑤ | serving | `serving.py` | `ranked`, `grounding`, `reasons` | `Recommendation` |
 | ⑥ | decision log | `decision_log.py` | 전 단계 중간물 | `DecisionLogRecord` + `decision_log_id` stamp |
@@ -56,7 +56,7 @@ rung별로 쪼갭니다. "왜 이렇게 설계했나"의 서술형 deep-dive는 
 | `need_type` | `NeedType` | depth / experience / **for** / **against** / coverage |
 | `user_stance_ref` | `str \| None` | 반구조 문법 `"axis=…; dir=…; text=…"` — stance 파싱 대상 |
 | `context_messages` | `list[ContextMessage] \| None` | 최근 대화 턴 → `grounding_context`로 투영(①의 agentic 라우팅용, Phase 8-7). `context`(eligibility)와 **직교** |
-| `lang` / `limit` / `context` | `str?` / `int(1–50)` / `dict?` | 통과 (`context`=eligibility dict, ③ gate까지 · **grounding엔 안 닿음**) |
+| `lang` / `limit` / `eligibility_context` | `str?` / `int(1–50)` / `dict?` | 통과 (`eligibility_context`=eligibility dict, ③ gate까지 · **grounding엔 안 닿음**) |
 
 ### 처리
 
@@ -84,7 +84,7 @@ rung별로 쪼갭니다. "왜 이렇게 설계했나"의 서술형 deep-dive는 
 
 ### OUTPUT — `NormalizedQuery` (`StrictBaseModel`, 파이프라인 입력 · `structs/recommend.py:80`)
 
-`topic_text`/`need_type`/`lang`/`limit`/`context`는 그대로 복사, `user_stance`에 파싱 결과(`UserStanceRef`
+`topic_text`/`need_type`/`lang`/`limit`/`eligibility_context`는 그대로 복사, `user_stance`에 파싱 결과(`UserStanceRef`
 또는 `None`), `grounding_context`(+`grounding_context_truncated`)에 투영된 대화. **핵심: 원본 `user_stance_ref`
 문자열과 raw `context_messages`는 여기서 사라진다**(drop) — linker/ranker/serving은 구조화된 `user_stance`와
 lean `grounding_context`만 본다. `UserStanceRef.confidence`는 LLM 경로만 채우며 **audit-log only**(응답/gate/
@@ -113,7 +113,7 @@ ranking 미노출).
 ### 공통 전처리 (`Linker.ground()` `linker.py:350`)
 
 ```
-search_candidates(topic_text, limit=LINKER_CANDIDATE_LIMIT)   # /knowledge/entities, alias-aware recall
+search_candidates(topic_text, limit=LINKER_CANDIDATE_LIMIT)   # POST /knowledge/entities/search, alias-aware recall
   → _to_candidates (qid dedupe, provider 순서 보존)
   → _score (기호적 label-match confidence, confidence-desc 정렬)
   → n_exact = exact-label(confidence==1.0) 후보 수
@@ -170,7 +170,7 @@ rerank·expansion의 **모든 비채택 경로**는 침묵 전에 `_substitute_o
 - **INPUT:** 원 주제 + 표면화된 non-exact 후보(맥락, `Expander.expand`).
 - **처리:** LLM이 **대체 검색어만** 제안(QID 절대 아님). linker 경계 가드(`linker.py:456`)로 shape 방어
   (bare str→단일 term, non-str drop, strip, blank drop, `_MAX_EXPANSION_TERMS=5` cap) → 각 term을
-  `/knowledge/entities` **재검색**(concurrent, `gather` order 보존) → 원+재검색 풀 병합 후 **원 주제의 exact
+  `POST /knowledge/entities/search` **재검색**(concurrent, `gather` order 보존) → 원+재검색 풀 병합 후 **원 주제의 exact
   gate 재적용**. 즉 최종 QID는 여전히 검색+기호 gate가 결정, LLM은 recall만 확장. 유일 exact + margin 통과
   못 하면 넓힌 풀로 `_substitute_or_raise`.
 - **활성화:** `LinkerSettings.EXPANSION_ENABLED` (기본 **OFF**, opt-in). composition root 전용.
@@ -217,7 +217,7 @@ rerank·expansion의 **모든 비채택 경로**는 침묵 전에 `_substitute_o
 ## ③ gate (`discovery/gate.py`) — EdgeHit → 완성된 Candidate
 
 ### INPUT
-`list[EdgeHit]` + `context`(= `normalized.context`, eligibility용).
+`list[EdgeHit]` + `context`(= `normalized.eligibility_context`, eligibility용).
 
 ### 처리 (`Gate.screen()` `gate.py:82`)
 1. **eligibility (hard-required)**: 모든 hit에 `eligibility.check(agent_id, context=...)` concurrent
@@ -276,7 +276,7 @@ pure·provider-free assembly. 전체 랭킹은 ⑥에 로그, **응답은 `limit
 
 ### 처리
 1. **rich reason (Phase 8-5, serve 전 async)**: 파이프라인이 `generate_reasons_async`를 **serve보다 먼저**
-   await(`pipeline.py:65`), **top-N 슬라이스(`ranked[:limit]`)만** 대상 → LLM은 서빙될 것만 봄. `_signals`가
+   await(`pipeline.py:71`), **top-N 슬라이스(`ranked[:limit]`)만** 대상 → LLM은 서빙될 것만 봄. `_signals`가
    단일 소스(응답 표시 신호 = LLM 입력 신호). strict coverage(정확히 served agent_ids, non-blank) 아니면
    `None`으로 전량 폴백. optional 경로라 raise해도 200을 500으로 안 만듦(degrade). `ReasonGenerator` 미주입
    (`REASON_GENERATOR_ENABLED` 기본 OFF)이면 `None`.
@@ -313,7 +313,7 @@ provider_versions/contract_version/sink 전부 composition root 주입(결정성
 
 ### OUTPUT
 `DecisionLogRecord` (sink에 append). 파이프라인이 `recommendation.decision_log_id = record.log_id`로
-**stamp back**(`pipeline.py:79`, P3). sink = prod `StructlogDecisionLogSink`(emit-only) / 테스트·eval·CLI
+**stamp back**(`pipeline.py:85`, P3). sink = prod `StructlogDecisionLogSink`(emit-only) / 테스트·eval·CLI
 `ListDecisionLogSink`(retains).
 
 ---

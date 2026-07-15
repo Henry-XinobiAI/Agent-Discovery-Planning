@@ -20,6 +20,7 @@ def serve(ranked, *, grounding, query, reasons_by_agent=None):   # reasons_by_ag
              for rank, c in enumerate(returned, start=1)]
     return Recommendation(
         anchor=AnchorView(qid=grounding.qid, label=grounding.label),
+        grounding=_grounding_view(grounding),  # 항상 실림 (mode + fallback provenance)
         need_type=query.need_type,
         recommendations=items,                 # 각 item = signals(항상) + reasons + stance?
         silence=SilenceView(silent=not items, reason=None if items else "no_candidates"),
@@ -84,6 +85,7 @@ DecisionLog(
     id_factory,        # log_id 결정성
     provider_versions, # 배포별 substrate provenance (mock vs real)
     contract_version,
+    settings,          # RankingSettings | None — feature_breakdown의 maturity_band 절단용
     sink,              # 완성 record가 가는 곳
 )
 ```
@@ -97,7 +99,7 @@ DecisionLog(
 row = DecisionLogRecord(
     log_id=id_factory(), ts=clock(),
     query=_logged_query(query, normalized),          # raw + normalized stance 둘 다
-    grounding=_logged_grounding(grounding),          # considered trace, fallback_used
+    grounding=_logged_grounding(grounding),          # considered trace, fallback_used, trajectory(agentic)
     candidate_pool=[_pool_entry(c) for c in candidate_pool],  # survivors + gate.dropped
     dropped=[_drop_entry(c) for c in dropped],       # gate.dropped + filter_dropped 병합
     ranked=[_ranked_entry(c, rank, need) ...],       # 전체 ranking (top-limit 아님)
@@ -132,7 +134,7 @@ sink.write(row)
 ```
 log_id, ts, contract_version
 query (LoggedQuery)          — topic, need, raw+normalized stance
-grounding (LoggedGrounding)  — resolved_qid, method, fallback_used, considered[]
+grounding (LoggedGrounding)  — resolved_qid, method, fallback_used, considered[], trajectory (agentic 채택 시)
 candidate_pool [PoolEntry]   — agent_id, anchor_id, via, via_qid
 dropped [DropEntry]          — agent_id, reason
 ranked [RankedEntry]         — rank, feature_breakdown, ordering_keys, stance (no score!)
