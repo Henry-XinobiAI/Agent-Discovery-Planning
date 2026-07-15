@@ -84,8 +84,9 @@ memory-api taxonomy cap이 100이라 real provider도 안전.
 
 ## 범위 밖 (Phase 8)
 
-- **linker-side ambiguity 확장** (여러 QID 후보를 동시에 탐색)은 별개 관심사로 Phase 8 이월
-  (LLM disambiguation 필요). retrieval의 확장은 어디까지나 "**확정된** 앵커의 이웃"을 도는 것.
+- **linker-side ambiguity 확장** (여러 QID 후보를 동시에 탐색)은 별개 관심사로 이월. retrieval의
+  확장은 어디까지나 "**확정된** 앵커의 이웃"을 도는 것. (LLM disambiguation 자체는 rerank rung·agentic
+  grounder로 이미 shipped — 남은 것은 retrieval이 다중 앵커 QID를 동시에 탐색하는 부분뿐.)
 
 ---
 

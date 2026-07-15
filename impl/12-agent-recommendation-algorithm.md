@@ -43,7 +43,7 @@ topic + need
 
 | 축 | 현재 상태 | 의미 |
 |---|---|---|
-| topic grounding | **agentic LLM-primary grounding 구현 중** | `topic_text` + 최근 대화 context로 하나의 QID를 확정하거나 abstain |
+| topic grounding | **agentic LLM-primary grounding shipped (기본 OFF, dormant)** | `topic_text` + 최근 대화 context로 하나의 QID를 확정하거나 abstain |
 | candidate retrieval | Phase 10 real edge 통합 예정 | QID에 연결된 agent-topic edge 수집 |
 | eligibility | Alpha는 얇은 stub 예정, Open Beta에서 확장 | 노출 가능 여부, discoverable/privacy/safety |
 | maturity | 구현된 rank/gate 신호 | 해당 topic에 대한 agent 지식 성숙도 |
@@ -87,11 +87,12 @@ Phase 10의 핵심이다. mock edge가 아니라 memory-api의 `GroundingMatch`/
 
 ### 3.2 agentic context-aware grounding
 
-Grounding은 기존 `symbolic exact-label + margin` primary에서 **agentic LLM-primary**로 재설계 중이다.
-배경은 memory-api 검색에서 `context=`가 사라져 backend rank로 sense를 boost하는 접근이 폐기됐고,
-identical-label homonym tie를 symbolic만으로 깰 수 없기 때문이다.
+Grounding은 기존 `symbolic exact-label + margin` primary에서 **agentic LLM-primary**로 재설계됐다
+(shipped·기본 OFF `GROUNDING_AGENT_ENABLED`, dormant). 배경은 memory-api 검색에서 `context=`가 사라져
+backend rank로 sense를 boost하는 접근이 폐기됐고, identical-label homonym tie를 symbolic만으로 깰 수
+없기 때문이다.
 
-현재 구현 중인 방향:
+현재 shipped된 구조 (기본 OFF, dormant):
 
 - moderator가 최근 대화 히스토리를 `context_messages`로 전달한다.
 - Discovery는 wire에서는 bourbon-agent `ContextMessage` parity를 받고, 내부에서는 최소
@@ -99,7 +100,9 @@ identical-label homonym tie를 symbolic만으로 깰 수 없기 때문이다.
 - context가 있으면 grounding agent가 `search_entities` / `get_entity` / opt-in `get_connections` 도구를
   bounded loop로 호출해 QID를 고르거나 abstain한다.
 - context가 없고 unique exact-label이면 symbolic adopt를 유지한다.
-- context가 없고 tie/miss면 기본 abstain이며, agentic은 report-only에서만 본다.
+- context가 없고 tie/miss면 abstain이다 — 단 이는 **agent ON composition**(legacy rung 미주입) 기준이다.
+  online 기본은 `GROUNDING_AGENT_ENABLED` OFF라 symbolic 사다리(rerank/expansion/substitution)가 그대로
+  돌고, agentic 품질은 report-only stratum·eval에서 관찰한다.
 - final QID는 membership guard, `get_entity` 상세 확인, confidence floor, observed-field evidence를 모두
   통과해야 한다.
 - decision log에는 grounding trajectory block을 additive로 남긴다.
@@ -129,7 +132,7 @@ Open Beta에서는 단순 `discoverable`만으로는 부족하다.
 
 ### 4.1 사용자 관심사와 persona
 
-현재 `Query.context`와 `context_messages`는 grounding/gate를 돕는 **call-local 맥락**이지, 사용자의 장기 선호
+현재 `Query.eligibility_context`와 `context_messages`는 grounding/gate를 돕는 **call-local 맥락**이지, 사용자의 장기 선호
 모델이 아니다. `context_messages`는 "지금 이 대화에서 topic이 어떤 sense인지"를 고르기 위한 입력이고,
 personalized recommendation을 위한 user profile은 별도 축이다.
 

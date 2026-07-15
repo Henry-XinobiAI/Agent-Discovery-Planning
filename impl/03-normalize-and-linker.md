@@ -64,12 +64,32 @@ if query.need_type in (FOR, AGAINST):
   (`normalize.py`)가 소유**하고 concrete `LLMStanceNormalizer`(`stance_normalize.py`)는 그것을
   import하지 않는 duck-type — linker의 `Reranker`/`Expander`/`Substituter` 관례와 동일.
 
+### 대화 맥락 투영 (Phase 8-7) — agentic grounder 입력
+
+normalize는 stance 파싱 외에 **grounding용 대화 맥락**도 투영합니다. `Query.context_messages`(최근 대화 턴)를
+`NormalizedQuery.grounding_context`(lean projection)로 옮기되 **tri-state**로 표현 — 이게 linker의 D1 라우팅
+(아래 "agentic grounder" 절)을 결정합니다.
+
+- `context_messages`가 **없음** → `grounding_context = None`(context 미공급 → symbolic 경로).
+- **있고 usable text가 있음** → `grounding_context = 투영된 lean 대화`(non-empty → agentic primary).
+- **공급됐으나 blank/attachment-only** → `grounding_context = []`(usable text 0 → terminal, symbolic 부활 안 함).
+
+`bool(query.context_messages)`가 공급 여부의 **단일 소스**라 별도 bool을 두지 않으며, `grounding_context_truncated`는
+context cap(`GROUNDING_CONTEXT_MAX_MESSAGES`=30)에서 오래된 턴이 잘렸는지를 나른다. **raw wire 메시지는 여기서
+drop** — 파이프라인 안으로는 lean projection만 들어갑니다(원문은 audit/PII 표면 최소화).
+
 ---
 
 ## ① linker (`discovery/linker.py`) — 주제 텍스트 → QID 하나
 
 **기호적 우선 경로** (Phase 4). popularity 없음. 기호적 gate 통과가 정상 경로 — LLM은 gate가
 애매해서 실패할 때만 rerank **fallback**으로 호출됩니다 (Phase 8A, [08 LLM](08-llm-layer.md)).
+
+> **두 모드 (Phase 8-7 재설계):** module ①은 **symbolic**(기본·아래 전부 서술)과 **agentic**(구현 완료·기본 OFF)
+> 두 grounder를 갖습니다. `GROUNDING_AGENT_ENABLED`가 OFF인 **현 기본 배포**에선 아래 symbolic 정밀 코어 +
+> rerank/expansion/substitution 사다리가 그대로 동작합니다. ON이면 agentic grounder가 primary가 되고 이 사다리는
+> **은퇴**하며, symbolic은 결정적 offline/eval 폴백 + context-absent unique-exact 채택으로 강등됩니다 — 아래
+> "agentic grounder (Phase 8-7 재설계)" 절 참조.
 
 ### 흐름
 
@@ -86,9 +106,10 @@ search_candidates  (search-only recall; /knowledge/entities)
 ```python
 summaries = await self._knowledge.search_candidates(topic_text, limit=limit)
 ```
-`search_candidates`(`/knowledge/entities`, alias-aware)만 recall에 쓴다. `suggest`는 autocomplete
-전용이라(memory-api 계약) grounding recall에서 제외 — 실측 recall 기여 0. 후보는 qid로 dedupe하며
-provider(first-appearance) 순서를 보존해 confidence 동점 시 결정적 tie-break으로 쓴다.
+`search_candidates`(`POST /knowledge/entities/search`, alias-aware)만 recall에 쓴다 (멀티-쿼리 recall이
+필요한 rung은 `search_entities`). 구 `suggest`(autocomplete 전용)는 memory-api가 라우트를 삭제해(#87)
+discovery에서도 제거됨 — grounding recall과 무관. 후보는 qid로 dedupe하며 provider(first-appearance)
+순서를 보존해 confidence 동점 시 결정적 tie-break으로 쓴다.
 
 ### (2) confidence — 기호적 binary
 ```python
@@ -134,14 +155,15 @@ if top.confidence != _CONF_EXACT_LABEL or margin < LINKER_MARGIN_MIN:
 ```python
 class GroundingResult:
     qid / label / confidence / margin
-    method: GroundingMode   # Literal["symbolic","rerank","expansion","best_effort_substitution"]
-    fallback_used: bool     # 폴백 rung(rerank/expansion/substitution)이 구제하면 True
+    method: GroundingMode   # Literal["symbolic","agentic","rerank","expansion","best_effort_substitution"]
+    fallback_used: bool     # 폴백 rung(rerank/expansion/substitution)이 구제하면 True (symbolic·agentic은 False)
     considered: list[ScoredCandidate]   # confidence-desc, 로그용
     # ↓ 폴백 rung이 채우는 출처 필드 (symbolic 채택이면 전부 None)
     original_topic: str | None          # expansion·substitution이 원 주제를 보존
     expanded_query: str | None          # expansion에서 winner를 띄운 검색어
     substitute_anchor_qid: str | None   # substitution이 고른 대체 QID
     substitution_reason: str | None     # substitution의 필수 사유
+    trajectory: GroundingTrajectory | None  # agentic 채택 시 tool-스텝 trace, 그 외 None
 ```
 - **`method`가 곧 모드**입니다 — 별도 `grounding_mode` 필드는 없음. 침묵은 결과 struct가 아니라
   `GroundingFailedError`로 표현.
@@ -153,7 +175,8 @@ class GroundingResult:
 위의 기호적 채택이 사다리의 **rung ①**입니다. 정밀 코어가 후보를 확정하지 못하면(동음이의 동점 또는
 recall miss), 점점 best-effort해지는 **LLM rung을 한 칸씩** 올라갑니다. 각 rung은 **자기 gate와
 신호(`method`/`fallback_used`)** 를 갖고, 어떤 rung도 구제하지 못하면 `GroundingFailedError`(= 침묵)로
-끝납니다. 정밀 코어(결정성·popularity-free·감사가능성)는 **영구 유지**되고, LLM은 이 폴백 rung에서만 돕니다.
+끝납니다. **(이 사다리는 agent OFF 기본 배포의 경로입니다** — `GROUNDING_AGENT_ENABLED` ON이면 아래 "agentic
+grounder" 절대로 은퇴하고, 정밀 코어는 결정적 offline/eval 폴백 + context-absent 채택으로만 남습니다.)
 
 ```
 symbolic ① → rerank ② → expansion ③ → substitution ④ → 침묵
@@ -193,19 +216,14 @@ rerank·expansion의 **모든 비채택 경로**는 침묵하기 전에 `_substi
 - **활성화:** flag 없음 — composition root가 `LLMReranker()`를 **항상** 주입 (Phase 8A에서 착지).
 - **신호:** `method="rerank"`, `fallback_used=True`.
 - **injection-safe:** 후보 텍스트=data, 응답은 후보 qid 집합에 전단사 검증, winner는 여전히 gate 통과 필수.
-- **맥락 한계(현재):** rerank는 `topic_text` + 후보만 보고 **dominant sense로 확정**한다(예: `Python`→언어).
-  사용자의 국소 의도와 다를 수 있음(근거: [findings](findings-real-anchor-grounding-ties.md) Spike 2). 맥락
-  전달(`topic_context`)은 forward hook — [11 §8-7](11-phase-8-9-roadmap.md).
+- **맥락 한계(context-free):** rerank는 `topic_text` + 후보만 보고 **dominant sense로 확정**한다(예: `Python`→
+  언어). 사용자의 국소 의도와 다를 수 있음(근거: [findings](findings-real-anchor-grounding-ties.md) Spike 2). 이
+  한계를 실제로 해소하는 것이 **agentic grounder(Phase 8-7, 아래 절)** — 대화 맥락을 읽어 sense를 고른다. rerank는
+  agent OFF 기본 배포의 동음이의 rung으로 남는다.
 
-> **Forward (2026-07-14) — 채택 계약 변경 예정:** memory-api가 `/knowledge/entities`에 `context=`(prose
-> bias, boost 0.5)·`types=`(instance_of 필터) 검색을 배포함(실측: 맥락으로 `Python` sense 뒤집힘). 그러면
-> backend가 context+importance 반영 순서로 의도된 sense를 rank 1로 올려주는데, **현 채택 규칙(유일 exact-label
-> 만·동점은 margin 0으로 실패)은 그 순서를 버린다.** Phase 10에서 규칙을 *"exact-label 후보 중 context-반영
-> backend 1위를 relevance margin 게이트로 채택"* 으로 바꾼다 — **importance는 backend `_score` 성분으로만
-> 관여**(독립 importance tiebreak는 폐기; popularity prior 누수 방지). `types=`(positive `instance_of`
-> include)는 원하는 클래스 QID를 도출할 수 있을 때 결정적이나, memory-api는 publication을 제외하는 negative
-> 필터가 없어 Class 1(개념 vs 동명 출판물 casefold 충돌)의 일반 해법은 아니다 → 위 채택계약이 주된 경로. 상세·
-> 측정 = [11 §8-7](11-phase-8-9-roadmap.md) + [findings](findings-real-anchor-grounding-ties.md).
+> **폐기 노트 (2026-07-15):** 한때 계획한 "memory-api `context=`(prose bias)·`types=` 검색 배포 → 링커 채택계약을
+> context-반영 backend 순서 동점깨기로 변경" 접근은, memory-api가 검색 `context=`를 **제거**하며 폐기됐다. 동음이의
+> disambiguation은 이제 **대화-context를 읽는 agentic grounder**가 담당한다 (아래 절 · [11 §8-7](11-phase-8-9-roadmap.md)).
 
 ### rung ③ expansion — recall miss 회복 · **opt-in, 기본 OFF**
 - **언제:** exact-label 후보가 0개(검색 결과에 원 주제와 exact-label로 채택 가능한 후보가 없음).
@@ -251,6 +269,71 @@ ground되는 것은 `reranker=None`인 eval artifact이지 serving 능력이 아
 
 ---
 
+## ① agentic grounder (`discovery/grounding_agent.py`, Phase 8-7 재설계) — 구현 완료 · 기본 OFF
+
+동음이의 **identical-label homonym TIE**(같은 label `Python`을 언어·뱀이 공유)는 symbolic이 원리적으로 못 깹니다
+(둘 다 confidence 1.0 → margin 0). tie를 가르는 유일한 새 정보는 **최근 대화 맥락**이고, 그걸 읽고 sense를 고르는
+주체는 LLM이어야 합니다. 그래서 재설계는 **최근 대화(`context_messages`)를 받아 native tool-use ReAct 루프로 직접
+grounding하는 agentic grounder**를 module ①의 (조건부) primary로 도입합니다. rerank/stance/reason과 같은
+dormant-ships(`GroundingAgentSettings.GROUNDING_AGENT_ENABLED` 기본 OFF) — composition root가 ON일 때만
+`LLMGrounder`를 주입하고, eval/offline은 절대 주입하지 않아 `baseline.json` byte-identical + CI 커버리지 유지.
+
+> **배경:** 한때 검토한 memory-api `context=`(prose bias 검색)·`_score` projection 접근("C-lite")은 memory-api가
+> 검색 엔드포인트에서 `context=`를 제거하며 **폐기**됐습니다([11 §8-7](11-phase-8-9-roadmap.md)). 구 Phase 8B
+> "listwise full replacement" 폐기 결정을 **다른 근거**(bounded tool-use loop + membership guard)로 되살려,
+> "symbolic 정밀 코어가 영구 primary"라는 불변식을 **의식적으로 대체**합니다.
+
+### native tool 루프 + 4중 adoption gate
+- **입력:** `topic_text` + `grounding_context`(ⓠ가 `context_messages`에서 투영한 lean 대화; raw wire 메시지는 drop).
+- **루프:** `complete_with_tools`(`tool_choice="required"`, ≤`GROUNDING_AGENT_MAX_CALLS`=5턴)로 4개 tool —
+  `search_entities`(multi-query 검색)·`get_entity`(상세 관측)·`get_connections`(이웃, opt-in)·`submit_grounding`
+  (최종 제출) — 을 돕니다. assistant tool_call 턴은 verbatim echo(thought_signature 등 provider 왕복 필드 보존).
+  malformed tool_call shape는 `_parse_tool_calls`가 턴 전체를 한 번에 검증해 500 누출 대신 침묵(`None`)으로 강등.
+- **4중 gate (submit 시):** ① **membership** = 최종 qid가 `get_entity`로 실제 관측한 집합 안 · ② confidence ≥
+  `GROUNDING_AGENT_CONF_MIN`(0.70) · ③ **self-cite** = qid ∈ evidence_qids · ④ evidence ⊆ observed ∧ 관측 텍스트에
+  non-blank 최소 1개. 하나라도 실패 → abstain(`None`). LLM이 QID를 **발명**하거나 관측하지 않은 근거를 대는 것을
+  구조적으로 봉쇄.
+- **injection-safe:** 고정 system prompt + 대화/후보는 user turn의 JSON data. tool 결과만 관측 집합에 들어가고,
+  채택 qid는 반드시 관측 + gate를 통과.
+
+### D1 — context 유무 라우팅 (`Linker.ground()`)
+
+| `context_messages` | 동작 |
+|---|---|
+| **없음** (`None`) | **symbolic `_ground_symbolic()`** — 주입된 rung대로 처리(아래 "라우팅 vs rung 은퇴" 참조) |
+| **있음** (non-empty) | **agentic primary** — abstain이면 terminal(`GroundingFailedError`, symbolic 부활 안 함) |
+| **공급됐으나 usable text 0** (`[]`, attachment/blank-only) | **terminal `GroundingFailedError`** (grounder 미호출·LLM 낭비 0) |
+
+- **라우팅은 Linker 계약, rung 은퇴는 composition-root 정책 (구분):** `Linker.ground(context=None)`은 항상
+  `_ground_symbolic()`로 가고, 거기서 tie·miss가 실패하느냐는 **어떤 rung이 주입됐느냐**에 달렸다.
+  `GROUNDING_AGENT_ENABLED` ON인 composition root는 rerank/expansion/substitution을 **미주입**하므로 context-absent
+  tie·miss가 곧장 `GroundingFailedError`(abstain). 반대로 hand-built `Linker(grounder=…, reranker=…)`나 **agent OFF
+  기본 배포**는 이 rung들이 살아 있어 context-absent tie에서 **기존 symbolic 사다리가 그대로** 돈다(위 "grounding
+  폴백 사다리" 절). 즉 "context 없으면 tie·miss abstain"은 **agent-ON 배선의 결과**지 Linker 자체 불변식이 아니다.
+- 그 은퇴가 옳은 이유: context 없이 agent(나 rung)가 상세/importance로 dominant sense를 고르면 **popularity/
+  default-sense 추천 회귀**(popularity prior 금지 위반) → context 없을 땐 tie·miss를 정직하게 abstain시키는 게 낫다.
+- tri-state는 정규화의 `grounding_context`(None / `[]` / non-empty) **단일 소스**로 표현(별도 bool 없음).
+
+### 사다리와의 관계 · 신호 · 관측
+- agent ON이면 composition root가 **rerank/expansion/substitution rung을 전부 미주입**(=live 은퇴) — agent가
+  context-primary로 그 회복 역할을 흡수하기 때문. `GroundingMode` enum의 구 rung 값은 **enum엔 유지**(D7)하되
+  live 경로에서만 은퇴.
+- `method="agentic"`, `fallback_used=False`(agentic은 폴백이 아니라 primary online 경로 — 관측 정직성; symbolic
+  경로도 False). context-absent unique-exact 채택과 offline 폴백은 `method="symbolic"`.
+- **trajectory:** 채택 시 `GroundingResult.trajectory`에 각 스텝(action/args/본 qid들/follow-up) + 최종 pick + 사유
+  + confidence를 기록 → decision log ⑥가 **additive block**으로 저장(symbolic `considered`의 agentic 대응).
+  abstain은 결과(`GroundingResult`)가 없으니 로그에도 안 남음.
+- **소비자 소유 Protocol / duck-type impl:** `Grounder` Protocol은 소비자 `linker.py`가 소유, concrete
+  `LLMGrounder`(`grounding_agent.py`)는 Protocol을 import 없이 duck-type(Reranker/Expander/Substituter 관례) —
+  구조 매칭은 composition root `Linker(grounder=…)`에서 mypy가 검증.
+
+### online rollout 게이트
+context grounding의 relatedness는 model/human-judged라 **8-4 B2/human judge**([11](11-phase-8-9-roadmap.md))가
+online 활성화의 게이트입니다 — 결정적 gold gate는 context 품질을 보증 못 합니다. 그래서 기본 OFF로 ship됐고, judge가
+붙기 전엔 report-only stratum에서만 측정됩니다.
+
+---
+
 ## 무엇이 provisional이고 무엇이 permanent인가
 
 - **provisional (바뀔 수 있음):** confidence *함수*(binary exact/non-exact 값), threshold seed
@@ -258,10 +341,13 @@ ground되는 것은 `reranker=None`인 eval artifact이지 serving 능력이 아
 - **permanent (구조):** 기호적 정밀 코어, gate/margin *구조*, injection-safety, popularity 배제, 그리고
   "LLM은 폴백 rung에서만 돈다"는 사다리 골격.
 
-기호적 confidence를 listwise reranker로 **완전 대체**하려던 원안(구 Phase 8B)은 폐기됐습니다(2026-07-08
-재설계) — 정밀 코어를 버리는 비용이 raw quality 이득보다 크고, 그 이득은 위 사다리 + memory-api recall
-개선으로 더 값싸게 얻습니다. 앞으로의 forward work(미구현 Phase 8 잔여·9·10·Open Beta)는
-[11 로드맵](11-phase-8-9-roadmap.md)에.
+기호적 confidence를 listwise reranker로 **완전 대체**하려던 원안(구 Phase 8B)은 2026-07-08 재설계 때 한 번
+폐기됐습니다 — 정밀 코어를 버리는 비용이 raw quality 이득보다 크다는 이유로. **2026-07-15 Phase 8-7 재설계는 그
+"symbolic 영구 primary" 불변식을 다시 대체**하되, **근거가 다릅니다**: (a) memory-api가 검색 `context=`를 제거해
+backend-rank 동점깨기가 불가능해졌고, (b) bounded tool-use loop + membership guard로 "정밀 코어를 버린다"는 구
+8B의 리스크를 봉쇄합니다. 결과적으로 symbolic은 죽지 않고 **결정적 offline/eval 폴백 + context-absent unique-exact
+short-circuit**으로 강등되며(agentic은 dormant·context 있을 때만 primary), 정밀 코어의 결정성·CI 커버리지는 유지됩니다.
+앞으로의 forward work(미구현 Phase 8 잔여·9·10·Open Beta)는 [11 로드맵](11-phase-8-9-roadmap.md)에.
 
 ---
 

@@ -25,7 +25,7 @@ rung별로 쪼갭니다. "왜 이렇게 설계했나"의 서술형 deep-dive는 
 | ⓠ | normalize | `normalize.py` | `Query` (raw) | `NormalizedQuery` |
 | ① | linker | `linker.py` | `topic_text: str` | `GroundingResult` *(또는 `GroundingFailedError` raise)* |
 | ② | retrieval | `retrieval.py` | `grounding.qid: str` | `list[EdgeHit]` |
-| ③ | gate | `gate.py` | `list[EdgeHit]` + `context` | `GateResult(survivors, dropped)` |
+| ③ | gate | `gate.py` | `list[EdgeHit]` + `eligibility_context` | `GateResult(survivors, dropped)` |
 | ④ | ranking | `ranking.py` | `survivors`, `NormalizedQuery` | `(ranked, filter_dropped)` |
 | ⑤ | serving | `serving.py` | `ranked`, `grounding`, `reasons` | `Recommendation` |
 | ⑥ | decision log | `decision_log.py` | 전 단계 중간물 | `DecisionLogRecord` + `decision_log_id` stamp |
@@ -54,8 +54,9 @@ rung별로 쪼갭니다. "왜 이렇게 설계했나"의 서술형 deep-dive는 
 |------|------|-------------|
 | `topic_text` | `str` (min_length=1) | 손대지 않고 통과 |
 | `need_type` | `NeedType` | depth / experience / **for** / **against** / coverage |
-| `user_stance_ref` | `str \| None` | 반구조 문법 `"axis=…; dir=…; text=…"` — **유일한 실제 처리 대상** |
-| `lang` / `limit` / `context` | `str?` / `int(1–50)` / `dict?` | 통과 (`context`는 ③ gate→eligibility까지) |
+| `user_stance_ref` | `str \| None` | 반구조 문법 `"axis=…; dir=…; text=…"` — stance 파싱 대상 |
+| `context_messages` | `list[ContextMessage] \| None` | 최근 대화 턴 → `grounding_context`로 투영(①의 agentic 라우팅용, Phase 8-7). `context`(eligibility)와 **직교** |
+| `lang` / `limit` / `eligibility_context` | `str?` / `int(1–50)` / `dict?` | 통과 (`eligibility_context`=eligibility dict, ③ gate까지 · **grounding엔 안 닿음**) |
 
 ### 처리
 
@@ -76,12 +77,17 @@ rung별로 쪼갭니다. "왜 이렇게 설계했나"의 서술형 deep-dive는 
    duck-type, 300자 초과·blank axis → `None` 강등, strict schema(`extra="forbid"`)로 injection 봉쇄.
    - **활성화:** `NormalizeSettings.STANCE_NORMALIZER_ENABLED` (기본 **OFF**, dormant ship). eval 미주입 →
      baseline byte-identical.
+4. **대화 맥락 투영** (Phase 8-7): `context_messages` → `grounding_context`를 **tri-state**로 — 없음→`None`,
+   usable text 있음→lean projection(non-empty), blank/attachment-only→`[]`. 이게 ①의 D1 라우팅(agentic vs
+   symbolic)을 정한다. `grounding_context_truncated`는 context cap(`GROUNDING_CONTEXT_MAX_MESSAGES`=30) 절단
+   여부. **raw wire 메시지는 drop**(lean projection만 파이프라인에 진입).
 
 ### OUTPUT — `NormalizedQuery` (`StrictBaseModel`, 파이프라인 입력 · `structs/recommend.py:80`)
 
-`topic_text`/`need_type`/`lang`/`limit`/`context`는 그대로 복사, `user_stance`에 파싱 결과(`UserStanceRef`
-또는 `None`). **핵심: 원본 `user_stance_ref` 문자열은 여기서 사라진다**(drop) — linker/ranker/serving은
-구조화된 `user_stance`만 본다. `UserStanceRef.confidence`는 LLM 경로만 채우며 **audit-log only**(응답/gate/
+`topic_text`/`need_type`/`lang`/`limit`/`eligibility_context`는 그대로 복사, `user_stance`에 파싱 결과(`UserStanceRef`
+또는 `None`), `grounding_context`(+`grounding_context_truncated`)에 투영된 대화. **핵심: 원본 `user_stance_ref`
+문자열과 raw `context_messages`는 여기서 사라진다**(drop) — linker/ranker/serving은 구조화된 `user_stance`와
+lean `grounding_context`만 본다. `UserStanceRef.confidence`는 LLM 경로만 채우며 **audit-log only**(응답/gate/
 ranking 미노출).
 
 ---
@@ -90,18 +96,24 @@ ranking 미노출).
 
 정밀 코어(symbolic) → 폴백 사다리 4-rung. popularity 신호 절대 안 씀. LLM rung은 자기 실패 케이스에서만 돎.
 
+> **두 모드 (Phase 8-7 재설계, 기본 OFF):** `GROUNDING_AGENT_ENABLED` OFF(현 기본)면 아래 symbolic + 4-rung
+> 사다리가 그대로. ON이면 **agentic grounder**(`LLMGrounder`, 대화 `grounding_context` → tool-use ReAct)가 primary가
+> 되고 rerank/expansion/substitution rung은 **은퇴**, symbolic은 결정적 offline/eval 폴백 + context-absent
+> unique-exact 채택으로 강등(D1 라우팅). 서술 = [03 "agentic grounder" 절](03-normalize-and-linker.md).
+
 ### INPUT / OUTPUT (전체)
 
 - **INPUT:** `topic_text: str` (`normalized.topic_text`).
 - **OUTPUT:** `GroundingResult` (`linker.py:152`) — `qid`/`label`/`confidence`/`margin` + `method`
-  (`symbolic`/`rerank`/`expansion`/`best_effort_substitution`) + `fallback_used` + `considered`(로그용) +
-  rung별 provenance(`original_topic`/`expanded_query`/`substitute_anchor_qid`/`substitution_reason`).
-  아무 rung도 채택 못 하면 `GroundingFailedError` **raise**.
+  (`symbolic`/`agentic`/`rerank`/`expansion`/`best_effort_substitution`) + `fallback_used`(symbolic·agentic은
+  False) + `considered`(로그용) + rung별 provenance(`original_topic`/`expanded_query`/`substitute_anchor_qid`/
+  `substitution_reason`) + `trajectory`(agentic 채택 시 tool 스텝 trace, 그 외 `None`). 아무것도 채택 못 하면
+  `GroundingFailedError` **raise**.
 
 ### 공통 전처리 (`Linker.ground()` `linker.py:350`)
 
 ```
-search_candidates(topic_text, limit=LINKER_CANDIDATE_LIMIT)   # /knowledge/entities, alias-aware recall
+search_candidates(topic_text, limit=LINKER_CANDIDATE_LIMIT)   # POST /knowledge/entities/search, alias-aware recall
   → _to_candidates (qid dedupe, provider 순서 보존)
   → _score (기호적 label-match confidence, confidence-desc 정렬)
   → n_exact = exact-label(confidence==1.0) 후보 수
@@ -111,13 +123,12 @@ search_candidates(topic_text, limit=LINKER_CANDIDATE_LIMIT)   # /knowledge/entit
 `_CONF_NON_EXACT=0.55`. `_margin`: 후보 1개면 자기 confidence, 2개+면 `top1−top2` (**full 정렬 집합** 기준
 — cap이 runner-up을 숨겨 애매한 쌍을 통과시키지 못하게).
 
-> **Forward — context 기반 grounding (§8-7 / Phase 10, 미구현).** 현재 `search_candidates(text, *, limit)`는
-> `context=`/`types=`를 넘기지 않는다 → 링커 grounding은 `context`를 **안 쓰고**, `context`는 ③ gate의
-> eligibility로만 흐른다. memory-api는 이미 `context=`(prose bias)·`types=`(instance_of 필터)를 배포했으나
-> discovery는 아직 채택 전. Phase 10에서 링커 adoption contract를 *"exact-label 후보 중 context-반영 backend
-> 1위를 relevance margin 게이트로 채택"* 으로 바꾼다(importance는 backend `_score` 성분으로만 관여). 착지 시
-> 위 공통 전처리 + ⓠ/③의 context-flow 행이 갱신된다. 상세 = [11 §8-7](11-phase-8-9-roadmap.md) ·
-> [03 Forward 콜아웃](03-normalize-and-linker.md).
+> **agentic 모드일 때 (Phase 8-7, 기본 OFF).** 위 공통 전처리(symbolic recall→score→`n_exact`)는 **agent OFF의
+> 기본 경로**다. `GROUNDING_AGENT_ENABLED` ON이면 링커는 대화 맥락 유무로 라우팅한다(D1): context 有 → `LLMGrounder`가
+> `grounding_context`를 tool-use ReAct로 grounding(→ `method="agentic"`) / context 無 + unique-exact → 아래 symbolic
+> 채택 / context 無 + tie·miss → abstain. 폐기: 구 "memory-api `context=`/`types=` backend 검색으로 sense boost"
+> 계획은 memory-api가 `context=`를 제거하며 철회됨. 상세 = [03 "agentic grounder" 절](03-normalize-and-linker.md) ·
+> [11 §8-7](11-phase-8-9-roadmap.md).
 
 ### Decision A — `n_exact`로 rung 분기 (`linker.py:387`)
 
@@ -159,7 +170,7 @@ rerank·expansion의 **모든 비채택 경로**는 침묵 전에 `_substitute_o
 - **INPUT:** 원 주제 + 표면화된 non-exact 후보(맥락, `Expander.expand`).
 - **처리:** LLM이 **대체 검색어만** 제안(QID 절대 아님). linker 경계 가드(`linker.py:456`)로 shape 방어
   (bare str→단일 term, non-str drop, strip, blank drop, `_MAX_EXPANSION_TERMS=5` cap) → 각 term을
-  `/knowledge/entities` **재검색**(concurrent, `gather` order 보존) → 원+재검색 풀 병합 후 **원 주제의 exact
+  `POST /knowledge/entities/search` **재검색**(concurrent, `gather` order 보존) → 원+재검색 풀 병합 후 **원 주제의 exact
   gate 재적용**. 즉 최종 QID는 여전히 검색+기호 gate가 결정, LLM은 recall만 확장. 유일 exact + margin 통과
   못 하면 넓힌 풀로 `_substitute_or_raise`.
 - **활성화:** `LinkerSettings.EXPANSION_ENABLED` (기본 **OFF**, opt-in). composition root 전용.
@@ -206,7 +217,7 @@ rerank·expansion의 **모든 비채택 경로**는 침묵 전에 `_substitute_o
 ## ③ gate (`discovery/gate.py`) — EdgeHit → 완성된 Candidate
 
 ### INPUT
-`list[EdgeHit]` + `context`(= `normalized.context`, eligibility용).
+`list[EdgeHit]` + `context`(= `normalized.eligibility_context`, eligibility용).
 
 ### 처리 (`Gate.screen()` `gate.py:82`)
 1. **eligibility (hard-required)**: 모든 hit에 `eligibility.check(agent_id, context=...)` concurrent
@@ -265,7 +276,7 @@ pure·provider-free assembly. 전체 랭킹은 ⑥에 로그, **응답은 `limit
 
 ### 처리
 1. **rich reason (Phase 8-5, serve 전 async)**: 파이프라인이 `generate_reasons_async`를 **serve보다 먼저**
-   await(`pipeline.py:65`), **top-N 슬라이스(`ranked[:limit]`)만** 대상 → LLM은 서빙될 것만 봄. `_signals`가
+   await(`pipeline.py:71`), **top-N 슬라이스(`ranked[:limit]`)만** 대상 → LLM은 서빙될 것만 봄. `_signals`가
    단일 소스(응답 표시 신호 = LLM 입력 신호). strict coverage(정확히 served agent_ids, non-blank) 아니면
    `None`으로 전량 폴백. optional 경로라 raise해도 200을 500으로 안 만듦(degrade). `ReasonGenerator` 미주입
    (`REASON_GENERATOR_ENABLED` 기본 OFF)이면 `None`.
@@ -293,7 +304,8 @@ provider_versions/contract_version/sink 전부 composition root 주입(결정성
 
 ### 처리
 - `_logged_query`: raw `user_stance_ref` + normalized stance(**confidence는 여기가 유일 surface**).
-- `_logged_grounding`: `method`/`fallback_used`/`substitution_used`(파생)/provenance/`considered`.
+- `_logged_grounding`: `method`/`fallback_used`/`substitution_used`(파생)/provenance/`considered` +
+  `trajectory`(agentic 채택의 tool 스텝 trace, additive block; symbolic·abstain은 없음).
 - `candidate_pool`→`PoolEntry`(agent/anchor/via/via_qid), `dropped`→`DropEntry`(reason 없으면 `ValueError`
   loud-fail), `ranked`→`RankedEntry`(rank/passed_gate/need_filter/feature_breakdown[raw + maturity_band 항상,
   experience면 source_type/rank]/ordering_keys/stance).
@@ -301,7 +313,7 @@ provider_versions/contract_version/sink 전부 composition root 주입(결정성
 
 ### OUTPUT
 `DecisionLogRecord` (sink에 append). 파이프라인이 `recommendation.decision_log_id = record.log_id`로
-**stamp back**(`pipeline.py:79`, P3). sink = prod `StructlogDecisionLogSink`(emit-only) / 테스트·eval·CLI
+**stamp back**(`pipeline.py:85`, P3). sink = prod `StructlogDecisionLogSink`(emit-only) / 테스트·eval·CLI
 `ListDecisionLogSink`(retains).
 
 ---
@@ -331,7 +343,8 @@ provider_versions/contract_version/sink 전부 composition root 주입(결정성
 | slice | flag | serving | eval (결정적 gold gate) |
 |-------|------|---------|--------------------------|
 | ⓠ stance normalizer | `STANCE_NORMALIZER_ENABLED` | 기본 OFF | 미주입 |
-| ① rung ② rerank | (flag 없음) | **항상 주입** (8A live) | 미주입 (`reranker=None`) |
+| ① **agentic grounder** | `GROUNDING_AGENT_ENABLED` | 기본 OFF (ON이면 아래 rung 은퇴) | 미주입 (`grounder=None`) |
+| ① rung ② rerank | (flag 없음) | **항상 주입** (8A live; agent ON이면 은퇴) | 미주입 (`reranker=None`) |
 | ① rung ③ expansion | `EXPANSION_ENABLED` | 기본 OFF | 미주입 |
 | ① rung ④ substitution | `SUBSTITUTION_ENABLED` | 기본 OFF | 미주입 |
 | ⑤ rich reason | `REASON_GENERATOR_ENABLED` | 기본 OFF | 미주입 |

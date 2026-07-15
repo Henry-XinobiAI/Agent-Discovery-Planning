@@ -372,19 +372,30 @@ project the query-time relevance/`_score` onto `EntitySummary` — today it retu
 `importance` field, so the linker otherwise has only list-order to lean on. This is a small additional
 contract ask (see [11 §8-7](11-phase-8-9-roadmap.md), [Phase 10](11-phase-8-9-roadmap.md)).
 
-### Boundary and net asks (revised)
-Three-layer flow: **agent moderator** (owns the conversation; extracts a snippet and fills
-`topic_context`) → **discovery** (never sees the conversation; threads `topic_context` → linker →
-`search_candidates(context=…)`) → **memory-api** (`context=` search). discovery holds no conversation
-store — consistent with the mode-B moderation runtime hook.
+### Boundary and net asks (Historical — 2026-07-14, superseded 2026-07-15)
+The retired three-layer flow *was*: **agent moderator** (owns the conversation; extracts a snippet and
+fills `topic_context`) → **discovery** (never sees the conversation; threads `topic_context` → linker →
+`search_candidates(context=…)`) → **memory-api** (`context=` search). What replaced it — a discovery-side
+agentic grounder reading `context_messages` — is in the superseded note just below; discovery still holds
+no conversation store, consistent with the mode-B moderation runtime hook.
 
-**Revised net asks (Phase 10 critical path, all cross-team, long lead time — reframed by the 2026-07-14
-memory-api audit, see [11 Phase 10](11-phase-8-9-roadmap.md)):**
+> **★Superseded (2026-07-15):** the `context=`/`_score`-projection/`topic_context`-into-`search_candidates`
+> asks below were **retired** — memory-api removed search `context=` (`5530192`), so tie disambiguation moved
+> to a discovery-side **agentic grounder** that reads the recent conversation (`context_messages`) via a
+> tool-use loop (shipped dormant, `GROUNDING_AGENT_ENABLED` default OFF). See [11 §8-7](11-phase-8-9-roadmap.md)
+> and [03 "agentic grounder"](03-normalize-and-linker.md). The two asks that survive: the **evidence-ref
+> exposure contract** for `support_ids`, and the moderator supplying `context_messages`. The block below is
+> kept as the 2026-07-14 record of why the search-layer route was explored.
+
+**Historical — 2026-07-14 net asks (SUPERSEDED 2026-07-15, see note above; kept as the record of why the
+search-layer route was explored). The `context=`/`_score`/`topic_context`-into-`search_candidates` items
+below are RETIRED — only the `support_ids` evidence-ref contract and the moderator supplying
+`context_messages` survive:**
 - memory-api → the expertise-edge inputs are **already available**: cross-owner grounding
   (`/personal/groundings/{qid}?owner_ids`), owner_id (→ agent identity, bourbon-api derived), and the #64
   **competence vector** (depth/breadth/consistency/frequency/sentiment + Tier-2 degree/hands_on_ratio/
-  last_seen/opinion_ratio). So this is no longer "build a maturity edge"; the remaining asks are a
-  **relevance/`_score` projection** onto `EntitySummary` (for the tie margin — confirmed still missing) and
+  last_seen/opinion_ratio). So this was no longer "build a maturity edge"; the then-remaining asks were a
+  **relevance/`_score` projection** onto `EntitySummary` (for the tie margin — missing at the time) and
   an **evidence-ref exposure/dereference contract** for `support_ids`. (A) ranking tuning continues on
   their side. The gaps that fall to *us*/bourbon-api/persona — Discovery edge projection (eligibility +
   stance axis/dir/confidence) and the competence→edge translation layer — are not memory-api asks.
@@ -393,8 +404,10 @@ memory-api audit, see [11 Phase 10](11-phase-8-9-roadmap.md)):**
 - discovery → thread `topic_context` into `search_candidates(context=, types=)` and change the linker
   adoption contract as above (deterministic; no LLM). Retire the importance tie-break idea.
 
-**B-vs-C, revised:** the shipped `context=` search is effectively **C-lite** — memory-api resolves context
-at the search layer, giving discovery a context hook at candidate generation without exposing the offline
-LLM `Grounder`. Full C (calling the write-side `Grounder` for maximal QID join-consistency with the edges)
-remains a **later** option; the join-coherence caveat (query grounded by context-biased *search* vs edges
-grounded by the LLM *Grounder* — different mechanisms) is unmeasured until real edges land (Phase 10).
+**Historical B-vs-C, revised in the 2026-07-14 plan:** the then-shipped `context=` search was effectively
+**C-lite** — memory-api resolved context at the search layer, giving discovery a context hook at candidate
+generation without exposing the offline LLM `Grounder`. Full C (calling the write-side `Grounder` for maximal
+QID join-consistency with the edges) was left a **later** option; the join-coherence caveat (query grounded
+by context-biased *search* vs edges grounded by the LLM *Grounder* — different mechanisms) was unmeasured
+until real edges land. **(Superseded 2026-07-15: search `context=` was removed, so this whole B-vs-C framing
+was retired in favor of the discovery-side agentic grounder — see the note at the top of this block.)**
