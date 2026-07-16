@@ -223,7 +223,7 @@ rerank·expansion의 **모든 비채택 경로**는 침묵하기 전에 `_substi
 
 > **폐기 노트 (2026-07-15):** 한때 계획한 "memory-api `context=`(prose bias)·`types=` 검색 배포 → 링커 채택계약을
 > context-반영 backend 순서 동점깨기로 변경" 접근은, memory-api가 검색 `context=`를 **제거**하며 폐기됐다. 동음이의
-> disambiguation은 이제 **대화-context를 읽는 agentic grounder**가 담당한다 (아래 절 · [11 §8-7](11-phase-8-9-roadmap.md)).
+> disambiguation은 이제 **대화-context를 읽는 agentic grounder**가 담당한다 (아래 절 · [11 §8-7](11-forward-roadmap.md)).
 
 ### rung ③ expansion — recall miss 회복 · **opt-in, 기본 OFF**
 - **언제:** exact-label 후보가 0개(검색 결과에 원 주제와 exact-label로 채택 가능한 후보가 없음).
@@ -279,7 +279,7 @@ dormant-ships(`GroundingAgentSettings.GROUNDING_AGENT_ENABLED` 기본 OFF) — c
 `LLMGrounder`를 주입하고, eval/offline은 절대 주입하지 않아 `baseline.json` byte-identical + CI 커버리지 유지.
 
 > **배경:** 한때 검토한 memory-api `context=`(prose bias 검색)·`_score` projection 접근("C-lite")은 memory-api가
-> 검색 엔드포인트에서 `context=`를 제거하며 **폐기**됐습니다([11 §8-7](11-phase-8-9-roadmap.md)). 구 Phase 8B
+> 검색 엔드포인트에서 `context=`를 제거하며 **폐기**됐습니다([11 §8-7](11-forward-roadmap.md)). 구 Phase 8B
 > "listwise full replacement" 폐기 결정을 **다른 근거**(bounded tool-use loop + membership guard)로 되살려,
 > "symbolic 정밀 코어가 영구 primary"라는 불변식을 **의식적으로 대체**합니다.
 
@@ -328,7 +328,7 @@ dormant-ships(`GroundingAgentSettings.GROUNDING_AGENT_ENABLED` 기본 OFF) — c
   구조 매칭은 composition root `Linker(grounder=…)`에서 mypy가 검증.
 
 ### online rollout 게이트
-context grounding의 relatedness는 model/human-judged라 **8-4 B2/human judge**([11](11-phase-8-9-roadmap.md))가
+context grounding의 relatedness는 model/human-judged라 **8-4 B2/human judge**([11](11-forward-roadmap.md))가
 online 활성화의 게이트입니다 — 결정적 gold gate는 context 품질을 보증 못 합니다. 그래서 기본 OFF로 ship됐고, judge가
 붙기 전엔 report-only stratum에서만 측정됩니다.
 
@@ -347,7 +347,7 @@ online 활성화의 게이트입니다 — 결정적 gold gate는 context 품질
 backend-rank 동점깨기가 불가능해졌고, (b) bounded tool-use loop + membership guard로 "정밀 코어를 버린다"는 구
 8B의 리스크를 봉쇄합니다. 결과적으로 symbolic은 죽지 않고 **결정적 offline/eval 폴백 + context-absent unique-exact
 short-circuit**으로 강등되며(agentic은 dormant·context 있을 때만 primary), 정밀 코어의 결정성·CI 커버리지는 유지됩니다.
-앞으로의 forward work(미구현 Phase 8 잔여·9·10·Open Beta)는 [11 로드맵](11-phase-8-9-roadmap.md)에.
+앞으로의 forward work(미구현 Phase 8 잔여·9·10·Open Beta)는 [11 로드맵](11-forward-roadmap.md)에.
 
 ---
 

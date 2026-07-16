@@ -120,4 +120,4 @@ _STATUS_BY_CODE = {
 **요점:** composition root가 real provider를 배선하고(mock은 override로만), API layer가 도메인
 예외를 HTTP로 번역하며, 도메인은 transport를 모릅니다. 이 이음매(Protocol) 덕에 Open Beta에서
 real edge/eligibility provider로 갈아끼우는 게 배선 변경으로 끝납니다
-([11 로드맵](11-phase-8-9-roadmap.md)).
+([11 로드맵](11-forward-roadmap.md)).

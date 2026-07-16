@@ -1,7 +1,7 @@
 # 12. Agent recommendation algorithm — 현재 구현 축과 이후 개인화 축
 
 ← [개요로 돌아가기](README.md) · 관련: [00. 파이프라인 I/O 참조](00-pipeline-io-reference.md) ·
-[05. gate+ranking](05-gate-and-ranking.md) · [11. Forward 로드맵](11-phase-8-9-roadmap.md)
+[05. gate+ranking](05-gate-and-ranking.md) · [11. Forward 로드맵](11-forward-roadmap.md)
 
 이 문서는 "agent recommendation"을 제품 관점에서 설명한다. 현재 구현 중인 Discovery 파이프라인은
 **주제에 대한 전문성 기반 추천(topic-expertise recommendation)** 이고, 이후 고도화할 축은

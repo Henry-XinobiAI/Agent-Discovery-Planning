@@ -1,6 +1,6 @@
 # Agent Recommendation을 위한 Memory API 요구사항
 
-> **📌 날짜 기록된 협의 이력 — 현재 계약이 아님 (2026-07-14).** discovery↔memory-api 간 요청 이력을 출처 보존용으로 남긴 문서다. memory-api가 실제로 제공하는 현재 상태는 본문 안의 "Update 2026-07-14" 블록과 `impl/findings-real-anchor-grounding-ties.md` / `impl/11-phase-8-9-roadmap.md`을 본다.
+> **📌 날짜 기록된 협의 이력 — 현재 계약이 아님 (2026-07-14).** discovery↔memory-api 간 요청 이력을 출처 보존용으로 남긴 문서다. memory-api가 실제로 제공하는 현재 상태는 본문 안의 "Update 2026-07-14" 블록과 `impl/findings-real-anchor-grounding-ties.md` / `impl/11-forward-roadmap.md`을 본다.
 
 ## 목적
 

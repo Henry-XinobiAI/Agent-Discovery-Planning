@@ -135,7 +135,7 @@ report-only eval strata). Each rung's technical description below is unchanged.
 3. re-measure real-anchor grounding — after step 2.
 4. ✅ discovery LLM ladder: rerank → expansion → substitution — **shipped** (Tracks 1–4; rerank live, expansion/substitution dormant/default-OFF).
 
-**Remaining now (2026-07-10):** the ladder _implementation_ (steps 1 & 4) is done, and **Phase 9 (eval → CI gate) shipped on the manual-seed corpus**. What is left is **measurement + memory-api-gated tuning** — step 2 (memory-api relevance, their team) → step 3 (re-measure real-anchor) → feed real-anchor eval into the existing CI gate → 8B tuning (thresholds + expansion stratum). Note Phase 9 gates the manual-seed corpus today; real-anchor eval is the post-Phase-9 feed, not part of the shipped gate. This matches the agreed Phase 10 → 8B-tuning order in `11-phase-8-9-roadmap.md`.
+**Remaining now (2026-07-10):** the ladder _implementation_ (steps 1 & 4) is done, and **Phase 9 (eval → CI gate) shipped on the manual-seed corpus**. What is left is **measurement + memory-api-gated tuning** — step 2 (memory-api relevance, their team) → step 3 (re-measure real-anchor) → feed real-anchor eval into the existing CI gate → 8B tuning (thresholds + expansion stratum). Note Phase 9 gates the manual-seed corpus today; real-anchor eval is the post-Phase-9 feed, not part of the shipped gate. This matches the agreed Phase 10 → 8B-tuning order in `11-forward-roadmap.md`.
 
 ## Spike findings — rerank feasibility + ambiguity behavior (2026-07-08)
 
@@ -267,7 +267,7 @@ regardless of memory-api. Plan:
 - **Reserve an optional natural-language `topic_context` on `/recommend`** — the shape memory-api's grounder
   expects (free text = "the sentence/context the topic arose in", NOT a structured type hint). Additive hook
   now; consume it at rerank-tuning / Phase 10. See [01](01-data-contracts.md),
-  [11 §8-7](11-phase-8-9-roadmap.md).
+  [11 §8-7](11-forward-roadmap.md).
 - **Where (B) is resolved is deferred (B-vs-C):** (B) our own rerank consumes `topic_context`; (C) memory-api
   exposes its `Grounder` as a read endpoint and we call it. C's pull: the `/personal/groundings` edges were
   grounded by that same `Grounder`, so grounding the query the same way maximizes QID join-consistency
@@ -370,7 +370,7 @@ relevance margin."* Importance participates **only through the backend `_score`*
 linker decision. Open nuance: for a proper *margin* gate (not blind rank-1 adoption), memory-api should
 project the query-time relevance/`_score` onto `EntitySummary` — today it returns only the static
 `importance` field, so the linker otherwise has only list-order to lean on. This is a small additional
-contract ask (see [11 §8-7](11-phase-8-9-roadmap.md), [Phase 10](11-phase-8-9-roadmap.md)).
+contract ask (see [11 §8-7](11-forward-roadmap.md), [Phase 10](11-forward-roadmap.md)).
 
 ### Boundary and net asks (Historical — 2026-07-14, superseded 2026-07-15)
 The retired three-layer flow *was*: **agent moderator** (owns the conversation; extracts a snippet and
@@ -382,7 +382,7 @@ no conversation store, consistent with the mode-B moderation runtime hook.
 > **★Superseded (2026-07-15):** the `context=`/`_score`-projection/`topic_context`-into-`search_candidates`
 > asks below were **retired** — memory-api removed search `context=` (`5530192`), so tie disambiguation moved
 > to a discovery-side **agentic grounder** that reads the recent conversation (`context_messages`) via a
-> tool-use loop (shipped dormant, `GROUNDING_AGENT_ENABLED` default OFF). See [11 §8-7](11-phase-8-9-roadmap.md)
+> tool-use loop (shipped dormant, `GROUNDING_AGENT_ENABLED` default OFF). See [11 §8-7](11-forward-roadmap.md)
 > and [03 "agentic grounder"](03-normalize-and-linker.md). The two asks that survive: the **evidence-ref
 > exposure contract** for `support_ids`, and the moderator supplying `context_messages`. The block below is
 > kept as the 2026-07-14 record of why the search-layer route was explored.

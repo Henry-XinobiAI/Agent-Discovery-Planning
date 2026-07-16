@@ -128,7 +128,7 @@ search_candidates(topic_text, limit=LINKER_CANDIDATE_LIMIT)   # POST /knowledge/
 > `grounding_context`를 tool-use ReAct로 grounding(→ `method="agentic"`) / context 無 + unique-exact → 아래 symbolic
 > 채택 / context 無 + tie·miss → abstain. 폐기: 구 "memory-api `context=`/`types=` backend 검색으로 sense boost"
 > 계획은 memory-api가 `context=`를 제거하며 철회됨. 상세 = [03 "agentic grounder" 절](03-normalize-and-linker.md) ·
-> [11 §8-7](11-phase-8-9-roadmap.md).
+> [11 §8-7](11-forward-roadmap.md).
 
 ### Decision A — `n_exact`로 rung 분기 (`linker.py:387`)
 

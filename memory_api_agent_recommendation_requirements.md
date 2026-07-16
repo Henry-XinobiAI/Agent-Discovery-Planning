@@ -1,6 +1,6 @@
 # Memory API Requirements for Agent Recommendation
 
-> **📌 Dated negotiation record — not the current contract (2026-07-14).** This is a cross-team ask history between discovery and memory-api, preserved for provenance. For what memory-api actually ships today, read the dated "Update 2026-07-14" blocks inline and the audit reflected in `impl/findings-real-anchor-grounding-ties.md` / `impl/11-phase-8-9-roadmap.md`.
+> **📌 Dated negotiation record — not the current contract (2026-07-14).** This is a cross-team ask history between discovery and memory-api, preserved for provenance. For what memory-api actually ships today, read the dated "Update 2026-07-14" blocks inline and the audit reflected in `impl/findings-real-anchor-grounding-ties.md` / `impl/11-forward-roadmap.md`.
 
 ## Purpose
 
