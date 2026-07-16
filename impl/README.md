@@ -185,7 +185,7 @@ agentic grounder**로 확정 — 구 §8-7 "C-lite backend 검색 → linker 채
 재측정 GROUND 7 / TIE 10 / MISS 3에서 실패 원인이 recall→tiebreak로 이동한 것이 재설계의 배경). 기존 코드/계약이
 어떻게 바뀔지:
 
-**→ [11. Forward 로드맵](11-phase-8-9-roadmap.md)**
+**→ [11. Forward 로드맵](11-forward-roadmap.md)**
 
 ---
 

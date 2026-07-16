@@ -42,7 +42,7 @@ class Query(ApiModel):
 > eligibility 전용)와 직교 — 오버로딩하지 말 것.
 > (구 계획은 optional `topic_context` 자연어 필드 + memory-api `/knowledge/entities?context=` backend
 > 검색이었으나, memory-api가 `context=`를 제거하며 **폐기** — discovery측 agentic grounder로 대체.
-> [로드맵 §8-7](11-phase-8-9-roadmap.md), 근거 [findings](findings-real-anchor-grounding-ties.md)).
+> [로드맵 §8-7](11-forward-roadmap.md), 근거 [findings](findings-real-anchor-grounding-ties.md)).
 
 ### enum들
 - `NeedType`: `depth` / `experience` / `for` / `against` / `coverage`
@@ -121,7 +121,7 @@ class Candidate(StrictBaseModel):
 
 - **`Eligibility`** (`eligibility.py`) — `agent_id`, `discoverable`, `reason`. Alpha에선
   `discoverable`만 활성. `privacy_clearance`/`safety_verdict`는 Open Beta 전 추가
-  ([Forward 로드맵](11-phase-8-9-roadmap.md) 참조).
+  ([Forward 로드맵](11-forward-roadmap.md) 참조).
 - **`PersonaPrior`** (`persona.py`) — `prior_stance`, `stable_traits`, `expertise_claims`.
   **hollow guard**: stance/특성을 힌트할 뿐 topic `maturity`를 세울 수 없음. 랭킹은 밴드 내
   late tiebreak로만 쓰고, 밴드를 가로질러 승격시키지 못함. Alpha에선 사실상 no-op.

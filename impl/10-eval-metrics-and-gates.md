@@ -1,7 +1,7 @@
 # 10. eval metrics + gates — 채점 (Phase 7)
 
 ← [개요로 돌아가기](README.md) · 관련: [09. harness](09-eval-harness.md) ·
-[06. decision log](06-serving-and-decision-log.md) · [11. Forward 로드맵](11-phase-8-9-roadmap.md)
+[06. decision log](06-serving-and-decision-log.md) · [11. Forward 로드맵](11-forward-roadmap.md)
 
 평가 시스템의 **위 절반**. harness의 실행을 gold와 baseline에 대해 **채점**하고 CI pass/fail exit
 code를 냅니다. **전부 결정적 gold — LLM judge 없음** (safety 게이트가 확률적 judge에 올라타면
@@ -133,7 +133,7 @@ uv run python -m cli eval gate --corpus eval/corpus/fixtures \
 
 `eval gate`는 `.github/workflows/ci.yml`의 **`eval-gate` job**으로 배선됨(PR + `main` push마다,
 `checks`/`test`와 병렬). 결정적(reranker/expander/substituter = None) → LLM 무접촉, baseline
-byte-identical. JSON 리포트는 `eval-report` artifact. 전체 파이프라인 = [11. Phase 9](11-phase-8-9-roadmap.md),
+byte-identical. JSON 리포트는 `eval-report` artifact. 전체 파이프라인 = [11. Phase 9](11-forward-roadmap.md),
 운영 절차 = code repo README `## Continuous Integration`.
 
 **CI가 무엇을 보증/미보증하는가 (층별 — 과장 금지):**
@@ -178,4 +178,4 @@ assert committed == baseline_from_report(report, corpus_version=corpus_version)
 
 **요점:** metrics는 decision log substrate를 측정만 하고, gates는 hard threshold + ratchet으로
 CI 판정. 전부 결정적 gold. `ambiguous_fallback_rate` 슬롯은 eval이 reranker 미주입이라 잠잠하지만
-(0.0), fallback 자체는 serving에서 이미 live (Phase 8A)이고 rerank·substitution report-only strata(주입 가짜)가 eval에서 fallback 경로를 밟아도 committed baseline은 그대로다 — [11. Forward 로드맵](11-phase-8-9-roadmap.md).
+(0.0), fallback 자체는 serving에서 이미 live (Phase 8A)이고 rerank·substitution report-only strata(주입 가짜)가 eval에서 fallback 경로를 밟아도 committed baseline은 그대로다 — [11. Forward 로드맵](11-forward-roadmap.md).

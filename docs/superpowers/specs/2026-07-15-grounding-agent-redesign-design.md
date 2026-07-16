@@ -3,7 +3,7 @@
 - **상태:** 설계 초안 — **방향 승인**, 구현 세부 fleshing 대기. 전 설계 결정(D1–D7) 잠금.
 - **작성:** 2026-07-15
 - **영향 범위:** discovery 모듈 ① linker (grounding) 전면 재설계. retrieval ②~serving ⑤는 계약 불변. **decision-log ⑥은 예외** — grounding trajectory block additive 확장(§7).
-- **문서 반영(승인 후):** `impl/03-normalize-and-linker.md` 재작성 · `impl/11-phase-8-9-roadmap.md` §8-7 재작성 + Phase 10 선행 #2(`_score` 투영 ask) 제거 · `impl/00-pipeline-io-reference.md` ① 갱신.
+- **문서 반영(승인 후):** `impl/03-normalize-and-linker.md` 재작성 · `impl/11-forward-roadmap.md` §8-7 재작성 + Phase 10 선행 #2(`_score` 투영 ask) 제거 · `impl/00-pipeline-io-reference.md` ① 갱신.
 
 ---
 

@@ -11,10 +11,10 @@
 | 문서 | 역할 |
 |---|---|
 | `agent_discovery_recommendation_directions.md` | 설계 기준 / 개념 모델 / source of truth |
-| `archive/Agent_Discovery_Recommendation_Roadmap.md` (보관됨) | Alpha / Open Beta / Post-Open-Beta 단계 — 현재는 `impl/11-phase-8-9-roadmap.md` |
+| `archive/Agent_Discovery_Recommendation_Roadmap.md` (보관됨) | Alpha / Open Beta / Post-Open-Beta 단계 — 현재는 `impl/11-forward-roadmap.md` |
 | **이 문서** | 구현 접근 / 서비스 구성 / memory-api 경계 / build vs reuse / 후보 기술 |
 
-구현 서비스명은 **`bourbon-agent-recommendation-api`**다. 설계·범위는 위 두 문서를 참조하고 여기서 재진술하지 않는다. 단계 정의(Alpha/Open Beta/Post)와 내부 단계(Discovery/Recommendation)는 directions §0·§5, `impl/11-phase-8-9-roadmap.md`(구 Roadmap §1, 보관됨)를 따른다.
+구현 서비스명은 **`bourbon-agent-recommendation-api`**다. 설계·범위는 위 두 문서를 참조하고 여기서 재진술하지 않는다. 단계 정의(Alpha/Open Beta/Post)와 내부 단계(Discovery/Recommendation)는 directions §0·§5, `impl/11-forward-roadmap.md`(구 Roadmap §1, 보관됨)를 따른다.
 
 ## 1. 핵심 결론
 

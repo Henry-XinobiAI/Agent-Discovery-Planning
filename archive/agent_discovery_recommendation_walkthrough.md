@@ -120,7 +120,7 @@ importance(qid) = 0.5·norm(log1p(pageview)) + 0.3·norm(pagerank) + 0.2·norm(l
 ```
 (pageview·sitelink_count는 heavy-tail이라 `log1p` 압축 후, pagerank는 그대로 — 모두 코퍼스 min-max 정규화 [0,1].)
 
-이 `importance`는 **검색 시점**에 OpenSearch `function_score`(`field_value_factor`, `modifier: ln2p`, `boost_mode: multiply`)로 텍스트 관련도를 부스트한다. 즉 `GET /knowledge/entities`가 돌려주는 **후보의 순서**가 이 popularity blend로 정해진다. discovery의 Linker는 이 순서를 **결정적 tie-break**로만 받고(D2), 그 위에 자기 symbolic confidence를 얹는다. **★2026-07-14 갱신:** 검색이 이제 `context=`(prose 필드에 `should` multi_match, boost 0.5)·`types=`(`instance_of` **positive** 필터)도 받아 그 순서를 sense 쪽으로 편향시킬 수 있다(§8-7·[11 §8-7](impl/11-phase-8-9-roadmap.md)). 그리고 **별도의 importance tie-break 신설은 §8-7에서 폐기**됐다 — context-무시 popularity prior라 저인기 의도를 오검색시키고, 어차피 backend `_score`에 이미 접혀 있어 중복. 채택은 "context-반영 backend 순서로 동점 깨기"로 가고 importance는 backend `_score` 성분으로만 관여한다.
+이 `importance`는 **검색 시점**에 OpenSearch `function_score`(`field_value_factor`, `modifier: ln2p`, `boost_mode: multiply`)로 텍스트 관련도를 부스트한다. 즉 `GET /knowledge/entities`가 돌려주는 **후보의 순서**가 이 popularity blend로 정해진다. discovery의 Linker는 이 순서를 **결정적 tie-break**로만 받고(D2), 그 위에 자기 symbolic confidence를 얹는다. **★2026-07-14 갱신:** 검색이 이제 `context=`(prose 필드에 `should` multi_match, boost 0.5)·`types=`(`instance_of` **positive** 필터)도 받아 그 순서를 sense 쪽으로 편향시킬 수 있다(§8-7·[11 §8-7](impl/11-forward-roadmap.md)). 그리고 **별도의 importance tie-break 신설은 §8-7에서 폐기**됐다 — context-무시 popularity prior라 저인기 의도를 오검색시키고, 어차피 backend `_score`에 이미 접혀 있어 중복. 채택은 "context-반영 backend 순서로 동점 깨기"로 가고 importance는 backend `_score` 성분으로만 관여한다.
 
 ### 2.3 아직 memory-api에 없어서 mock으로 채우는 것 (추천 신호)
 

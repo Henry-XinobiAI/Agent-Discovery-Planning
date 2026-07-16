@@ -1,6 +1,6 @@
 # Agent Discovery & Recommendation Roadmap
 
-> **📦 보관됨 (2026-07-14) — historical.** 이 로드맵은 초기 제품 빌드 페이징의 히스토리 기록이다. Phase 8 이후 현재 source of truth는 `../impl/11-phase-8-9-roadmap.md`(+ `../impl/README.md`)이다. 아래 내용은 당시 로드맵 그대로 두되 최신 상태와 어긋날 수 있다.
+> **📦 보관됨 (2026-07-14) — historical.** 이 로드맵은 초기 제품 빌드 페이징의 히스토리 기록이다. Phase 8 이후 현재 source of truth는 `../impl/11-forward-roadmap.md`(+ `../impl/README.md`)이다. 아래 내용은 당시 로드맵 그대로 두되 최신 상태와 어긋날 수 있다.
 
 > Agent Discovery & Recommendation은 사용자가 어떤 주제에 대해 대화할 만한 agent를 찾고, 대화 흐름 안에서 필요한 경우 적절한 agent를 추천하는 시스템이다.
 >
@@ -170,9 +170,9 @@ Open Beta(외부 공개)에서 더하는 범위:
 
 공통 파이프라인은 두 내부 단계로 나뉜다. **Discovery 단계**가 후보 공간을 만들고, **Recommendation 단계**가 그 후보를 need에 맞게 선택·서빙한다(§1).
 
-> **Grounding 방식 (2026-07-08 결정 → 구현 완료):** 아래 2단계 "anchor 해소"는 **search-only 정밀 코어**(유일 exact-label match만 결정적 채택; suggest는 autocomplete 전용) + 실패 시 **LLM 폴백 사다리** `symbolic → rerank② → expansion③ → substitution④ → silence`로 구현됨(rerank=동음이의 해소 → query expansion=recall 회복[LLM은 검색어만 제안, 최종 QID는 재검색+gate] → substitution=best-effort 대체·항상 신호). **rerank②는 serving live(Phase 8A)**, **expansion③·substitution④는 opt-in·dormant(default OFF, composition root에서만 주입; eval 미주입 → baseline byte-identical)**. rung ④는 `proxy`에서 `substitution`으로 개명(LLM 게이트웨이 transport와 충돌 회피). **memory-api search relevance/alias 개선은 8B 잔여 튜닝의 선행 dependency**(최고 ROI). 상세 설계·근거·데이터: `impl/findings-real-anchor-grounding-ties.md` → "Recommended behavior"; 단계 로드맵: `impl/11-phase-8-9-roadmap.md`.
+> **Grounding 방식 (2026-07-08 결정 → 구현 완료):** 아래 2단계 "anchor 해소"는 **search-only 정밀 코어**(유일 exact-label match만 결정적 채택; suggest는 autocomplete 전용) + 실패 시 **LLM 폴백 사다리** `symbolic → rerank② → expansion③ → substitution④ → silence`로 구현됨(rerank=동음이의 해소 → query expansion=recall 회복[LLM은 검색어만 제안, 최종 QID는 재검색+gate] → substitution=best-effort 대체·항상 신호). **rerank②는 serving live(Phase 8A)**, **expansion③·substitution④는 opt-in·dormant(default OFF, composition root에서만 주입; eval 미주입 → baseline byte-identical)**. rung ④는 `proxy`에서 `substitution`으로 개명(LLM 게이트웨이 transport와 충돌 회피). **memory-api search relevance/alias 개선은 8B 잔여 튜닝의 선행 dependency**(최고 ROI). 상세 설계·근거·데이터: `impl/findings-real-anchor-grounding-ties.md` → "Recommended behavior"; 단계 로드맵: `impl/11-forward-roadmap.md`.
 >
-> **★2026-07-14 갱신 (memory-api 감사 `bc9110c`→`2f268fe`):** ⑴ 위 "suggest autocomplete 전용"의 `/knowledge/entities/suggest` 라우트는 memory-api에서 **삭제됨**(#87) — grounding은 search-only라 무영향(discovery provider `suggest()`만 stale cleanup). ⑵ "memory-api search relevance/alias 개선이 8B 선행"은 **대부분 shipped**: 다국어 인덱스 overwrite 버그 fix + 재색인(#78, cross-language recall·meta-page 제외)이 landing했고, `entities` search에 `context=`/`types=`도 배포됨. 남은 8B 튜닝은 memory-api의 BM25 ranking 후속 튜닝에만 의존. ⑶ importance 독립 tiebreak는 폐기(context-반영 backend 순서 신뢰)·#64 competence vector 신설으로 Phase 10 협의가 "edge 신설→competence 투영"으로 이동. 상세: `impl/11-phase-8-9-roadmap.md` Phase 10 + `impl/findings-real-anchor-grounding-ties.md` "Update (2026-07-14)".
+> **★2026-07-14 갱신 (memory-api 감사 `bc9110c`→`2f268fe`):** ⑴ 위 "suggest autocomplete 전용"의 `/knowledge/entities/suggest` 라우트는 memory-api에서 **삭제됨**(#87) — grounding은 search-only라 무영향(discovery provider `suggest()`만 stale cleanup). ⑵ "memory-api search relevance/alias 개선이 8B 선행"은 **대부분 shipped**: 다국어 인덱스 overwrite 버그 fix + 재색인(#78, cross-language recall·meta-page 제외)이 landing했고, `entities` search에 `context=`/`types=`도 배포됨. 남은 8B 튜닝은 memory-api의 BM25 ranking 후속 튜닝에만 의존. ⑶ importance 독립 tiebreak는 폐기(context-반영 backend 순서 신뢰)·#64 competence vector 신설으로 Phase 10 협의가 "edge 신설→competence 투영"으로 이동. 상세: `impl/11-forward-roadmap.md` Phase 10 + `impl/findings-real-anchor-grounding-ties.md` "Update (2026-07-14)".
 
 ```text
 [Discovery 단계 — 후보 공간 구성]
@@ -415,7 +415,7 @@ safety / privacy verdict의 lifecycle은 해당 기능을 도입하는 시점에
 > opt-in·default OFF로 dormant; report-only eval stratum; 브랜치 push·PR 대기). 단, 후보
 > substrate(edge/eligibility/persona)는 아직 mock이라 배포된 Pull API는 grounding 후 후보 단계에서
 > 503을 반환한다. user-facing Alpha 성립에 남은 것은 **단계 2·4의 real edge + maturity + allow-all
-> eligibility 배선**이며, 이를 코드 repo **Phase 10**으로 승격했다(상세: `impl/11-phase-8-9-roadmap.md`).
+> eligibility 배선**이며, 이를 코드 repo **Phase 10**으로 승격했다(상세: `impl/11-forward-roadmap.md`).
 > 최소 범위: `MemoryEdgeProvider`만 real 교체(협의 출발점 = 2026-07-03 rec-signal 계약), eligibility는
 > `discoverable=true` 가정의 얇은 stub 배선(visibility 보류 합의; 현 배포는 hard-required
 > `Unavailable*`라 real edge만으로는 gate에서 여전히 503), persona는 NullProvider 유지(Alpha ranking
