@@ -109,17 +109,20 @@ Tier 1 inline만으로 판정이 어려운 후보에 대해, 관련 stance evide
 ### D5. judge = for/against의 유일 엔진 · 플래그 · judge-off silence
 
 - **유일 엔진**: floor가 없으므로 judge는 for/against 기능의 **유일한 구현체**다. 플래그(`STANCE_JUDGE_ENABLED` 류) 의미 = **"for/against 기능 on/off"**. dark-merge(코드 OFF 머지)는 OK지만 **Alpha 배포는 judge를 ON으로 돌린다**.
-- **judge OFF / unavailable / degraded → (b) 명시 silence**: `recommendations=[]` + `silence.silent=true` + `silence.reason`. **empty result와 구분되도록 사유를 남긴다**:
-  - `stance_judge_disabled` — 플래그 OFF
-  - `stance_judge_unavailable` / `stance_judge_failed` — 런타임 실패/degrade
-  - `all_candidates_insufficient` — shortlist는 있었으나(검색 escalation 후에도) 전원 verdict=insufficient
-  - `stance_evidence_search_failed` — (judge 실패와 **구분**) 검색이 필요했던 후보 전원이 검색/expansion 실패로 판정 불가
+- **judge OFF / unavailable / degraded → (b) 명시 silence**: `recommendations=[]` + `silence.silent=true` + `silence.reason`. **empty result와 구분되도록 사유를 남긴다** (closed vocabulary **6종**):
+  - `stance_judge_disabled` — 플래그 OFF (dormant-ship 기본)
+  - `stance_judge_unavailable` — evaluator/의존성이 미제공·미배선(`UpstreamUnavailableError`). **구성/통합 갭**이지 런타임 실패가 아니며, 실검색 실패와 구분한다.
+  - `stance_query_generation_failed` — LLM query-expansion leg 실패(또는 비대칭 expansion). 검색이 **아예 실행되지 않았으므로** search 실패로 보고하면 거짓이다 → 별도 사유.
+  - `stance_evidence_search_failed` — statement-search가 **실행됐으나** 요청 시점에 실패(upstream 오류).
+  - `stance_judge_failed` — judge 런타임 실패(≥1 후보 judge `None`; mixed insufficient+`None` 포함 — `None`은 verdict가 아니라 엔진 오류).
+  - `all_candidates_insufficient` — shortlist는 있었고 judge가 **전원 깨끗이** 돌았으나 verdict=insufficient(엔진 오류 0).
+- **stage ordering + 선행 실패 short-circuit**: 평가는 `query-gen → search → judge`의 **엄격한 파이프라인**이다. 앞 단계 실패는 뒤 단계를 **실행하지 않고** 즉시 그 단계의 silence로 종료한다(query-gen 실패 → search·judge 미실행 / search 실패 → judge 미실행). 이로써 뒤 단계(예: 빈 입력에 대한 judge `None`)가 앞 단계 사유를 덮어쓰는 **역전을 원천 차단**하고 불필요한 LLM 호출도 없앤다.
   - (기존 `SilenceView(silent, reason)` 계약 재사용 — `serving.py`, 현행 `"no_candidates"`에 위 사유 추가)
 - **"topic discussers fallback" 금지**: stance 미평가 후보를 stance recommendation으로 반환하지 않는다("response never lies"). 관측성은 `silence.reason` + decision log로.
 - **serve는 sync 유지, judge/search는 shortlist만 async**: Phase 8-5 `generate_reasons_async`가 top-N만 await하는 shape 재사용.
 - **eval**: for/against **verdict 품질은 judge stratum(비결정적)에서만** 측정(8-4 B2 silver judge). 결정적 gate는 배관만(stub judge·stub search: shortlist retrieval·escalation 분기·insufficient→drop·`silence.reason`·non-stance 질의 불변). gate에 judge/실검색 안 넣음.
 - **degrade scope (judge)**: `evidence_stmt_ids` firsthand-honesty violation은 기본적으로 해당 candidate만 invalid(→ insufficient/drop). judge 응답 전체 shape이 깨진 경우에만 batch degrade → `stance_judge_failed` silence.
-- **degrade scope (search/expansion · 후보 단위 격리)**: symmetric query 생성 실패·한쪽 query 누락·OpenSearch 전체 실패·일부 owner 결과만 실패·batch shape 오류 시 — **검색 없이 판정 가능한 후보(inline 완결)는 계속 처리**하고, **검색이 필요했던 후보만 `insufficient`로 내린다.** 검색 필요 후보 **전원**이 검색 실패로 판정 불가면 `stance_evidence_search_failed` silence(judge 실패 `stance_judge_failed`와 구분·관측성).
+- **degrade scope (search/expansion · whole-request silence)**: Alpha 구현은 **단일 ANY-match batch search**라 "검색 없이 판정 가능한 inline-완결 후보"가 별도로 존재하지 않는다 — 모든 후보가 그 한 번의 배치 검색에 의존한다. 따라서 evidence 수집 leg가 실패하면 그 **요청 전체가 silence**가 된다: symmetric query 생성 실패·한쪽 query 누락은 `stance_query_generation_failed`(검색 미실행), OpenSearch 전체 실패·일부 owner 결과 실패·batch shape 오류는 `stance_evidence_search_failed`. 두 경우 모두 judge 실패(`stance_judge_failed`)와는 계속 구분한다(관측성). (후보 단위 부분 격리는 §D3의 inline/escalation 모델을 실제 도입할 때의 후속.)
 
 ### D6. memory-api 계약 (cross-team)
 
@@ -151,7 +154,7 @@ aspect 온톨로지·stance verdict·`stance_dir`·`axis` 무엇도 요청하지
 
 - **K / M / per_owner_limit / batch shape + K recall 안전장치**: Tier 1 shortlist 크기(K), inline preview 상한(M), 검색 owner당 상한, per-candidate vs 소배치. **K는 전체 recall 상한이므로(§D2)** — **overfetch-후-축소 + recall@K ratchet**으로 고정(eligible-pagination은 `Page`에 cursor/offset 없어 배제).
 - **bounded-retry 한계값**: 최대 검색 호출·query 수·재판정 횟수(현 설계 = post-judge 1회).
-- **silence.reason 최종 taxonomy**: 위 5종(`stance_judge_disabled`/`_unavailable`/`_failed`/`all_candidates_insufficient`/`stance_evidence_search_failed`) + 기존 `no_candidates` 중복 정리(serving 계약).
+- **silence.reason 최종 taxonomy**: 위 6종(`stance_judge_disabled`/`_unavailable`/`stance_query_generation_failed`/`stance_evidence_search_failed`/`stance_judge_failed`/`all_candidates_insufficient`) + 기존 `no_candidates` 중복 정리(serving 계약).
 - **multi-proposition 결합 의미론**: 질의에 명제 여러 개일 때 AND 전부일치 / coverage 부분일치 / round-robin. Alpha single이면 이월.
 - **옵트인 파라미터 최종 이름** + statement-search 응답 필드 확정(memory-api 협의).
 - **confidence 명명 분리**: `statement_confidence`(claim 단위 = 발화자 귀속 신뢰도; 진위·요약 정확도·stance 강도 아님), `competence.*`, judge `graded_confidence`(= 사실상의 stance confidence), BM25 `_score`(recall 신호). 같은 `confidence` 이름 재사용 금지.
