@@ -59,6 +59,7 @@ serving
 ### D1. Alpha = topic-QID 앵커 + ephemeral proposition (axis 온톨로지·registry 없음)
 
 - 후보 발견의 앵커 = 깨끗한 Wikidata **topic QID 하나**(≠axis_id — 이건 Wikidata grounding이라 파편화 0). query는 요청 시점에 **ephemeral proposition + requested_position**으로만 정규화하고 **persistent id를 mint하지 않는다.**
+- **★ proposition은 방향-중립(direction-neutral)이다** — axis/claim만 담고 방향은 절대 인코딩하지 않는다(`"원전 확대"` O · `"원전 확대 반대"`/`"원전 확대 (against)"` X). 방향은 **오직 `requested_position` 한 곳**에만 존재하고, judge에는 `proposition`과 `requested_dir`이 **별개 인자**로 전달된다(B5 계약). proposition에 방향을 겹쳐 넣으면 judge가 verdict를 뒤집을 수 있다. B6 caller는 `proposition = stance.axis`로 고정(`stance.text` 사용 금지 — 필요 시 방향 판정에 쓰지 않는 보조 `reference_text`로만).
 - verdict는 Tier 2 judge가 **query-stance-relative**로 만든다 — aspect 온톨로지 없이도 축 구분("원전 확대" vs "안전규제")이 judge 안에서 암묵적으로 처리된다.
 - aspect가 실제로 필요한 유일 케이스("전반 반대지만 이 한 축만 찬성")는 niche → **Open Beta 이월**. 추구 시 필요한 정규화 레이어는 **Discovery 소유**(memory-api 아님·§D6 ownership).
 
@@ -94,7 +95,7 @@ Tier 1 inline만으로 판정이 어려운 후보에 대해, 관련 stance evide
 
 ### D4. Tier 2 — judge는 "선택"이 아니라 "판정" (ordering contract 보존)
 
-- LLM은 후보(**단위 = `(owner_id, subject_entity_id)`**·§D2)별 **판정만**: `{verdict: aligned | opposed | insufficient, evidence_stmt_ids, graded_confidence}`. `graded_confidence`는 랭킹에 쓰므로 **필수 `[0,1]`** — 누락/범위 밖이면 그 후보를 **`insufficient`** 처리(confidence 없는 후보가 랭킹에 섞이지 않게).
+- LLM은 후보(**단위 = `(owner_id, subject_entity_id)`**·§D2)별 **판정만**: `{verdict: aligned | opposed | insufficient, evidence_stmt_ids, graded_confidence}`. `graded_confidence`는 랭킹에 쓰므로 **필수 `[0,1]`** — 누락/범위 밖이면 그 응답은 **schema-invalid = judge engine 실패**이므로 그 후보를 **`None`(candidate judge error)** 로 처리한다(evidence 부족인 `insufficient`와 구분: malformed output은 "증거로 판단 불가"가 아니라 "판정기가 못 돌았다"). B6는 이 `None`을 후보 단위 judge error로 세고, **검색이 필요했던 후보 전원이 judge error면 `stance_judge_failed` silence**(§D5). confidence 없는 후보가 랭킹에 섞이는 일은 이 `None`-drop으로 차단된다.
 - 랭킹은 그 위에서 **여전히 결정적으로** competence + judge `graded_confidence`(= stance verdict confidence)로. LLM verdict는 **필터/주석**이지 scalar score가 아님. → "scalar score 없음 · 결정적 lexicographic ordering" 계약 유지.
 - **불변식**:
   - judge는 **후보 집합(Tier 1 shortlist) 밖 agent를 추가하지 못한다.**
