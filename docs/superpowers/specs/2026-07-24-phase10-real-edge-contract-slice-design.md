@@ -1,8 +1,9 @@
 # Phase 10 real-edge contract slice — 설계 (competence/groundings → AgentTopicEdge)
 
-- **상태**: PROVISIONAL / 브레인스토밍 수렴본. writing-plans 미착수, 구현 미시작. **memory-api 소스 대조 검증 완료**(2026-07-24, 병렬 adversarial 3축): endpoint/params·`Page.truncated` overfetch·`support_ids` invariant(full competence-scoring 경로 한정; schema/rescore 미강제)·one-owner/QID·필드 surface 확증. 추가 정밀화: nullable `source`/`knowledge_qid`, rescore staleness(부분변경/교체 포함), **freshness 입력(`last_seen`≠evidence recency) provisional 격하**, **dangling-link join으로 `truncated=false`≠complete**, **ownership 검사는 DTO self-consistency 한정** — 셋 다 production turn-on blocker로 §9 추가.
+- **상태**: **IMPLEMENTED / default-OFF dormant contract slice** — 구현·테스트 완료(초기 슬라이스 PR #24, 2026-07-27 개정 `05f7f75`·`0778d44`), production turn-on은 §9 blocker로 보류. 여전히 "Phase 10 완료"·"live turn-on"·"user-facing Alpha 성립"이 **아니다**(아래 범위 참조). **memory-api 소스 대조 검증 완료**(2026-07-24, 병렬 adversarial 3축): endpoint/params·`Page.truncated` overfetch·`support_ids` invariant(full competence-scoring 경로 한정; schema/rescore 미강제)·one-owner/QID·필드 surface 확증. 추가 정밀화: nullable `source`/`knowledge_qid`, rescore staleness(부분변경/교체 포함), **freshness 입력(`last_seen`≠evidence recency) provisional 격하**, **dangling-link join으로 `truncated=false`≠complete**, **ownership 검사는 DTO self-consistency 한정** — 셋 다 production turn-on blocker로 §9 추가.
 - **날짜**: 2026-07-24 — 2026-07-24 memory-api 소스 계약 감사(`../bourbon-memory-api`) 결과를 반영.
-- **범위**: memory-api의 per-owner competence/grounding 신호를 Discovery `AgentTopicEdge`로 투영하는 **contract slice**. **dormant ship**(default-OFF). "Phase 10 완료"·"live turn-on"·"user-facing Alpha 성립"이 **아니다** — `agent_id`·eligibility가 실제 해결되기 전까지 그렇게 부를 수 없다.
+- **2026-07-27 개정**(오너 정책 결정 + code-quality cleanup pass): ① **eligibility = 승인된 임시 production 정책**(AllowAll, stance 포함) — real eligibility provider는 turn-on blocker에서 제외되고 "도입 시 교체 대상"으로 격하(§7·§9). ② 그 전제 위에 서 있던 **Guard 2 제거** — 가드는 0/1 둘뿐(§7). ③ **owner/agent identity 공간 계약 신설**(§2.3): decorator가 `memory_owner_id`를 edge에 보존하고 stance evidence 조회가 owner space로 라우팅된다. 구현 근거 커밋: `05f7f75`(routing), `0778d44`(정책·Guard 2 제거).
+- **범위**: memory-api의 per-owner competence/grounding 신호를 Discovery `AgentTopicEdge`로 투영하는 **contract slice**. **dormant ship**(default-OFF). "Phase 10 완료"·"live turn-on"·"user-facing Alpha 성립"이 **아니다** — production identity resolver를 비롯한 §9 blocker가 남아 있는 한 그렇게 부를 수 없다(2026-07-27: eligibility는 blocker에서 제외됐다, §7).
 - **관련**: [[discovery-phase10-real-edge-promotion]](승격 결정·2026-07-24 감사 정정), `2026-07-20-agentic-stance-retrieval-design.md`(stance는 query-time judge 소유·edge 불변), Phase 2 `HttpKnowledgeEntityProvider`(real HTTP adapter 템플릿), [[discovery-mockfirst-contract-strategy]].
 
 ---
@@ -17,7 +18,7 @@
 - **memory-api에 agent identity가 없다.** 정체성 키는 `owner_id`(UUID) 단독. `agent_id`는 상류(bourbon-api `personal_agent_id`)에서 파생 — Discovery가 파생 규칙을 복제하면 안 된다.
 - **#64 competence vector**가 per-(owner, QID)로 노출된다(빌드 시 precompute·저장): `Competence{depth, consistency, frequency, breadth, sentiment, support_ids, …}` + Tier-2(`hands_on_ratio`, `opinion_ratio`, `degree`, `last_seen`). 매 `PersonalEntitySummary`에 통째로 투영된다.
 - **stance axis/dir/confidence는 갭이 아니다** — for/against 재설계가 그 모델을 폐기했다. stance는 query-time live judge가 산출하며(K-task shipped), `AgentTopicEdge`의 stance 필드는 이 슬라이스에서 건드리지 않는다.
-- **eligibility는 어떤 응답에도 없다**(전부 빌드타임 내부). → 진짜 갭은 eligibility 하나로 수렴한다. **dormant contract-slice 구현의 memory-api 블로커는 0**(elig=true stub·mock-first)이지만, **production turn-on은 여러 상류 계약에 blocked**(전부 §9): ① pagination/bounded-retrieval **+ join-integrity**(dangling link skip으로 `truncated=false`가 완전성 미보장, §6 ③), ② **stale-competence lifecycle**(active-set 변경/교체 시 과거 competence 잔존·`with_statements=false`로 감지 불가, §4), ③ **freshness 입력 의미**(`last_seen`이 evidence recency 아님, §4), ④ persisted link/entity ownership fold-검증(정책 ④). real eligibility/identity resolver도 선결이다.
+- **eligibility는 어떤 응답에도 없다**(전부 빌드타임 내부). → 진짜 갭은 eligibility 하나로 수렴한다. **dormant contract-slice 구현의 memory-api 블로커는 0**(eligibility는 AllowAll 정책·mock-first)이지만, **production turn-on은 여러 상류 계약에 blocked**(전부 §9): ① pagination/bounded-retrieval **+ join-integrity**(dangling link skip으로 `truncated=false`가 완전성 미보장, §6 ③), ② **stale-competence lifecycle**(active-set 변경/교체 시 과거 competence 잔존·`with_statements=false`로 감지 불가, §4), ③ **freshness 입력 의미**(`last_seen`이 evidence recency 아님, §4), ④ persisted link/entity ownership fold-검증(정책 ④). **production identity resolver**도 선결이다. (~~real eligibility~~ — 2026-07-27 오너 결정으로 blocker에서 제외: 도입 전까지 AllowAll이 승인된 임시 정책이다, §7.)
 
 **슬라이스 목표**: competence/grounding → `AgentTopicEdge` 투영을 **계약과 테스트로 확정**하고, default-OFF로 dormant ship한다. live 연결·real 데이터 검증은 turn-on gate로 이월한다.
 
@@ -25,19 +26,21 @@
 
 ```text
 PersonalEntitySummary
-  → [순수 translator]                    → OwnerTopicProjection   (identity 무지)
-  → [IdentityResolvingEdgeProvider]       → AgentTopicEdge          (agent_id 결합)
+  → [순수 translator]                    → OwnerTopicProjection   (identity 무지, owner_id 보유)
+  → [IdentityResolvingEdgeProvider]       → AgentTopicEdge          (agent_id 결합 + memory_owner_id 보존)
 ```
 
 투영(순수·안정 계약)과 identity 결합(상류 의존·미해결)을 **분리**한다. resolver 부재 시 fail-loud 지점이 명확하고, 각 단을 독립 테스트할 수 있다.
+
+decorator는 owner_id를 **agent_id로 치환하지 않고 둘 다 싣는다**(2026-07-27 개정). 파생은 단방향이라 agent_id에서 owner_id를 되얻을 수 없고, memory-api 조회는 owner space에서만 가능하기 때문 — 계약은 §2.3.
 
 ### 2.1 구성요소 (5)
 
 1. **순수 translator** — `PersonalEntitySummary → OwnerTopicProjection`. identity를 전혀 모른다. §4 매핑을 담는 순수 함수.
 2. **`HttpOwnerTopicProjectionProvider`** — memory-api를 호출해 `owner_id` + 투영된 신호를 담은 `list[OwnerTopicProjection]`을 반환한다. `AgentTopicEdge`를 만들지 않는다. Phase 2 `HttpKnowledgeEntityProvider`가 HTTP 패턴 템플릿.
-3. **`AllowAllEligibilityProvider`** — 항상 `Eligibility(discoverable=True)`. 이름과 `ProviderVersions.eligibility` 표기에 **stub임을 명시**. real verdict가 아니다.
+3. **`AllowAllEligibilityProvider`** — 항상 `Eligibility(discoverable=True)`. **2026-07-27 개정: dev/test stub이 아니라 real eligibility 도입 전의 승인된 임시 production 정책**(§7). 여전히 privacy/safety verdict는 아니다(아무 판단도 하지 않는다). `ProviderVersions.eligibility`는 `allow-all@v0`로 기록해 decision log가 "정책"을 드러내게 한다.
 4. **Composition root 배선** — default-OFF flag(`REAL_EDGE_ENABLED`) 뒤에서 `Unavailable*`를 real로 교체. `discovery/providers/base.py:56-62`의 stale `MemoryEdgeProvider` docstring(존재하지 않는 `GET /personal/groundings/{qid}` → `Page[GroundingMatch]`)을 정정.
-5. **`IdentityResolvingEdgeProvider`** — raw projection provider를 감싸는 decorator. `resolve_many(owner_ids) -> Mapping[UUID, str]`(배치 계약, N+1 회피)로 `owner_id → agent_id`를 결합. **최종 `MemoryEdgeProvider.get_edges(anchor_id) -> list[AgentTopicEdge]`는 이 decorator가 구현**한다.
+5. **`IdentityResolvingEdgeProvider`** — raw projection provider를 감싸는 decorator. `resolve_many(owner_ids) -> Mapping[UUID, str]`(배치 계약, N+1 회피)로 `owner_id → agent_id`를 결합하고, **원본 `owner_id`를 `AgentTopicEdge.memory_owner_id`로 보존**한다(§2.3 — 이 decorator가 유일한 writer). **최종 `MemoryEdgeProvider.get_edges(anchor_id) -> list[AgentTopicEdge]`는 이 decorator가 구현**한다.
 
 ### 2.2 `OwnerTopicProjection` 계약
 
@@ -54,6 +57,23 @@ evidence_refs: list[str]  # ["statement:<uuid>", ...]
 
 `hands_on_ratio` 등 raw/debug 신호는 **projection DTO에 넣지 않는다** — 원본이 memory-api 응답에 상존하므로 calibration 때 재사용 가능하고, 지금 관측이 필요하면 별도 내부 `ProjectionDiagnostics`나 structured log로 낸다.
 
+### 2.3 owner/agent identity 공간과 evidence routing (2026-07-27 신설)
+
+memory-api는 **owner space**(`owner_id: UUID`)에서만 동작하고, 추천은 **agent space**(`agent_id: str`)에서 동작한다. `agent_id = personal_agent_id(owner_id)`는 bourbon-api의 결정적 **단방향** UUID5 파생이므로 두 문자열은 결코 같지 않고, agent_id에서 owner_id를 되얻을 수도 없다.
+
+그래서 edge가 둘 다 싣는다:
+
+```text
+AgentTopicEdge.agent_id: str                    # SourceOwner.DERIVED — 추천 identity
+AgentTopicEdge.memory_owner_id: UUID | None     # SourceOwner.MEMORY  — evidence routing identity
+```
+
+- **writer는 `IdentityResolvingEdgeProvider` 하나뿐**이다. mock/eval edge는 `None`이며(뒤에 owner가 없다), 소비자는 `None`이면 `agent_id`로 폴백한다 — 두 공간이 일치하는 오프라인 경로라 deterministic baseline이 불변이다.
+- **stance evidence 조회는 owner space로 라우팅**된다. `discovery.stance._evidence_key(candidate)` 단일 헬퍼가 ⓐ 검색 요청 scope(`owner_ids`) ⓑ 응답 per-owner join ⓒ `truncated_owners` 귀속 **세 곳에 대칭 적용**된다. 셋 중 하나라도 agent space를 쓰면 real edge에서 evidence가 구조적으로 비거나(ⓐⓑ) recall-risk 카운터가 조용히 거짓이 된다(ⓒ). eval은 owner 키와 agent 키가 같은 문자열이라 이 결함을 드러내지 못하므로 **O≠A 회귀 테스트가 유일한 방어**다.
+- `StanceEvidenceSearchProvider`의 `owner_ids`·응답 그룹 `owner_id`는 **memory owner id**라는 의미로 고정된다(와이어 타입 `list[str]`은 불변).
+- **직렬화 경계**: `memory_owner_id`는 Recommendation API 응답과 `DecisionLogRecord`에 노출되지 않으며, stance evidence 조회의 memory-api routing scope로 사용된다(테스트로 고정).
+- **self-exclusion은 이 필드를 쓰지 않는다.** §9 (2)의 계약대로 requester owner_id를 같은 production resolver로 agent_id로 resolve한 뒤 **agent space에서 비교**한다 — 양쪽이 같은 네임스페이스로 수렴하므로 edge의 owner를 볼 이유가 없다. 두 용도를 섞지 않으려고 필드 이름도 `owner_id`가 아니라 `memory_owner_id`다.
+
 ## 3. 데이터 흐름 (`get_edges(anchor_id=QID)`)
 
 검증은 **구조 검증을 전체 page에 먼저** 적용한 뒤에 sparse-skip한다. sparse item을 먼저 skip하면 같은 owner의 두 항목 중 하나가 `competence=None`일 때 duplicate invariant(§6 ⑤)가 숨을 수 있으므로, 순서를 아래로 pin한다:
@@ -64,8 +84,8 @@ evidence_refs: list[str]  # ["statement:<uuid>", ...]
 4. **전체 owner uniqueness 검증** (§6 ⑤).
 5. **그 후** `competence is None` skip (§6 ①) / `competence != None ∧ support_ids==[]` fail-loud (§6 ②).
 6. translator가 각 `PersonalEntitySummary` → `OwnerTopicProjection`(§4). 시그니처는 `translate(entity, *, anchor_id, now)`로 pin. `now`는 **요청당 1회** 읽어 전 projection에 동일 적용.
-7. `IdentityResolvingEdgeProvider`가 projection들의 `owner_id`를 모아 `resolve_many()` 1콜 → `agent_id` 결합 → `AgentTopicEdge` 조립. 최종 edge 순서는 projection **입력 순서**를 보존(§6 ⑥).
-8. edge 조립 시: stance 필드 명시적 `None`, `discoverable`는 compatibility sentinel(§7), `source_owner`는 기존 `_SOURCE_OWNER` 맵.
+7. `IdentityResolvingEdgeProvider`가 projection들의 `owner_id`를 모아 `resolve_many()` 1콜 → `agent_id` 결합 → `AgentTopicEdge` 조립. **`owner_id`는 버리지 않고 `memory_owner_id`로 함께 싣는다**(§2.3). 최종 edge 순서는 projection **입력 순서**를 보존(§6 ⑥).
+8. edge 조립 시: stance 필드 명시적 `None`, `discoverable`는 compatibility sentinel(§7 — eligibility **정책**과는 별개의 edge 필드다), `source_owner`는 `_SOURCE_OWNER` 맵(`memory_owner_id`는 `SourceOwner.MEMORY`로 추가됨).
 
 ## 4. Translation 매핑 (lock)
 
@@ -129,38 +149,48 @@ GET /{prefix}/personal/entities/{qid}?limit=200&with_statements=false&with_trace
 
 **구분 원칙**: ①만 정상 발생 가능한 per-owner 데이터 조건이라 skip. ②–⑥은 구조적/계약 위반이라 fail-loud. wire DTO는 `truncated`를 **required**로 두고 `response.limit == 200` ∧ `len(items) <= 200`도 검증. 정책 ④ wire 필드 존재 확인: `PersonalEntityMatch.owner_id`, `.entity.owner_id`, `.entity.knowledge_qid`, `.entity.source`.
 
-## 7. eligibility stub과 안전 불변식
+## 7. eligibility 정책과 composition 가드 (2026-07-27 개정)
 
-`AllowAllEligibilityProvider`는 **contract-test/dev 전용**이며 eligibility-first 보안 불변식을 만족하는 real 구현이 아니다. `discoverable`은 translator가 만들지 않고(memory projection에 privacy 신호 없음), 최종 edge 조립 시 **compatibility sentinel**로만 주입하되 stub provenance를 명시한다.
+> **개정 전 이 절의 입장(superseded, 기록 보존):** AllowAll은 contract-test/dev 전용 stub이며 production composition이 **절대 생성하지 않아야** 하고, `STANCE_JUDGE_ENABLED ∧ eligibility is AllowAll`은 configuration error(Guard 2)여야 한다 — "AllowAll이 production에서 생성되지 않아야 turn-on gate(real eligibility 요구)가 강제된다"는 논리였다. **오너 결정(2026-07-27)이 그 전제를 폐기했다**: real eligibility 도입 전까지 모든 후보를 discoverable로 취급하는 것이 정책이므로, 그 구성을 거부하는 가드는 안전장치가 아니라 기동 실패다.
 
-**composition 가드.** 현 composition에는 production/dev를 구별하는 계약이 없으므로, 환경 이름에 의존하지 않고 **provider 생성 위치**로 강제한다:
+`AllowAllEligibilityProvider`는 **real eligibility 도입 전의 승인된 임시 production 정책**이다. 모든 후보를 `discoverable=True`로 취급하며, **stance evidence search와 judge도 이 정책 아래에서 운영**한다. 범위는 도달 가능한 대상으로 자연 한정된다 — 요청에 대해 bounded retrieval이 만든 후보(direct edge + 허용된 one-hop neighbor expansion).
 
-- **production API composition은 `AllowAllEligibilityProvider`를 절대 생성하지 않는다.** AllowAll은 테스트 또는 별도 dev composition에서만 직접 주입한다.
-- **`REAL_EDGE_ENABLED=true`인 production builder는 real eligibility와 identity resolver가 모두 주입되지 않으면 fail-loud.**
-- 추가 불변식(fail-loud): `STANCE_JUDGE_ENABLED ∧ eligibility is AllowAll → configuration error` — eligibility 미검증 owner 전체가 statement search 대상이 되는 privacy/disclosure 위반을 막는다.
+여전히 **privacy/safety verdict가 아니다**: 아무 판단도 하지 않고 모두에게 yes라고 답한다. real provider가 오면 **동일 Protocol로 인스턴스만 교체**되며 composition root는 그대로다. provenance는 `allow-all@v0`로 기록해 decision log가 "verdict가 내려졌다"가 아니라 "이 정책이 적용됐다"를 드러내게 한다.
 
-일반 depth/experience 추천도 eligibility 없이 owner를 사용자에게 노출하므로, AllowAll이 production composition에서 아예 생성되지 않아야 "turn-on gate"(real eligibility 요구)가 실제로 강제된다.
+**edge의 `discoverable`과 혼동하지 말 것.** translator는 privacy 신호를 만들지 않으므로(memory projection에 없음) 최종 edge 조립 시 `discoverable=True`를 **compatibility sentinel**로 주입한다. 이는 edge 필드의 기본값일 뿐이고, 후보를 실제로 통과/차단시키는 판정은 Gate가 부르는 **eligibility provider**가 한다 — 지금은 그 자리에 위 정책이 있다.
+
+**composition 가드 (2개, 개정 후).**
+
+- **Guard 0 (OFF가 authoritative)** — flag가 꺼진 채 edge/eligibility provider가 주입되면 misconfiguration → startup `ValueError`.
+- **Guard 1 (ON 완전성)** — 두 provider와 두 version 문자열이 **모두** 필요하며 version은 **non-blank**여야 한다. Guard 1은 **배선 완전성만** 검사한다 — 주입된 provider가 신뢰할 만한지에 대한 판정이 아니며, 그 판단은 turn-on graph를 구성하는 쪽의 몫이다.
+- ~~**Guard 2**~~ — **제거**(위 superseded 블록). eligibility에는 가드가 없다.
+
+현재 lifespan은 edge/eligibility를 주입하지 않으므로 배포 환경에서 `REAL_EDGE_ENABLED=ON`은 **Guard 1에서 기동 실패**한다(§9). 즉 "production에서 조용히 켜지는" 경로는 정책 변경 후에도 존재하지 않는다.
 
 ## 8. 테스트 전략 / DoD
 
-- [ ] **순수 translator + 경계값 테스트** — depth×consistency 곱셈(얕은 depth 미구제), dedup 후 volume saturation, half-life decay(초 해상도·미래 clamp·`last_seen=None→0.0`), experience_*=None.
-- [ ] **wire DTO 미러 HTTP adapter + MockTransport 테스트** — 요청 계약(§5: owner_id 생략·limit=200·with_*=false·sort=confidence) / 응답 파싱 / 오류 / **`truncated is True` fail-loud** vs 정확히 200명(`truncated=false`) 정상 통과.
-- [ ] **검증 순서·정책 ①–⑤ 테스트** — 순서 pin(§3: 구조검증 전체 선행 → sparse-skip 후행; 특히 owner 중복 항목 중 하나가 `competence=None`일 때 ⑤가 숨지 않음) + skip vs fail-loud 분기 각각.
-- [ ] **injected fake resolver로 owner_id→agent_id 결합** + 정책 ⑥ 테스트 — 누락·extra key·동일 agent_id 충돌 각각 fail-loud, edge 순서=projection 입력 순서 보존.
-- [ ] **`AllowAllEligibilityProvider`** 이름·provider version stub 명시 + production composition이 이를 생성하지 않음을 테스트.
-- [ ] **default-OFF composition 배선** + 안전 가드 fail-loud 테스트(`STANCE_JUDGE_ENABLED ∧ AllowAll`; `REAL_EDGE_ENABLED` production builder에 real eligibility/resolver 미주입).
-- [ ] **OFF일 때 기존 동작·`eval/corpus/baseline.json` byte-identical 불변**.
-- [ ] mypy/ruff/format clean, 전체 스위트 green, eval gate exit 0.
+- [x] **순수 translator + 경계값 테스트** — depth×consistency 곱셈(얕은 depth 미구제), dedup 후 volume saturation, half-life decay(초 해상도·미래 clamp·`last_seen=None→0.0`), experience_*=None.
+- [x] **wire DTO 미러 HTTP adapter + MockTransport 테스트** — 요청 계약(§5: owner_id 생략·limit=200·with_*=false·sort=confidence) / 응답 파싱 / 오류 / **`truncated is True` fail-loud** vs 정확히 200명(`truncated=false`) 정상 통과.
+- [x] **검증 순서·정책 ①–⑤ 테스트** — 순서 pin(§3: 구조검증 전체 선행 → sparse-skip 후행; 특히 owner 중복 항목 중 하나가 `competence=None`일 때 ⑤가 숨지 않음) + skip vs fail-loud 분기 각각.
+- [x] **injected fake resolver로 owner_id→agent_id 결합** + 정책 ⑥ 테스트 — 누락·extra key·동일 agent_id 충돌 각각 fail-loud, edge 순서=projection 입력 순서 보존. (2026-07-27 강화 `cf796e9`: blank/whitespace/비-str/unhashable agent_id도 `invalid`로 수렴, projection duplicate owner는 resolver 호출 전 `EdgeProjectionError`.)
+- [x] ~~**`AllowAllEligibilityProvider`** 이름·provider version stub 명시 + production composition이 이를 생성하지 않음을 테스트.~~ → **2026-07-27 개정(§7)**: "stub·생성 금지" 프레임 폐기. 대신 **AllowAll + 활성 stance step 구성이 조립에 성공**하고 provenance가 `allow-all@v0`로 verbatim 기록됨을 테스트한다.
+- [x] ~~**안전 가드 fail-loud 테스트(`STANCE_JUDGE_ENABLED ∧ AllowAll`)**~~ → Guard 2와 함께 삭제.
+- [x] **default-OFF composition 배선 + Guard 0/1 fail-loud 테스트** — OFF 기본이 `Unavailable*`+`unavailable@v0`, OFF+주입=error(Guard 0), ON 불완전 배선=error(Guard 1, blank version 포함 `c54022a`), ON 정상 배선은 verbatim provenance.
+- [x] **owner/agent routing(§2.3)** — ⓐ edge 필드 계약(round-trip·기본값 `None`·`source_owner` 완전성) ⓑ decorator가 owner 보존 ⓒ **O≠A 회귀**: 검색 요청 scope가 `[str(O)]`이고 응답을 owner 키로 join해 verdict가 agent A 후보에 결합 ⓓ truncated 귀속도 owner space ⓔ 직렬화 비노출(Recommendation·DecisionLog JSON).
+- [x] **OFF일 때 기존 동작·`eval/corpus/baseline.json` byte-identical 불변** — md5 `f0ab842eeabf4b16f87223ca054f3bef`, 개정 후에도 불변.
+- [x] mypy/ruff/format clean, 전체 스위트 green, eval gate exit 0 — 개정 시점 797 passed·2 skipped / mypy 187 files clean / eval gate EXIT 0.
+
+**구현 기록(코드 repo)**: 초기 슬라이스 = PR #24(main `f02c03b`). 2026-07-27 개정(브랜치 `chore/code-quality-cleanup`): `05f7f75` = §2.3 owner-space routing(`memory_owner_id` + `_evidence_key` 3곳 대칭 + 직렬화 경계 테스트, eval 코퍼스 `edges.json` 재생성, baseline md5 불변) / `0778d44` = §7 정책 개정(Guard 2·`stance_active` 제거, AllowAll docstring 재작성, assembler가 `StanceEvidenceSearchProvider` 포트에 의존).
 
 ## 9. turn-on gate로 이월 (이 슬라이스 밖)
 
 - live memory-api 연결 + real 데이터 분포 검증(sparse edge·one-hop 발동·maturity 분포 vs 0.45).
 - formula calibration(maturity 계수, evidence_strength 질 가중, freshness half-life).
-- real eligibility provider(privacy/safety verdict) — AllowAll 대체.
+- ~~real eligibility provider(privacy/safety verdict) — AllowAll 대체.~~ → **turn-on blocker 아님**(2026-07-27 오너 결정, §7): AllowAll이 그때까지의 승인된 정책이다. real provider는 **도입 시 동일 Protocol로 교체할 대상**으로 남되, turn-on을 막지 않는다.
 - production identity resolver(bourbon-api `personal_agent_id`) + partial-unmapped 정상 제외 계약.
 - **requester self-exclusion 계약** — **production turn-on blocker**. 현재 파이프라인은 요청자 본인을 후보에서 제외하지 않는다(검증: `Query`에 requester identity 필드 없음, `verify_token`은 토큰 유효성만 검사하고 identity 미반환, Retriever `_dedupe_direct_wins`는 `agent_id`당 중복만 제거·requester 미비교, Gate는 `eligibility_context`를 self-exclusion에 미사용). real edge를 켜면 요청자 본인이 해당 QID의 competence 조건을 만족할 때 자기 자신이 추천 후보로 나온다. turn-on 전에 확정할 계약:
   - **(1) requester identity 소스 = 신뢰된 upstream만 설정 가능한 identity context.** bourbon-api 등 신뢰된 upstream이 service-to-service 인증으로 무결성을 보장해 주입하고, 외부(클라이언트) 입력은 제거된다. **헤더라는 이유만으로 신뢰하지 않는다**(토큰은 identity를 주지 않으므로 별도 계약 필요).
-  - **(2) 제외 입도 & 비교 방식** — 요청에 **requester owner_id**(신뢰된 upstream identity context)가 들어오고, candidate와 **동일한 production resolver**로 requester owner_id → requester agent_id를 resolve한 뒤 agent space에서 `edge.agent_id == requester_agent_id`로 제외한다. 양쪽이 같은 agent 네임스페이스이므로 **`owner_id`를 `AgentTopicEdge`/`Candidate`에 실을 필요가 없다**(새 중간 타입·side mapping 불필요; 추천 대상이 agent라는 점과도 정합). **현행 bourbon-api canonical identity 계약은 `owner_id → personal_agent_id(owner_id)`의 결정적 1:1 매핑**(UUID5 기반 deterministic 함수·같은 owner는 항상 같은 ID·서로 다른 owner는 다른 ID·personal-agent lifecycle "active user마다 personal_agent 하나"·bootstrap이 그 canonical ID를 Agent PK로 사용)이므로 **1:many 분기는 현재 turn-on gate가 아니라 미래 계약 변경**이다 — 향후 owner당 복수 personal agent를 지원한다면 resolver 출력과 self-exclusion 입도를 함께 재설계해야 하지만, 이는 현재 분기가 아니다. 단 DB의 `Agent.owner_user_id`에는 unique constraint가 **없으므로** "DB가 owner당 Agent 하나를 강제한다"고 주장하지 않는다 — 1:1 근거는 deterministic `personal_agent_id` + personal-agent lifecycle 계약 + canonical ID bootstrap이며, **production resolver도 임의의 `owner_user_id` 소유 Agent를 열거하지 말고 canonical personal-agent mapping을 반환**해야 한다. requester resolution 실패는 (4) fail-loud를 따른다. 어느 쪽이든 **순수 translator/`OwnerTopicProjection`에서 제거한다는 뜻이 아니다** — 현 `MemoryEdgeProvider.get_edges(anchor_id)`에는 requester context가 없으므로, 제거는 requester context를 받을 수 있는 **별도 orchestration/filter 경계**에서 일어나야 한다.
+  - **(2) 제외 입도 & 비교 방식** — 요청에 **requester owner_id**(신뢰된 upstream identity context)가 들어오고, candidate와 **동일한 production resolver**로 requester owner_id → requester agent_id를 resolve한 뒤 agent space에서 `edge.agent_id == requester_agent_id`로 제외한다. 양쪽이 같은 agent 네임스페이스이므로 **self-exclusion 목적으로 `owner_id`를 `AgentTopicEdge`/`Candidate`에 실을 필요가 없다**(새 중간 타입·side mapping 불필요; 추천 대상이 agent라는 점과도 정합). **주의(2026-07-27)**: edge에 `memory_owner_id`가 생겼지만 이는 **evidence routing 전용**이며 self-exclusion은 위 계약대로 agent space 비교를 유지한다 — 두 용도를 섞지 않는다(§2.3). **현행 bourbon-api canonical identity 계약은 `owner_id → personal_agent_id(owner_id)`의 결정적 1:1 매핑**(UUID5 기반 deterministic 함수·같은 owner는 항상 같은 ID·서로 다른 owner는 다른 ID·personal-agent lifecycle "active user마다 personal_agent 하나"·bootstrap이 그 canonical ID를 Agent PK로 사용)이므로 **1:many 분기는 현재 turn-on gate가 아니라 미래 계약 변경**이다 — 향후 owner당 복수 personal agent를 지원한다면 resolver 출력과 self-exclusion 입도를 함께 재설계해야 하지만, 이는 현재 분기가 아니다. 단 DB의 `Agent.owner_user_id`에는 unique constraint가 **없으므로** "DB가 owner당 Agent 하나를 강제한다"고 주장하지 않는다 — 1:1 근거는 deterministic `personal_agent_id` + personal-agent lifecycle 계약 + canonical ID bootstrap이며, **production resolver도 임의의 `owner_user_id` 소유 Agent를 열거하지 말고 canonical personal-agent mapping을 반환**해야 한다. requester resolution 실패는 (4) fail-loud를 따른다. 어느 쪽이든 **순수 translator/`OwnerTopicProjection`에서 제거한다는 뜻이 아니다** — 현 `MemoryEdgeProvider.get_edges(anchor_id)`에는 requester context가 없으므로, 제거는 requester context를 받을 수 있는 **별도 orchestration/filter 경계**에서 일어나야 한다.
   - **(3) drop locus + audit 표현을 함께 설계** — 반드시 **stance search 이전**에 제외한다(자기 자신의 statement를 불필요하게 조회하지 않도록). 단, eligibility 호출 **전** 제외를 택하면 현재 Candidate-기반 drop 계약으로는 기록할 수 없다: `Candidate.eligibility`가 required이고 `GateResult.dropped`도 `list[Candidate]`이며 decision-log drop은 `Candidate.drop_reason`에서 생성되므로, eligibility 이전 대상을 `Candidate`나 `gated.dropped`로 표현할 수 없고 임의 eligibility를 지어 넣는 것도 잘못이다. 따라서 pre-gate drop을 표현하는 **별도 audit 경로 또는 `GateResult` 계약 변경**이 필요하다. Gate 내부에서 처리한다면 **eligibility I/O 전 phase-0 필터**와 그 drop 표현을 함께 설계한다. 최종 audit reason은 `requester_self`로 구분한다.
   - **(4) fail-loud 규칙** — real-edge serving이 활성화된 production에서 requester identity **누락은 no-op이 아니라 fail-loud**여야 한다(no-op은 identity 전달 누락을 조용히 허용해 turn-on 안전 규칙으로 부적합).
   - optional requester ID를 지금 배관하면 위 (1)~(3)을 성급하게 고정하고, 특히 클라이언트 입력이 인증 identity처럼 오용될 위험이 있으므로 **dormant slice에서는 구현하지 않고 계약만 기록**한다. upstream 인증 identity 계약 확정 후 별도 self-exclusion 설계·구현.
