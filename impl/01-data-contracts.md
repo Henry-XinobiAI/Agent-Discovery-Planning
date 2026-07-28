@@ -116,9 +116,10 @@ routing_target 제거 후 활성 필드 없는 reserved.)
 
 ---
 
-## `Candidate` — 모듈 ②→④를 관통하는 내부 객체 (`structs/recommend.py`)
+## `Candidate` — ③에서 태어나 ④b까지 관통하는 내부 객체 (`structs/recommend.py`)
 
-edge를 감싸서 파이프라인 중간 상태를 나릅니다.
+edge를 감싸서 파이프라인 중간 상태를 나릅니다. ③ Gate가 `EdgeHit` + eligibility(+persona)로 만들고,
+④a/④b가 in-place로 살을 붙입니다.
 
 ```python
 class Candidate(StrictBaseModel):

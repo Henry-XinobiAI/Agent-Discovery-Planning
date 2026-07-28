@@ -1,6 +1,6 @@
 # 구현 이해 가이드 — bourbon-agent-recommendation-api (Alpha)
 
-이 문서는 지금까지(Phase 0–8A + 재설계된 8B 폴백 사다리 Track 1–4 + 8-3/8-5/8-7 dormant slice) 구현한 것을 **개념이 쌓이는 순서**로 정리한 것입니다.
+이 문서는 지금까지(Phase 0–8A + 재설계된 8B 폴백 사다리 Track 1–4 + 8-5/8-7 및 stance ④a dormant slice) 구현한 것을 **개념이 쌓이는 순서**로 정리한 것입니다.
 빌드 순서(Phase 0→7)는 "계약을 먼저 얼리고 의존성 역순으로 짓는" 순서라서 처음 이해하기엔
 거꾸로입니다. 아래는 "무엇을 왜 만드는가 → 무엇이 흐르는가 → 어떻게 처리하는가 →
 어떻게 서빙/평가하는가" 순입니다.
@@ -31,25 +31,27 @@
 ## 1. 멘탈 모델: 파이프라인 한 번의 호출
 
 전부 `RecommendationPipeline.recommend(query)` 한 번의 호출로 흐릅니다
-(`discovery/pipeline.py`). 7단계입니다:
+(`discovery/pipeline.py`). 8단계이고, 그중 ④a만 need에 따라 조건부입니다:
 
 ```
-ⓠ normalize → ① linker → ② retrieval → ③ gate → ④ ranking → ⑤ serving → ⑥ decision log
+ⓠ normalize → ① linker → ② retrieval → ③ gate → [④a stance] → ④b ranking → ⑤ serving → ⑥ decision log
 ```
 
 | 단계 | 모듈 | 하는 일 | 한 줄 요약 |
 |---|---|---|---|
-| ⓠ | `normalize.py` | query 문자열 정리 | 원시 요청 → 정규화된 need + stance |
+| ⓠ | `normalize.py` | 요청 검증 + 맥락 투영 | proposition 존재 검증(for/against), 대화 맥락 lean 투영 |
 | ① | `linker.py` | 주제 텍스트 → **QID 하나** | "양자컴퓨팅" → `Q28865` (grounding) |
 | ② | `retrieval.py` | QID → 후보 에이전트들 | 직접 edge + sparse하면 이웃 한 홉 확장 |
 | ③ | `gate.py` | need-무관 탈락 | eligibility/discoverable/maturity로 거른다 |
-| ④ | `ranking.py` | need별 순서 + stance 필터 | 순서만 정함 (score 없음) |
+| ④a | `stance.py` | **for/against만** — 입장 판정 | 근거 검색 → judge → 후보에 query-time stance 주입 |
+| ④b | `ranking.py` | need별 순서 + stance 필터 | 순서만 정함 (score 없음) |
 | ⑤ | `serving.py` | 응답 payload + 침묵 판단 | top-N 잘라서 응답 만듦 |
 | ⑥ | `decision_log.py` | 감사 기록 | 왜 이렇게 됐는지 전부 기록 |
 
 파이프라인은 provider를 직접 안 들고 있습니다. 각 모듈이 생성 시점(composition root)에
-provider를 주입받았고, 파이프라인은 도메인 모듈 5개만 조합합니다. 그래서 `eval/`을 절대
-import하지 않고, 이게 import-isolation 테스트로 강제됩니다.
+provider를 주입받았고, 파이프라인은 도메인 모듈 5개 + optional seam 2개(stance evaluator·reason
+generator)만 조합합니다. 그래서 `eval/`을 절대 import하지 않고, 이게 import-isolation 테스트로
+강제됩니다.
 
 **두 개의 "0" 처리** (반복해서 나옵니다):
 - **grounding 0**: linker가 QID를 못 찾음 → `GroundingFailedError` → 전파(422). 로그 row 없음.
@@ -65,12 +67,15 @@ flowchart TD
     L -->|"grounding 0"| E422(["GroundingFailedError → 422<br/>(로그 row 없음)"])
     L -->|"GroundingResult · QID"| R["② retrieval"]
     R -->|"list&#91;EdgeHit&#93;"| G["③ gate"]
-    G -->|"survivors: list&#91;Candidate&#93;"| RK["④ ranking"]
+    G -->|"survivors: list&#91;Candidate&#93;"| ST["④a stance<br/>(for/against만)"]
+    ST -->|"stance 주입된 candidates"| RK["④b ranking"]
+    ST -->|"silence_reason → payload 강제 비움"| SV
     RK -->|"ranked (+ filter_dropped)"| SV["⑤ serving"]
-    SV -->|"top-limit items<br/>또는 pool 0 → silent 200"| REC(["Recommendation"])
+    SV -->|"top-limit items<br/>또는 pool 0 / stance 침묵 → silent 200"| REC(["Recommendation"])
 
     G -. dropped .-> DL["⑥ decision log"]
     L -. grounding trace .-> DL
+    ST -. "K drop (stance_shortlist_limit)" .-> DL
     RK -. full ranking .-> DL
     SV -. serving verdict .-> DL
     REC -. decision_log_id stamp .-> DL
@@ -80,6 +85,7 @@ flowchart TD
     EP[("MemoryEdgeProvider · mock")] -. inject .-> R
     ELP[("EligibilityProvider · mock")] -. inject .-> G
     PP[("PersonaProvider · mock")] -. inject .-> G
+    SP[("StanceEvidenceSearchProvider<br/>· dormant")] -. inject .-> ST
 ```
 
 > 실선 = 파이프라인 데이터 흐름, 점선 = 감사 기록 수집 + provider 주입. 두 "0"이 갈리는 지점:
@@ -92,11 +98,13 @@ flowchart TD
 ```
 Query ──normalize──▶ NormalizedQuery ──linker──▶ GroundingResult(QID)
       ──retrieval──▶ list[EdgeHit] ──gate──▶ list[Candidate] (survivors/dropped)
+      ──stance(④a)──▶ StanceEvaluation(candidates, silence_reason)   # for/against만
       ──ranking──▶ 정렬된 list[Candidate] ──serving──▶ Recommendation
 ```
 
-`Candidate`는 ②에서 태어나(EdgeHit+eligibility) ④까지 in-place로 살이 붙고(features/ordering_keys/
-stance/drop_reason), ⑥에서 감사 row로 굳습니다.
+`Candidate`는 ③ Gate에서 태어나(EdgeHit + eligibility + persona) ④b까지 in-place로 살이
+붙고(features/ordering_keys/stance/drop_reason), ⑥에서 감사 row로 굳습니다. ④a가 채우는 stance 3필드는 **edge에서 복사한 게 아니라
+요청 시점에 판정된 값**입니다.
 
 ---
 
@@ -106,7 +114,7 @@ stance/drop_reason), ⑥에서 감사 row로 굳습니다.
 
 - 세 개의 I/O 경계: `Query`(요청) / `NormalizedQuery`(파이프라인 입력) / `Recommendation`(응답)
 - **`AgentTopicEdge`** — 시스템의 심장. "에이전트가 한 주제에 대해 무엇을 아는가"를 QID에 앵커링.
-- **`Candidate`** — 모듈 ②→④를 관통하는 내부 객체. **scalar score 필드가 의도적으로 없음.**
+- **`Candidate`** — ③에서 태어나 ④b까지 관통하는 내부 객체. **scalar score 필드가 의도적으로 없음.**
 
 **→ 자세히: [01. 데이터 계약](01-data-contracts.md)**
 
@@ -114,9 +122,11 @@ stance/drop_reason), ⑥에서 감사 row로 굳습니다.
 
 ## 3. Provider 경계 — 진짜/가짜가 갈리는 이음매
 
-**4개의 Protocol**(`providers/base.py`)이 Discovery와 데이터 소스 사이의 seam입니다. real
+**5개의 Protocol**(`providers/base.py`)이 Discovery와 데이터 소스 사이의 seam입니다. real
 구현(HTTP)과 mock이 *같은* Protocol을 구현하므로, real↔mock 교체가 코드 변경이 아니라 **배선**.
-이게 "mock-first / contract-first" 전략의 뼈대입니다.
+이게 "mock-first / contract-first" 전략의 뼈대입니다. 다섯 번째인
+`StanceEvidenceSearchProvider`(④a용)는 앞의 넷과 degradation 정책이 달라서 — 실패가 503도 빈 결과도
+아니고 **사유 붙은 침묵** — 별도로 읽을 값어치가 있습니다.
 
 **→ 자세히: [02. Provider 경계](02-provider-boundary.md)**
 
@@ -128,11 +138,11 @@ stance/drop_reason), ⑥에서 감사 row로 굳습니다.
 참조](00-pipeline-io-reference.md)** 가 전 단계를 **INPUT → 처리 → OUTPUT** 한 틀로 요약합니다(shape/흐름
 관점, ① linker는 rung별로 분해). 그다음 아래 서술형 deep-dive에서 "왜"를 봅니다:
 
-- **[03. normalize + linker (grounding)](03-normalize-and-linker.md)** — ⓠ 문자열 파싱 + ①
-  기호적 label 매칭으로 QID 확정, adoption gate(confidence/margin).
+- **[03. normalize + linker (grounding)](03-normalize-and-linker.md)** — ⓠ proposition 검증·
+  canonicalization + 대화 맥락 투영, ① 기호적 label 매칭으로 QID 확정, adoption gate(confidence/margin).
 - **[04. retrieval](04-retrieval.md)** — ② direct edge + sparse 판정 + one-hop 확장 + direct-wins.
-- **[05. gate + ranking](05-gate-and-ranking.md)** — ③ need-무관 탈락 vs ④ need-의존 순서
-  (for/against 상대 stance, coverage round-robin, experience).
+- **[05. gate + stance + ranking](05-gate-and-ranking.md)** — ③ need-무관 탈락 vs ④a query-time 입장
+  판정 vs ④b need-의존 순서 (for/against 절대 position, coverage round-robin, experience).
 - **[06. serving + decision log](06-serving-and-decision-log.md)** — ⑤ payload/침묵 + ⑥ 감사 기록.
 - **[12. agent recommendation algorithm](12-agent-recommendation-algorithm.md)** — 제품 관점: 현재 topic-expertise 축(구현 중) + 이후 personalization/social 축(future). 파이프라인 단계 위의 알고리즘 레이어링.
 
@@ -153,10 +163,12 @@ memory-api `memory/llm`에서 structured-completion spine만 포팅. proxy defau
 grounding은 기본 기호적 매칭이지만, gate가 애매해서 실패하면 **LLM rerank fallback②**(Phase 8A)이
 serving에서 돎 — e3llm-api proxy 경유, keyless Gemini 기본. 재설계된 8B 폴백 사다리의
 **expansion③ + substitution④는 opt-in으로 실렸으나 기본 OFF로 잠듦**(composition root 전용,
-eval 미진입 → baseline.json 바이트 불변, 주입된 report-only 스트라텀에서만 측정). free-form stance
-normalizer(8-3)·rich per-need reason generator(8-5)도 같은 dormant-ship으로 착지(기본 OFF). **agentic
-grounder(8-7, 동음이의 disambiguation)** 도 같은 방식으로 착지 — context 있을 때 primary가 되고 켜지면 위 사다리를
-대체(기본 OFF, online 게이트는 8-4 judge). 아직 안 지은 것은 B2 judge(8-4)·Open-Beta gate 필드(8-6)뿐.
+eval 미진입 → baseline.json 바이트 불변, 주입된 report-only 스트라텀에서만 측정). rich per-need reason
+generator(8-5)도 같은 dormant-ship으로 착지(기본 OFF). **agentic grounder(8-7, 동음이의 disambiguation)** 도
+같은 방식으로 착지 — context 있을 때 primary가 되고 켜지면 위 사다리를 대체(기본 OFF, online 게이트는 8-4
+judge). **for/against의 stance query generator + judge(④a)** 도 dormant-ship(`STANCE_JUDGE_ENABLED` 기본
+OFF) — 꺼지면 for/against는 몰래 열화되지 않고 `stance_judge_disabled`로 **침묵**합니다. 아직 안 지은 것은
+B2 judge(8-4)·Open-Beta gate 필드(8-6)뿐.
 
 **→ 자세히: [08. LLM 레이어](08-llm-layer.md)**
 
@@ -175,8 +187,9 @@ grounder(8-7, 동음이의 disambiguation)** 도 같은 방식으로 착지 — 
 
 ## 8. 앞으로 — 남은 미구현 (8-4/8-6 + Phase 10)
 
-8B 폴백 사다리(rerank②→expansion③→substitution④→silence)·**Phase 9 (eval→CI 게이트)**·자유형 stance
-정규화(8-3)·풍부한 per-need reason(8-5)·**agentic grounder 재설계(8-7, 기본 OFF)**는 이제 구현됨. 남은
+8B 폴백 사다리(rerank②→expansion③→substitution④→silence)·**Phase 9 (eval→CI 게이트)**·풍부한 per-need
+reason(8-5)·**agentic grounder 재설계(8-7, 기본 OFF)**·**query-time stance 판정(④a, 기본 OFF)**는 이제
+구현됨(구 자유형 stance 정규화 8-3은 구현됐다가 요청 모델 재설계와 함께 **제거**). 남은
 미구현은 LLM 품질 슬라이스(8-4 B2 silver judge / 8-6 Open-Beta gate fields) + **Phase 10 (real edge 통합 =
 user-facing Alpha 성립의 마지막 조각)**. 합의된 다음 순서는 **Phase 10 → 8B 잔여 튜닝**(expansion
 threshold/stratum). **8-7의 online 활성화 게이트는 8-4 judge**(context grounding 품질은 결정적 gold로 보증 불가).

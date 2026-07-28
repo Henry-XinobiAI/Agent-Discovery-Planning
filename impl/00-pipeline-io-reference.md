@@ -4,7 +4,7 @@
 [03. normalize+linker](03-normalize-and-linker.md) · [04. retrieval](04-retrieval.md) ·
 [05. gate+ranking](05-gate-and-ranking.md) · [06. serving+decision-log](06-serving-and-decision-log.md)
 
-이 문서는 `RecommendationPipeline.recommend(query)` 한 콜이 거치는 **7단계를 데이터 계약 관점**으로
+이 문서는 `RecommendationPipeline.recommend(query)` 한 콜이 거치는 **8단계를 데이터 계약 관점**으로
 정리한 빠른 참조입니다. 각 단계를 **INPUT → 처리 → OUTPUT** 한 틀로 보여주고, rung으로 나뉜 ① linker는
 rung별로 쪼갭니다. "왜 이렇게 설계했나"의 서술형 deep-dive는 03–06에 있고, 이 문서는 그 **shape/흐름
 요약**입니다(관점이 다름, 중복 아님).
@@ -14,10 +14,10 @@ rung별로 쪼갭니다. "왜 이렇게 설계했나"의 서술형 deep-dive는 
 
 ---
 
-## 한눈에 — 7단계 파이프라인 (`discovery/pipeline.py`)
+## 한눈에 — 8단계 파이프라인 (`discovery/pipeline.py`)
 
 ```
-ⓠ normalize → ① linker → ② retrieval → ③ gate → ④ ranking → ⑤ serving → ⑥ decision log
+ⓠ normalize → ① linker → ② retrieval → ③ gate → [④a stance] → ④b ranking → ⑤ serving → ⑥ decision log
 ```
 
 | # | 단계 | 모듈 | INPUT | OUTPUT |
@@ -26,13 +26,17 @@ rung별로 쪼갭니다. "왜 이렇게 설계했나"의 서술형 deep-dive는 
 | ① | linker | `linker.py` | `topic_text: str` | `GroundingResult` *(또는 `GroundingFailedError` raise)* |
 | ② | retrieval | `retrieval.py` | `grounding.qid: str` | `list[EdgeHit]` |
 | ③ | gate | `gate.py` | `list[EdgeHit]` + `eligibility_context` | `GateResult(survivors, dropped)` |
-| ④ | ranking | `ranking.py` | `survivors`, `NormalizedQuery` | `(ranked, filter_dropped)` |
+| ④a | stance *(for/against만)* | `stance.py` | `survivors`, `NormalizedQuery`, `subject_qid` | `StanceEvaluation(candidates, silence_reason)` |
+| ④b | ranking | `ranking.py` | `survivors`, `NormalizedQuery` | `(ranked, filter_dropped)` |
 | ⑤ | serving | `serving.py` | `ranked`, `grounding`, `reasons` | `Recommendation` |
 | ⑥ | decision log | `decision_log.py` | 전 단계 중간물 | `DecisionLogRecord` + `decision_log_id` stamp |
 
-파이프라인은 provider를 직접 안 들고, 도메인 모듈 5개(linker/retriever/gate/ranker/log)만 조합합니다 →
-`eval/` import 0 (import-isolation 테스트로 강제). provider는 [composition root](07-composition-api-cli.md)가
-각 모듈에 주입.
+파이프라인은 provider를 직접 안 들고, 도메인 모듈 5개(linker/retriever/gate/ranker/log)와 optional
+seam 2개(stance evaluator·reason generator)만 조합합니다 → `eval/` import 0 (import-isolation 테스트로
+강제). provider는 [composition root](07-composition-api-cli.md)가 각 모듈에 주입.
+
+④a만 need에 따라 **조건부**입니다(for/against 아니면 아예 안 돎). 그래서 번호가 ④a/④b로 갈립니다 —
+둘 다 "need를 아는 단계"지만 ④a는 I/O(LLM·검색)를 하고 ④b는 순수 함수입니다.
 
 ### 두 개의 "0" (§4.1)
 
@@ -76,7 +80,7 @@ lean projection으로 투영한다. topic→QID는 **안** 함(그건 ①). 파�
 > `"axis=…; dir=…; text=…"`로 파싱해 `UserStanceRef{axis, dir, text, confidence}`를 만들고, 그 위에 자유
 > 문장을 받는 LLM normalizer(Phase 8-3, `STANCE_NORMALIZER_ENABLED`)를 폴백으로 얹었다. 요청 필드·문법·
 > `UserStanceRef`·neutral 가드·LLM normalizer는 **전부 제거**됐다. 이유: 필요 방향은 이제 유저 stance에서
-> 상대적으로 파생되지 않고 **`need_type`이 절대적으로 정하며**(④), 후보의 입장은 edge에 관측된 stance가
+> 상대적으로 파생되지 않고 **`need_type`이 절대적으로 정하며**(④b), 후보의 입장은 edge에 관측된 stance가
 > 아니라 **query-time judge**가 정하기 때문이다. 남은 유저 입력은 판단 대상 주장 하나뿐이다.
 
 ### OUTPUT — `NormalizedQuery` (`StrictBaseModel`, 파이프라인 입력 · `structs/recommend.py:92`)
@@ -224,7 +228,7 @@ rerank·expansion의 **모든 비채택 경로**는 침묵 전에 `_substitute_o
    `drop_reason` 달아 `dropped`로(로그용), **persona 미fetch**.
 3. **persona (optional 신호)**: survivor에만 `persona.get_prior` concurrent 바인딩.
 4. need-specific 필터(`stance_unevaluated`/`wrong_stance`/`low_stance_confidence`)는 **여기 아님** —
-   ④ Ranker 몫(R2).
+   ④b Ranker 몫(R2).
 
 ### OUTPUT
 `GateResult(survivors, dropped)` (`gate.py:32`) — 둘 다 `list[Candidate]`. survivor는 `drop_reason=None` +
@@ -233,7 +237,70 @@ persona 바인딩(랭킹 준비 완료), dropped는 `drop_reason` 설정(랭킹 
 
 ---
 
-## ④ ranking (`discovery/ranking.py`) — 순서 확정 (scalar score 없음)
+## ④a stance (`discovery/stance.py`) — for/against 전용, 랭킹 **전에** 입장 판정
+
+edge에 관측된 stance를 미러링하는 게 아니라 **요청 시점에** 각 후보의 입장을 판정해 넣는다. 이 단계가
+없으면(dormant) for/against는 조용히 열화되지 않고 **명시적으로 침묵**한다.
+
+### INPUT
+`survivors: list[Candidate]`, `NormalizedQuery`(= `proposition` 보유), `subject_qid`(= `grounding.qid`).
+
+### 처리 (`pipeline.py:107` → `StanceEvaluator.evaluate()`)
+
+0. **hard-K 선별** — evaluator가 붙어 있을 때만 `Ranker.stance_shortlist(limit=STANCE_SHORTLIST_LIMIT=20)`.
+   stance-무관 competence 키(`_depth_key`)로 상위 K만 남기고 나머지는 `stance_shortlist_limit`으로 drop
+   로그. **검색·judge 비용을 evidence 검색 이전에 묶는 유일한 지점.** 결정적 hard-K 근사이지 최종 stance
+   랭킹의 무손실 prefix가 아니다(`_stance_key`는 competence 3키 *뒤에* `stance_confidence`를 넣으므로,
+   경계 동점에서 잘린 후보가 나중에 더 높은 confidence를 받을 수 있다 — 알려진 trade-off).
+   dormant면 이 단계를 **건너뛴다**(judge가 없는데 K drop을 로그하면 거짓말).
+1. **symmetric query 생성** (LLM 1콜) — `StanceQueryGenerator.generate(topic, proposition)` →
+   `StanceQueries{neutral, support, oppose}`. 요청한 쪽만 검색하면 그 owner의 **반대 주장을 놓쳐**
+   오추천하므로 세 방향을 항상 함께 만든다. 한 방향이라도 비면 편향된 확장이라 `None` 강등 →
+   `stance_query_generation_failed`(**검색 미발행**).
+2. **owner-scoped 검색 — provider 호출 1회** — `StanceEvidenceSearchProvider.search()`를 정확히 한 번.
+   distinct phrase 전부를 하나의 ANY-match로, `subject_qid` 스코프 + eligibility 통과한 owner만
+   (global discovery 없음), owner별 `STANCE_SEARCH_PER_OWNER_LIMIT`(10)까지.
+   응답은 `_admit`이 재검증: owner 일치 · shortlist 소속 · `subject_qid` 일치 · **`attribution=OWNER`**
+   (노출≠주장, 서버 필터가 회귀해도 방어) · `statement_id` dedupe.
+   > **provider 호출 1회 ≠ HTTP POST 1회.** 엔드포인트가 `owner_ids`를 20명으로 캡하므로 HTTP 어댑터가
+   > owner chunk별로 **`ceil(K/20)`개의 POST**로 fan-out합니다(`STANCE_SEARCH_MAX_CONCURRENCY`=5로 동시성
+   > 제한, chunk 하나라도 실패하면 부분 recall이 verdict를 뒤집을 수 있으므로 **전체 실패**). 기본
+   > K=20에서는 POST도 1개지만 `STANCE_SHORTLIST_LIMIT`을 올리면 늘어납니다.
+3. **owner별 judge** (후보당 LLM 1콜, **순차 루프**) — `StanceJudge.judge(proposition, statements)` →
+   `StanceVerdict{verdict, evidence_stmt_ids, graded_confidence}`. verdict는 **절대값**
+   (supports/opposes/insufficient) — 요청 방향은 안 넘긴다. positional verdict는 **실제로 보여준**
+   statement id를 최소 1개 인용해야 하고(firsthand-honesty), 아니면 `insufficient`로 강등.
+4. **후보 주입** — supports/opposes만 `stance_proposition`/`stance_position`/`stance_confidence`에 기록.
+   `insufficient`와 judge `None`(엔진 실패)은 필드를 **안 건드린다** → ④b에서 `stance_unevaluated` drop.
+   evaluator는 `drop_reason`을 직접 안 단다(그건 ranker 몫).
+
+### OUTPUT
+`StanceEvaluation(candidates, silence_reason)` (`structs/stance.py`). `silence_reason`이 있으면 ⑤가
+payload를 **강제로 비운다**. 파이프라인의 `_evaluate_stance`(`pipeline.py:158`)가 evaluator 부재/예외를
+coarse 사유로 매핑 — 이 경우 후보는 **빈 리스트**가 되어 ④b에 도달하지 않는다.
+
+| silence 사유 (`StanceSilenceReason`, 6값) | 누가 정하나 | 언제 |
+|---|---|---|
+| `stance_judge_disabled` | 파이프라인 | evaluator 미주입 (dormant 기본) |
+| `stance_judge_unavailable` | 파이프라인 | 의존성 미배선 → `UpstreamUnavailableError` 전파 (설정 갭) |
+| `stance_judge_failed` | 파이프라인 / evaluator | evaluator 전면 예외, 또는 usable 0 + judge 에러 ≥1 |
+| `stance_query_generation_failed` | evaluator | 1단계 생성이 실패·비대칭 (검색 미발행) |
+| `stance_evidence_search_failed` | evaluator | 배선된 검색이 요청 시점에 실패 |
+| `all_candidates_insufficient` | evaluator | judge가 **깨끗하게** 돌고 전원 insufficient (에러 0) |
+
+순서는 엄격한 파이프라인이라 **앞 단계 사유가 뒤 단계에 덮이지 않는다**(query-gen 실패는 검색 전에
+short-circuit, 검색 실패는 judge 전에 short-circuit). 후보가 애초에 0이면 여기서 사유를 만들지 않고
+⑤의 일반 `no_candidates`로 보낸다 — judge가 안 돈 걸 `all_candidates_insufficient`라 하면 거짓말이므로.
+
+> **아직 소비자 없는 설정 2개:** `STANCE_MAX_SEARCH_CALLS`(=2)와 `STANCE_INLINE_PREVIEW_LIMIT`(=10,
+> Tier-1 inline preview)은 스펙상 자리를 잡아뒀지만 현재 evaluator는 **provider 검색을 정확히 1회**만
+> 한다(escalation 미구현). 주의: `STANCE_MAX_SEARCH_CALLS`는 향후 pre/post **escalation leg 수**의 상한이지
+> 위 chunk POST 수의 상한이 **아니다**(그건 `ceil(K/20)`로 정해짐). `STANCE_SEARCH_MAX_CONCURRENCY`(=5)만
+> HTTP 어댑터가 실제로 사용한다.
+
+---
+
+## ④b ranking (`discovery/ranking.py`) — 순서 확정 (scalar score 없음)
 
 Alpha 랭킹은 **ordering contract**: need별 사전식 정렬 키를 **정수 rank map**으로 비교(StrEnum 문자열 정렬은
 `medium>low>high` 버그라 정수 필수). provider-free·deterministic·**sync**. (단 Candidate를 in-place annotate
@@ -336,10 +403,12 @@ provider_versions/contract_version/sink 전부 composition root 주입(결정성
 | `RETRIEVAL_MIN_DIRECT_EDGES` | 3 | ② 이보다 적으면 이웃 확장 |
 | `RETRIEVAL_MAX_NEIGHBORS` | 50 | ② 이웃 fan-out cap |
 | `MATURITY_MIN` | 0.45 | ③ rankable-eligibility floor (medium cutoff 0.50 **아래** — gate와 ordering 분리) |
-| `STANCE_CONFIDENCE_MIN` (τ) | 0.60 | ④ for/against 신뢰 guard |
-| `MATURITY_HIGH/MEDIUM_CUTOFF` | 0.75 / 0.50 | ④ maturity band 절단 |
-| `MATURITY_BAND_RANK` | HIGH 2 / MED 1 / LOW 0 | ④ band 정수 rank |
-| `EXPERIENCE_SOURCE_RANK` | firsthand 2 / secondhand 1 / None 0 | ④ experience 정수 rank |
+| `STANCE_SHORTLIST_LIMIT` (K) | 20 | ④a 검색·judge 이전 hard-K |
+| `STANCE_SEARCH_PER_OWNER_LIMIT` | 10 | ④a owner별 statement 상한 (cost cap) |
+| `STANCE_CONFIDENCE_MIN` (τ) | 0.60 | ④b for/against 신뢰 guard |
+| `MATURITY_HIGH/MEDIUM_CUTOFF` | 0.75 / 0.50 | ④b maturity band 절단 |
+| `MATURITY_BAND_RANK` | HIGH 2 / MED 1 / LOW 0 | ④b band 정수 rank |
+| `EXPERIENCE_SOURCE_RANK` | firsthand 2 / secondhand 1 / None 0 | ④b experience 정수 rank |
 
 ## 부록 B — LLM rung 활성화 & eval 결정성
 
@@ -349,13 +418,16 @@ provider_versions/contract_version/sink 전부 composition root 주입(결정성
 | ① rung ② rerank | (flag 없음) | **항상 주입** (8A live; agent ON이면 은퇴) | 미주입 (`reranker=None`) |
 | ① rung ③ expansion | `EXPANSION_ENABLED` | 기본 OFF | 미주입 |
 | ① rung ④ substitution | `SUBSTITUTION_ENABLED` | 기본 OFF | 미주입 |
+| ④a stance query-gen + judge | `STANCE_JUDGE_ENABLED` | 기본 OFF (침묵) | `EdgeMirrorStanceEvaluator` 주입 (LLM 없음) |
 | ⑤ rich reason | `REASON_GENERATOR_ENABLED` | 기본 OFF | 미주입 |
 
 모든 LLM slice는 **결정적 gold 게이트에 절대 주입되지 않음** → `baseline.json` byte-identical. 품질은 주입·
-비결정 **report-only stratum**에서만 측정.
+비결정 **report-only stratum**에서만 측정. ④a만 예외적으로 eval에 *무언가*를 주입하지만, 그건 LLM이 아니라
+edge를 미러링하는 결정적 stand-in이라 결정성이 유지된다(그게 없으면 코퍼스의 for/against 시나리오가 전부
+침묵해 gold가 무의미해진다).
 
 ---
 
 **요점:** `Query`가 ⓠ에서 정규화되고, ①에서 QID로 grounding(정밀 코어 → 폴백 4-rung), ②에서 후보 edge를
-모으고, ③에서 Candidate로 완성·need-무관 탈락, ④에서 need별 순서·stance 필터, ⑤에서 top-N payload·침묵,
-⑥에서 전 과정을 감사 row로 굳힌다. 서술형 "왜"는 [03](03-normalize-and-linker.md)–[06](06-serving-and-decision-log.md).
+모으고, ③에서 Candidate로 완성·need-무관 탈락, ④a에서 (for/against면) query-time 입장을 판정, ④b에서
+need별 순서·stance 필터, ⑤에서 top-N payload·침묵, ⑥에서 전 과정을 감사 row로 굳힌다. 서술형 "왜"는 [03](03-normalize-and-linker.md)–[06](06-serving-and-decision-log.md).
