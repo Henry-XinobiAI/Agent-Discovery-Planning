@@ -209,8 +209,13 @@ agentic grounder**로 확정 — 구 §8-7 "C-lite backend 검색 → linker 채
 
 ## 부록: 용어 규범 (glossary lock)
 
-문서·코드·메모리가 다시 어긋나지 않도록 grounding/linker/response/log/CI 전반의 canonical 용어를
-여기 한곳에 고정한다. 다른 impl/ 문서(예: [10. eval](10-eval-metrics-and-gates.md))는 이 glossary를 따른다.
+문서·코드·메모리가 다시 어긋나지 않도록 grounding/linker/stance/edge/response/log/CI 전반의 canonical
+용어를 여기 한곳에 고정한다. 다른 impl/ 문서(예: [10. eval](10-eval-metrics-and-gates.md))는 이 glossary를
+따른다.
+
+> **적용 범위:** 아래 금지 항목은 **현행 계약을 서술할 때** 금지다. **이력 인용은 허용**하되 폐기·대체
+> 사실을 함께 표시한다(취소선 + 사유, "구 …는 폐기", "당시 후보 매핑" 같은 superseded 표기). 폐기 기록을
+> 지우면 "왜 코드에 없지?"로 같은 조사를 반복하게 되므로, **지우지 말고 표시하라**는 쪽이 규범이다.
 
 - **canonical grounding 사다리:** `symbolic → rerank → expansion → best_effort_substitution → silence`
   (정밀 코어 → 폴백 rung ②③④ → 침묵). enum 원본은 `discovery/structs/grounding.py`의
@@ -224,10 +229,45 @@ agentic grounder**로 확정 — 구 §8-7 "C-lite backend 검색 → linker 채
 - **"Phase 8B 완료"의 정확한 의미:** fallback ladder *mechanics* implemented · rerank **live**(8A) ·
   expansion·substitution **shipped dormant**(default OFF) · memory-api relevance fix 후 **tuning pending**.
   "8B 완료"만 쓰면 오해되므로 위 4단으로 표기한다.
+- **은퇴한 stance 어휘 → 현재 대체어** (stance 재설계로 은퇴·대체 — 앞의 넷은 요청 모델 변경, 뒤의 둘은
+  ranking/log 계약 변경):
+
+  | 은퇴 | 현재 |
+  |---|---|
+  | `user_stance_ref` (요청 필드) | `proposition` — 판단 대상 주장 문장 |
+  | 문법 `"axis=…; dir=…; text=…"` | 문법 없음 (자유 문장, strip만) |
+  | `UserStanceRef{axis, dir, text, confidence}` | 없음 — 후보 쪽 `StancePosition` |
+  | drop 사유 `off_axis` | `stance_unevaluated` |
+  | "stance normalizer" (Phase 8-3) | 없음 — LLM은 ⓠ가 아니라 ④a(query generator + judge) |
+  | `need_filter="same_axis_required_stance"` | `"need_type_required_position"` |
+
+- **stance 타입 셋은 서로 다른 것이다** (섞으면 계약이 무너진다 · 상세 = [01](01-data-contracts.md)):
+  `Stance`(edge의 memory 소유 관측값) / `StanceVerdictLabel`(judge 출력, `insufficient` 포함) /
+  `StancePosition`(`Candidate`·`StanceView`가 나르는 **two-value 절대 입장**; `insufficient`는 저장되지
+  않는다 — 그래서 judge 출력과 저장 타입이 **일부러 다른 enum**이다). `stance_position`을 가졌다고 서빙되는
+  것은 아니다: 반대 입장(`wrong_stance`)이나 낮은 confidence로 탈락한 후보도 이 값을 들고 로그에 남는다.
+- **"axis 폐기"의 정확한 범위:** 폐기된 것은 **production Ranker의 axis 비교 단계와 `off_axis` drop 사유**
+  뿐이다. `stance_axis` 필드는 frozen edge 계약과 eval 코퍼스에 **남아 있고** 결정적 eval mirror가 쓴다.
+  "axis 개념 자체가 폐기됐다"는 금지 ([05](05-gate-and-ranking.md)).
+- **"real edge 통합에 파이프라인 변경 없음"의 정확한 범위:** 계약과 owner-space routing이 **먼저 정렬된
+  뒤** lifespan turn-on 배선이 discovery 파이프라인 변경 없이 끝났다는 뜻이다. 선행 정렬 자체는 파이프라인을
+  바꿨다(`memory_owner_id` · `_evidence_key`). "real edge 통합 전체가 무변경"은 금지
+  ([02](02-provider-boundary.md)).
+- **provider 호출 1회 ≠ HTTP 요청 1회:** ④a evaluator는 `StanceEvidenceSearchProvider.search()`를 정확히
+  한 번 부르지만, HTTP 어댑터는 owner chunk별로 여러 POST를 낸다. 비용·부하를 말할 때 둘을 구분한다
+  ([00 ④a 절](00-pipeline-io-reference.md)).
+- **"Phase 10 완료"의 정확한 의미:** edge **projection·composition 배선**은 완료 · `REAL_EDGE_ENABLED`
+  기본 OFF **dormant** · production stage는 startup 거부 · 남은 것은 **promotion 게이트 4개이며 넷 다
+  구현·테스트 또는 upstream 계약 착지를 요구**한다(B1도 bourbon-api에 namespace/vector pin 테스트와
+  immutable 선언을 착지시키는 작업이다). "Phase 10 완료"만 쓰면 오해되므로 위 4단으로 표기한다
+  ([11](11-forward-roadmap.md)).
 - **금지/stale 표현:** `best_effort_proxy`, `proxy_reason`, `proxy_anchor_qid`, top-level `grounding_mode`,
   "full listwise replacement"(구 8B 원안, 폐기됨), "expansion이 QID를 고른다"(expansion은 검색어만 제안),
   "CI가 품질을 증명한다"(CI = 회귀 tripwire). gate/ratchet 문맥의 "teeth"도 → regression signal / coverage로.
   단 substrate-hardness 문맥의 **"real anchor = teeth"** 는 별개 개념으로 유지한다.
+  여기에 위 stance/edge 항목이 더해진다: 은퇴 어휘 6개 · "axis 개념 폐기" · "real edge 무변경" ·
+  "검색 1콜"(HTTP 수와 혼동) · `/personal/groundings/{qid}`와 `GroundingMatch`(**존재한 적 없는** 라우트/
+  타입 — 실제는 `GET /{prefix}/personal/entities/{qid}`에 `owner_id` 생략).
 
 ---
 

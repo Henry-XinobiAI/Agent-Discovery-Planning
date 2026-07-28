@@ -183,9 +183,10 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
 > production promotion gate를 닫는 구현·계약 작업입니다.**
 >
 > contract slice와 turn-on Step 1이 머지돼(`REAL_EDGE_ENABLED`, 기본 OFF) **ON이면 dev/진단 stage에서
-> 실제로 부팅**합니다. 다만 아래 게이트 넷 중 셋은 **코드 작업을 포함**합니다(self-exclusion 구현,
-> phantom-agent 검증·정책 구현, R1–R6 구현·검증) — "코드가 끝났다"는 건 **edge projection·배선에
-> 한정**된 이야기입니다. 구현 결과는 [02 provider 경계](02-provider-boundary.md)(세 겹 구조)와
+> 실제로 부팅**합니다. 다만 아래 게이트는 **넷 다 구현·테스트 또는 upstream 계약 착지를 요구**합니다
+> (self-exclusion 구현 · phantom-agent 검증·정책 구현 · R1–R6 구현·검증 · B1도 bourbon-api에
+> namespace/vector pin 테스트와 immutable 선언을 착지시키는 작업) — "코드가 끝났다"는 건
+> **edge projection·배선에 한정**된 이야기입니다. 구현 결과는 [02 provider 경계](02-provider-boundary.md)(세 겹 구조)와
 > [07 composition](07-composition-api-cli.md)(Guard 0/1 · lifespan client 3개 · production 거부 가드)에
 > 있습니다. 아래 §"선행" 절은 그 협의가 **어떻게 진행됐는지의 이력**으로 읽으세요 — 일부 전제는 2026-07-24
 > 소스 감사에서 뒤집혔고, 정정은 각 항목에 표시했습니다.
@@ -247,7 +248,7 @@ Roadmap §10 Alpha 단계 2(agent-topic edge projection)·4(maturity gate)에 �
 
   | AgentTopicEdge | memory-api 소스 (당시 후보) | 성격 |
   |---|---|---|
-  | cross-owner 후보 검색 | ~~`/personal/groundings/{qid}`~~ → `GET /personal/entities/{qid}`(owner_id 생략) | ✅ 이미 있음 (경로 정정) |
+  | cross-owner 후보 검색 | ~~`/personal/groundings/{qid}`~~ → `GET /{prefix}/personal/entities/{qid}`(owner_id 생략) | ✅ 이미 있음 (경로 정정) |
   | agent identity | `owner_id`→`personal_agent_id` 파생 (bourbon-api) | ✅ 갭 아님 |
   | maturity | `depth`(+`breadth`+`consistency` 조합) | ⚠️ 입력신호, 직접 대체 아님 |
   | evidence_strength | `support_ids` 수 + statement confidence + `consistency`/`frequency` | ⚠️ 조합 |

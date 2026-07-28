@@ -49,7 +49,7 @@ class Query(ApiModel):
 |---|---|---|---|
 | `Stance` | `structs/edge.py` | for/against/neutral | **memory 소유** edge 필드(`observed_stance`)의 관측 stance. 파이프라인 랭킹은 **안 읽음** |
 | `StanceVerdictLabel` | `structs/stance.py` | supports/opposes/**insufficient** | judge 출력. `insufficient`는 drop이지 저장되는 입장이 아님 |
-| `StancePosition` | `structs/recommend.py:60` | supports/opposes | 살아남은 후보가 나르는 **유일한** 입장. `Candidate`·`StanceView`·`StanceLog`가 이걸 씀 |
+| `StancePosition` | `structs/recommend.py:60` | supports/opposes | `Candidate`·`StanceView`·`StanceLog`가 나르는 **two-value 절대 입장** (`insufficient`는 저장 안 됨). 값이 있다고 서빙되는 건 아님 — `wrong_stance`/저confidence로 탈락한 후보도 들고 있음 |
 
 `insufficient`가 서빙 후보에 새지 않도록 judge 출력과 저장 타입을 **일부러 다른 enum**으로 뒀습니다.
 

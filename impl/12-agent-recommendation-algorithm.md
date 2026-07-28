@@ -83,15 +83,16 @@ Phase 10의 핵심이었고 **projection과 composition wiring은 끝났다**. m
 
 | 당시 작업 | 결말 |
 |---|---|
-| `/personal/groundings/{qid}` 기반 cross-owner 후보 수집 | **경로 정정 후 완료** — 그 라우트는 존재하지 않았고, `GET /personal/entities/{qid}`에서 `owner_id`를 생략하는 방식으로 구현 |
+| `/personal/groundings/{qid}` 기반 cross-owner 후보 수집 | **경로 정정 후 완료** — 그 라우트는 존재하지 않았고, `GET /{prefix}/personal/entities/{qid}`에서 `owner_id`를 생략하는 방식으로 구현 |
 | `Competence` → maturity/evidence/freshness 변환 | **완료** — `discovery/edge_translate.py`(순수 함수). experience signal은 **미투영**(`hands_on_ratio`만으로는 firsthand/secondhand를 못 가름 → `None`) |
 | `support_ids` → `evidence_refs` 노출 계약 | **완료** — `"statement:<uuid>"`로 투영. 별도 계약이 필요 없었음 |
 | eligibility/privacy/safety/discoverable 계약 확정 | **부분** — 잠정 allow-all이 배선됐고 real 신호는 Open Beta |
 | ~~stance axis/dir/confidence를 어디서 만들지 확정~~ | **질문 자체가 폐기** — 폐기된 것은 *production 추천이 edge stance를 sourcing/ranking하는 모델*이고, stance는 **query-time judge 산출**이 됨(④a). `observed_stance`/`stance_axis`/`stance_confidence` 필드 자체는 frozen edge에 남아 결정적 eval mirror가 사용 |
 
 남은 것은 **추가 배선이 아니라 production promotion 게이트 4개를 닫는 작업**이다(self-exclusion ·
-producer-side derivation pin · phantom agent 정책 · memory-api R1–R6). 그중 셋은 **새 코드**를 포함한다 —
-게이트 = 문서 작업이 아니다. [11 로드맵 Phase 10](11-forward-roadmap.md) 상태 박스 참조.
+producer-side derivation pin · phantom agent 정책 · memory-api R1–R6). **넷 다 구현·테스트 또는 upstream
+계약 착지를 요구한다** — B1도 bourbon-api에 pin 테스트와 immutable 선언을 착지시키는 작업이지 문서 작업이
+아니다. [11 로드맵 Phase 10](11-forward-roadmap.md) 상태 박스 참조.
 
 ### 3.2 agentic context-aware grounding
 
