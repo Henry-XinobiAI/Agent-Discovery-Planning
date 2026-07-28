@@ -98,7 +98,7 @@ DecisionLog(
 ```python
 row = DecisionLogRecord(
     log_id=id_factory(), ts=clock(),
-    query=_logged_query(query, normalized),          # raw + normalized stance 둘 다
+    query=_logged_query(normalized),                 # topic/need/lang/limit + proposition (audit only)
     grounding=_logged_grounding(grounding),          # considered trace, fallback_used, trajectory(agentic)
     candidate_pool=[_pool_entry(c) for c in candidate_pool],  # survivors + gate.dropped
     dropped=[_drop_entry(c) for c in dropped],       # gate.dropped + filter_dropped 병합
@@ -114,8 +114,10 @@ sink.write(row)
 - **`fallback_used=grounding.fallback_used`** (Phase 8A) — rerank fallback이 grounding을 구제하면
   True로 기록되어 serving 경로에선 live. eval은 reranker를 주입하지 않아(offline default) 항상
   False → [ambiguous_fallback_rate](10-eval-metrics-and-gates.md)가 eval에서 0.0인 이유.
-- **`need_filter="same_axis_required_stance"` 상수** — 방향은 각 entry의 `stance.dir`에 있음.
-  그래서 "against"가 절대 stance 라벨로 오독되지 않고 "유저의 반대 편"으로 읽힘.
+- **`need_filter="need_type_required_position"` 상수** — 필터의 근거가 need_type이라는 걸 라벨이
+  말해줍니다. 각 entry의 실제 입장은 `stance.position`(supports/opposes, 주장에 대한 **절대** 값)에
+  따로 있으므로 "against"라는 need 이름이 stance 라벨로 오독될 여지가 없습니다.
+  (구 라벨 `same_axis_required_stance`는 Ranker의 axis 비교·상대 방향 규칙과 함께 폐기.)
 - **`ConsideredEntity.confidence`** (score 아님) — 시스템 전역 "no scalar score" 규칙과의 혼동
   방지. entity-linking confidence는 별개 개념.
 - **`feature_breakdown`은 raw + derived band 항상** — Post-OB 튜닝이 band cutoff를 refit 가능.
@@ -133,11 +135,11 @@ sink.write(row)
 
 ```
 log_id, ts, contract_version
-query (LoggedQuery)          — topic, need, raw+normalized stance
+query (LoggedQuery)          — topic, need, lang, limit, proposition (for/against canonical proposition)
 grounding (LoggedGrounding)  — resolved_qid, method, fallback_used, considered[], trajectory (agentic 채택 시)
 candidate_pool [PoolEntry]   — agent_id, anchor_id, via, via_qid
 dropped [DropEntry]          — agent_id, reason
-ranked [RankedEntry]         — rank, feature_breakdown, ordering_keys, stance (no score!)
+ranked [RankedEntry]         — rank, feature_breakdown, ordering_keys, stance (StanceLog{proposition, position}; no score!)
 reasons [LoggedReason]
 serving (LoggedServing)      — silent, reason, returned
 provider_versions            — mock↔real 비교용 provenance

@@ -12,61 +12,43 @@
 
 `Query` → `NormalizedQuery`. 입력 정규화만 하고, 주제→QID는 linker의 일입니다 (관심사 분리).
 
-### `user_stance_ref` 문법 (Alpha는 보수적)
-```
-axis=<text>; dir=<for|against|neutral>; text=<optional>
-```
-- `axis`, `dir` 필수, `text` 선택.
-- `key=value`를 `partition("=")`로 파싱 (첫 `=`만 → `text`에 `=` 포함 가능).
-- 알 수 없는 키 / 중복 키 / 빈 axis(min_length) → `InvalidNeedError`.
+### `proposition` — 유일한 stance 입력
 
-### need별 처리 (핵심 규칙)
+for/against 요청은 **판단 대상 주장 문장** 하나를 싣습니다. 파싱할 문법도, 채울 하위 필드도 없습니다.
+
 ```python
-if query.need_type in (FOR, AGAINST):
-    if query.user_stance_ref is None:  raise InvalidNeedError   # 필수
-    user_stance = _parse_user_stance_ref(...)
-    if user_stance.dir is Stance.NEUTRAL:  raise InvalidNeedError  # neutral은 반대가 없음
-# depth/experience/coverage → user_stance_ref 무시, user_stance=None
+if query.need_type in STANCE_NEEDS:                       # {for, against}
+    if query.proposition is None or not query.proposition.strip():
+        raise InvalidNeedError                            # 필수 · non-blank
+    proposition = query.proposition.strip()
+# depth/experience/coverage → proposition 무시, None으로 통과
 ```
 
-- **for/against는 상대적 need**라서 유저의 기준 stance가 필수. neutral은 "반대편"이 없으므로
-  방향성 stance를 요구 → **for/against + neutral = `InvalidNeedError`**.
-- 다른 need에 stray `user_stance_ref`가 와도 무시 (에러 아님). 원시 `Query`에는 남아서 로그에
-  기록되지만 `NormalizedQuery`로는 절대 넘어가지 않음.
+- **자유 문장.** `"원격근무는 생산성을 높인다"` 처럼 옵니다. discovery는 이걸 **파싱하거나 의미를
+  재작성하지 않고**, 양끝 공백만 제거한 canonical proposition을 judge 프롬프트의 명제·응답
+  `StanceView.proposition`·로그에 **동일하게** 흘립니다. 검증은 존재·blank 두 가지뿐 — "parser지
+  policy가 아니다"를 극단까지 밀어붙인 형태.
+- **방향은 요청이 아니라 need가 정합니다.** `for`는 그 주장을 **지지**하는 에이전트, `against`는
+  **반대**하는 에이전트. 유저의 기준 stance를 받아 상대적으로 계산하던 구조가 사라졌으므로 neutral
+  같은 미정의 방향도 없습니다.
+- 다른 need에 stray `proposition`이 와도 무시(에러 아님)하고 `NormalizedQuery.proposition=None`.
 
-### 자유형 stance 정규화 (Phase 8-3) — **구현 완료 · 기본 OFF**
+### `normalize_query`는 sync 하나뿐
 
-위 문법은 **canonical(결정적) 경로**로 유지되고, 그 위에 자유 문장(`"암호화폐 규제에 반대하는 입장"`)을
-받는 **LLM normalizer 폴백**이 얹혀 있습니다. rerank(rung ②)와 같은 dormant-ships 계약 —
-`NormalizeSettings.STANCE_NORMALIZER_ENABLED`(기본 `False`), composition root가 ON일 때만
-`LLMStanceNormalizer` 주입, 꺼진 배포 동작은 오늘과 byte-identical.
+문법이 없어졌으므로 LLM 폴백이 붙을 자리도 없습니다. `normalize_query()`가 **유일한 정본이고 sync**입니다
+(`eval/corpus/structs.py`의 sync `@model_validator`가 이걸 부르므로 async화 불가). `normalize_query_async`
+sibling은 **존재하지 않습니다**.
 
-- **sync 코어 + async sibling.** `normalize_query`는 **sync·문법 전용으로 그대로** 두고
-  (`eval/corpus/structs.py`의 sync `@model_validator`가 부르므로 통째 async화 불가), 새
-  `async normalize_query_async(query, *, stance_normalizer=None)`가 LLM 폴백을 얹는다. 파이프라인만
-  이 async sibling을 `await`(blast radius 1줄).
-- **문법 우선 → 실패 시에만 LLM.** async 경로는 `need ∈ {for, against}` ∧ `user_stance_ref 존재` ∧
-  `normalizer 주입` **세 조건을 parse 전에** 게이트하고, 그 분기에서만 `_parse_user_stance_ref`를
-  **직접** 호출한다. 문법 파싱이 `InvalidNeedError`로 실패할 때만 `await normalizer.normalize(raw)`;
-  `None`(proxy 오류/malformed/사용 불가)이면 **다시 `InvalidNeedError`**(자유형 실패는 문법 실패보다
-  무르지 않다). 나머지(ref 없음·non-stance·normalizer 없음·구조 오류)는 전부 sync `normalize_query`에
-  위임 → LLM 미접촉. **broad try/except가 아니라 명시 분기**라서, 문법이 성공적으로 파싱한
-  `dir=neutral`(의미적 거부)은 LLM으로 **되살아나지 않는다**(회귀 가드로 고정).
-- **neutral 가드는 양 경로 공유.** 공유 helper가 resolved `UserStanceRef`에 한 번 적용 → LLM이
-  neutral을 내도 문법 `dir=neutral`과 **동일하게** 거부.
-- **`confidence`는 관측값이지 제어값이 아니다.** LLM 경로가 `UserStanceRef.confidence`를 채우고(문법
-  경로는 `None`=결정적 파스), 이 값은 **decision log(audit)에만** 흐른다 — `/recommend` 응답
-  (`StanceView`는 `{axis, dir}` 유지)·gate·ranking 어디에도 노출/입력되지 않는다. 저신뢰 파스를
-  거부하지 않으며, 거부는 오직 axis/dir 추출 실패에서만 일어난다. "parser지 policy가 아니다."
-- **주입 안전 = 구조적 봉쇄** (expansion/rerank과 동형): 고정 system prompt + 원문 stance 텍스트를
-  user turn에 JSON **data**로 실음 + strict 스키마(`extra="forbid"`) → 유도된 LLM도 `{axis, dir, text,
-  confidence}`만 낼 수 있고 지시문·QID를 낼 수 없다. `StanceNormalizer` **Protocol은 소비자
-  (`normalize.py`)가 소유**하고 concrete `LLMStanceNormalizer`(`stance_normalize.py`)는 그것을
-  import하지 않는 duck-type — linker의 `Reranker`/`Expander`/`Substituter` 관례와 동일.
+> **폐기 기록 (Phase 8-3).** 한때 반구조 문법 `"axis=…; dir=…; text=…"` → `UserStanceRef{axis, dir, text,
+> confidence}` 파서와, 그 파싱이 실패할 때만 도는 LLM stance normalizer(`LLMStanceNormalizer`,
+> `stance_normalize.py`, `NormalizeSettings.STANCE_NORMALIZER_ENABLED`)가 있었습니다. 구현·머지까지 갔으나
+> stance 재설계에서 요청 모델 자체가 절대 verdict 모델로 바뀌며 **문법·타입·normalizer·플래그·async
+> sibling이 전부 제거**됐습니다. 정규화할 자유형 stance가 더는 없기 때문입니다 — 남은 자유 텍스트인
+> proposition은 *해석* 대상이 아니라 judge에게 넘길 *명제*입니다.
 
 ### 대화 맥락 투영 (Phase 8-7) — agentic grounder 입력
 
-normalize는 stance 파싱 외에 **grounding용 대화 맥락**도 투영합니다. `Query.context_messages`(최근 대화 턴)를
+normalize는 proposition 검증 외에 **grounding용 대화 맥락**도 투영합니다. `Query.context_messages`(최근 대화 턴)를
 `NormalizedQuery.grounding_context`(lean projection)로 옮기되 **tri-state**로 표현 — 이게 linker의 D1 라우팅
 (아래 "agentic grounder" 절)을 결정합니다.
 

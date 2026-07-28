@@ -50,8 +50,8 @@ class GateResult:
     survivors: list[Candidate]  # drop_reason None, Ranker로
     dropped: list[Candidate]    # drop_reason 설정, 로그에만
 ```
-off_axis/wrong_stance류는 **여기가 아니라 Ranker**의 need-filter (R2). dropped도 `Candidate`로
-반환해서 decision log가 기록.
+`stance_unevaluated`/`wrong_stance`류는 **여기가 아니라 Ranker**의 need-filter (R2). dropped도
+`Candidate`로 반환해서 decision log가 기록.
 
 ### 설정 (`config.py: RankingSettings`)
 ```python
@@ -97,18 +97,35 @@ Ranker는 각 `Candidate`를 **in-place로 annotate**(`features`/`ordering_keys`
 해서 decision log로 상태를 나릅니다. 즉 referentially pure가 아님 — 같은 Candidate 객체를 여러
 rank 호출에 재사용하면 안 됨.
 
-### for/against = 상대적 need (가장 미묘)
+### for/against = 절대적 need (가장 미묘)
 ```python
-required_dir = stance.dir if need == FOR else _OPPOSITE_STANCE[stance.dir]
+_REQUIRED_POSITION = {NeedType.FOR: StancePosition.SUPPORTS, NeedType.AGAINST: StancePosition.OPPOSES}
+required = _REQUIRED_POSITION[query.need_type]
 ```
-- **`NeedType.FOR → Stance.FOR` 직접 매핑 금지.** 필요 방향은 유저 stance에서 파생: `for`는 같은
-  편, `against`는 반대 편.
+- **need_type이 요구 position을 직접 정합니다.** 유저 stance를 기준점으로 잡고 `for`=같은 편 /
+  `against`=반대 편으로 파생하던 상대 규칙(`_OPPOSITE_STANCE`)은 폐기됐습니다. 질문이 "유저와 같은
+  편인가"에서 "이 주장을 지지하는가"로 바뀌었기 때문입니다.
+- **랭커는 edge를 읽지 않습니다.** 비교 대상은 오직 `Candidate.stance_position` — ④a stance 단계에서
+  judge가 채운 **query-time** 값. `edge.observed_stance`는 memory 소유 필드로 남아 있지만 랭킹 입력이
+  아닙니다.
 - drop 우선순위 (`_stance_drop_reason`):
-  1. `off_axis` — stance_axis/observed_stance 없음, 또는 axis 불일치 (casefold+strip).
-  2. `wrong_stance` — 관측 stance ≠ required_dir.
-  3. `low_stance_confidence` — confidence < τ(`STANCE_CONFIDENCE_MIN=0.60`). None은 low 취급.
+  1. `stance_unevaluated` — **Ranker까지 도달했는데** `stance_position is None`인 후보. 네 경로가
+     여기로 모입니다: 후보별 judge가 `insufficient`를 냈거나, judge가 `None`(엔진 실패)을 냈거나,
+     평가기가 **처리한** evidence 실패로 후보가 손대지 않은 채 돌아왔거나, eval mirror의
+     proposition-match 가드에 걸린 경우. **edge stance로 폴백하지 않는다**는 계약이 이 한 줄로 강제됩니다.
+  2. `wrong_stance` — `stance_position != required`.
+  3. `low_stance_confidence` — `stance_confidence < τ`(`STANCE_CONFIDENCE_MIN=0.60`). None은 low 취급.
+- **`off_axis` drop 사유가 사라졌습니다.** 폐기된 것은 **production Ranker의 axis 비교 단계와 그 drop
+  사유**이지, `stance_axis` 필드 자체가 아닙니다(frozen edge 계약과 eval 코퍼스에 그대로 남아 있음).
+  관련성 판정은 이제 judge의 `insufficient`가 맡고, 그 결과는 `stance_unevaluated`로 나타납니다.
 - `stance_confidence`는 **guard이자 late tiebreak** (게이트는 이미 적용됨, 정렬 키 끝에서 다시).
 - 산출: `(kept_ranked, dropped)` — dropped는 need-filter drop으로 로그로.
+
+> **평가기 부재/전면 실패는 `stance_unevaluated`가 아닙니다.** 평가기가 아예 안 붙었거나(dormant)
+> 통째로 예외를 던지면 `_evaluate_stance`(`pipeline.py:158`)가 후보를 **빈 리스트**로 바꾸고
+> request-level silence(`stance_judge_disabled` / `_unavailable` / `_failed`)를 반환합니다. 후보가
+> Ranker에 도달하지 않으므로 per-candidate drop도 기록되지 않습니다 — 침묵의 층위가 다릅니다
+> (요청 전체 vs 후보 하나).
 
 ### coverage = round-robin
 ```python

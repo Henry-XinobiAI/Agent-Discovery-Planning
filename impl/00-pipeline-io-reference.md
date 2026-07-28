@@ -45,50 +45,47 @@ rung별로 쪼갭니다. "왜 이렇게 설계했나"의 서술형 deep-dive는 
 
 ## ⓠ normalize (`discovery/normalize.py`)
 
-원본 요청의 자유형 `user_stance_ref` 문자열을 구조화된 `UserStanceRef`로 파싱해 string-parsing 모호성이
-파이프라인 안쪽으로 새지 않게 막는다. topic→QID는 **안** 함(그건 ①).
+for/against 요청이 실은 **`proposition`**(판단 대상 주장 문장)의 존재·non-blank를 검증하고, 대화 맥락을
+lean projection으로 투영한다. topic→QID는 **안** 함(그건 ①). 파싱할 문법도 LLM 폴백도 없어 **순수 sync**.
 
-### INPUT — `Query` (`ApiModel`, API 요청과 1:1 · `structs/recommend.py:69`)
+### INPUT — `Query` (`ApiModel`, API 요청과 1:1 · `structs/recommend.py:75`)
 
 | 필드 | 타입 | 이 단계에서 |
 |------|------|-------------|
 | `topic_text` | `str` (min_length=1) | 손대지 않고 통과 |
 | `need_type` | `NeedType` | depth / experience / **for** / **against** / coverage |
-| `user_stance_ref` | `str \| None` | 반구조 문법 `"axis=…; dir=…; text=…"` — stance 파싱 대상 |
+| `proposition` | `str \| None` | for/against가 판단할 **주장 문장**(자유 문장, 문법 없음). stance need면 필수·non-blank, 그 외 need에선 무시 |
 | `context_messages` | `list[ContextMessage] \| None` | 최근 대화 턴 → `grounding_context`로 투영(①의 agentic 라우팅용, Phase 8-7). `context`(eligibility)와 **직교** |
 | `lang` / `limit` / `eligibility_context` | `str?` / `int(1–50)` / `dict?` | 통과 (`eligibility_context`=eligibility dict, ③ gate까지 · **grounding엔 안 닿음**) |
 
 ### 처리
 
-1. **게이트**: `need_type ∈ {for, against}` 일 때만 stance 파싱. 그 외 need는 `user_stance_ref`가 와도
-   **무시**하고 `user_stance=None`으로 통과 (`normalize.py:126`).
-2. **sync 정본** `normalize_query()` (`normalize.py:113`) — grammar 전용, **sync 유지**(eval 코퍼스
-   validator가 sync `@model_validator`에서 부르므로 async화 불가):
-   - `_parse_user_stance_ref()`: `;` 분할 → 첫 `=`에서 `partition`(text에 `=` 포함 허용) → 허용 키
-     `axis/dir/text`만, 미지/중복 키·`=`없는 segment → `InvalidNeedError`. `dir`은 `Stance` enum 강제.
-     빈 `text=`는 `None`으로 붕괴(LLM 경로 hygiene와 shape 일치).
-   - **neutral 가드** `_require_directional()`: for/against는 상대 need라 반대편 없는 `dir=neutral` →
-     `InvalidNeedError`. **문법·LLM 양 경로의 resolved stance에 동일 적용**.
-3. **async fallback** `normalize_query_async()` (`normalize.py:134`) — LLM은 **정본 아닌 폴백**. 세 조건이
-   **모두** 참일 때만 LLM 도달: `need ∈ {for,against}` **∧** `user_stance_ref 존재` **∧** `normalizer 주입`.
-   하나라도 아니면 sync에 위임(LLM 미접촉). eligible 분기 안: 문법 먼저 → `InvalidNeedError`만 **좁게** catch
-   → 그때만 `stance_normalizer.normalize(raw)` → `None`/throw면 다시 `InvalidNeedError`(자유형 실패는 문법
-   실패보다 무르지 않음). LLM impl(`LLMStanceNormalizer`, `stance_normalize.py`)은 Protocol을 import 없이
-   duck-type, 300자 초과·blank axis → `None` 강등, strict schema(`extra="forbid"`)로 injection 봉쇄.
-   - **활성화:** `NormalizeSettings.STANCE_NORMALIZER_ENABLED` (기본 **OFF**, dormant ship). eval 미주입 →
-     baseline byte-identical.
-4. **대화 맥락 투영** (Phase 8-7): `context_messages` → `grounding_context`를 **tri-state**로 — 없음→`None`,
+1. **stance need 검증**: `need_type ∈ STANCE_NEEDS`(= `{for, against}`, `structs/recommend.py:42`의 단일
+   진실원)이면 `proposition`이 `None`이거나 blank → `InvalidNeedError`. 통과하면 `strip()`해서 나른다.
+   그 외 need는 `proposition`이 와도 **무시**하고 `None`으로 통과.
+2. **해석 없음**: proposition을 내부 문법으로 파싱하거나 의미를 재작성하지 않는다 — 정규화가 하는 일은
+   존재·blank 검증과 **양끝 공백 제거(`strip()`)** 뿐이고, 그 결과가 canonical proposition이다. 해석할
+   게 없으니 `normalize_query()`는 **유일한 정본이자 sync**로 남는다(eval 코퍼스 validator가 sync
+   `@model_validator`에서 부르므로 async화 불가). async sibling은 **없다**.
+3. **대화 맥락 투영** (Phase 8-7): `context_messages` → `grounding_context`를 **tri-state**로 — 없음→`None`,
    usable text 있음→lean projection(non-empty), blank/attachment-only→`[]`. 이게 ①의 D1 라우팅(agentic vs
    symbolic)을 정한다. `grounding_context_truncated`는 context cap(`GROUNDING_CONTEXT_MAX_MESSAGES`=30) 절단
    여부. **raw wire 메시지는 drop**(lean projection만 파이프라인에 진입).
 
-### OUTPUT — `NormalizedQuery` (`StrictBaseModel`, 파이프라인 입력 · `structs/recommend.py:80`)
+> **폐기된 구 모델 (stance 재설계).** 초기 Alpha는 `user_stance_ref: str`를 반구조 문법
+> `"axis=…; dir=…; text=…"`로 파싱해 `UserStanceRef{axis, dir, text, confidence}`를 만들고, 그 위에 자유
+> 문장을 받는 LLM normalizer(Phase 8-3, `STANCE_NORMALIZER_ENABLED`)를 폴백으로 얹었다. 요청 필드·문법·
+> `UserStanceRef`·neutral 가드·LLM normalizer는 **전부 제거**됐다. 이유: 필요 방향은 이제 유저 stance에서
+> 상대적으로 파생되지 않고 **`need_type`이 절대적으로 정하며**(④), 후보의 입장은 edge에 관측된 stance가
+> 아니라 **query-time judge**가 정하기 때문이다. 남은 유저 입력은 판단 대상 주장 하나뿐이다.
 
-`topic_text`/`need_type`/`lang`/`limit`/`eligibility_context`는 그대로 복사, `user_stance`에 파싱 결과(`UserStanceRef`
-또는 `None`), `grounding_context`(+`grounding_context_truncated`)에 투영된 대화. **핵심: 원본 `user_stance_ref`
-문자열과 raw `context_messages`는 여기서 사라진다**(drop) — linker/ranker/serving은 구조화된 `user_stance`와
-lean `grounding_context`만 본다. `UserStanceRef.confidence`는 LLM 경로만 채우며 **audit-log only**(응답/gate/
-ranking 미노출).
+### OUTPUT — `NormalizedQuery` (`StrictBaseModel`, 파이프라인 입력 · `structs/recommend.py:92`)
+
+`topic_text`/`need_type`/`lang`/`limit`/`eligibility_context`는 그대로 복사, `proposition`에 strip된 주장
+(또는 `None`), `grounding_context`(+`grounding_context_truncated`)에 투영된 대화. **핵심: raw
+`context_messages`는 여기서 사라진다**(drop) — 파이프라인은 lean `grounding_context`만 본다. strip된 이
+**canonical proposition** 하나가 judge 입력·응답 `StanceView.proposition`·로그 `LoggedQuery.proposition`에
+**동일한 문자열로** 흐른다.
 
 ---
 
@@ -226,7 +223,8 @@ rerank·expansion의 **모든 비채택 경로**는 침묵 전에 `_substitute_o
    `eligibility.discoverable` → `edge.discoverable` → `edge.maturity < MATURITY_MIN`(0.45). drop된 것은
    `drop_reason` 달아 `dropped`로(로그용), **persona 미fetch**.
 3. **persona (optional 신호)**: survivor에만 `persona.get_prior` concurrent 바인딩.
-4. need-specific 필터(off_axis/wrong_stance/low_stance_confidence)는 **여기 아님** — ④ Ranker 몫(R2).
+4. need-specific 필터(`stance_unevaluated`/`wrong_stance`/`low_stance_confidence`)는 **여기 아님** —
+   ④ Ranker 몫(R2).
 
 ### OUTPUT
 `GateResult(survivors, dropped)` (`gate.py:32`) — 둘 다 `list[Candidate]`. survivor는 `drop_reason=None` +
@@ -251,14 +249,18 @@ Alpha 랭킹은 **ordering contract**: need별 사전식 정렬 키를 **정수 
    - **depth**: `_depth_key` = (maturity_band↓, evidence↓, freshness↓, agent_id↑).
    - **experience**: `_experience_key` = (source_rank↓, specificity↓, evidence↓, freshness↓, band↓, agent_id↑).
      `EXPERIENCE_SOURCE_RANK` = firsthand 2 / secondhand 1 / **None 0**(abstract는 뒤로).
-   - **for/against**: `_rank_stance` — **relative need**. `required_dir` = for면 `user_stance.dir`, against면
-     그 반대(`_OPPOSITE_STANCE`, for↔against만; `NeedType→Stance` 매핑 금지). stance 필터
-     `_stance_drop_reason`(precedence): `off_axis`(axis None/불일치) → `wrong_stance`(방향 불일치) →
-     `low_stance_confidence`(`stance_confidence < STANCE_CONFIDENCE_MIN=0.60`, None=low). 통과분만
-     `_stance_key`로 정렬(band↓, evidence↓, freshness↓, stance_confidence↓[late tiebreak], agent_id↑).
+   - **for/against**: `_rank_stance` — **absolute need**. 필요 position은 `need_type`이 직접 정한다:
+     `_REQUIRED_POSITION = {FOR: SUPPORTS, AGAINST: OPPOSES}` (`ranking.py:30`). 유저 stance 기준의 상대
+     계산(`_OPPOSITE_STANCE`)은 폐기. 랭커는 **candidate의 query-time stance만** 읽고 edge의
+     `observed_stance`는 **절대 안 읽는다**. stance 필터 `_stance_drop_reason`(precedence):
+     `stance_unevaluated`(`stance_position is None`) → `wrong_stance`(position ≠ required) →
+     `low_stance_confidence`(`stance_confidence < STANCE_CONFIDENCE_MIN=0.60`, None=low). **`off_axis`는
+     없다** — 폐기된 것은 production Ranker의 axis 비교 단계와 그 drop 사유이고(`stance_axis` 필드 자체는
+     frozen edge 계약과 결정적 eval mirror에 남아 있다), 그 자리를 `stance_unevaluated`가 흡수한다.
+     통과분만 `_stance_key`로 정렬(band↓, evidence↓, freshness↓, stance_confidence↓[late tiebreak],
+     agent_id↑).
    - **coverage**: `_coverage_round_robin` — `edge.anchor_id`로 그룹핑, core 그룹(direct hit의 anchor_id)
      먼저, 그다음 anchor_id asc, 그룹 간 **round-robin**으로 한 facet 독점 방지.
-3. stance 가드: user_stance 없이 for/against가 ranker 도달 → `ValueError`(내부 불변식, 정상은 normalize가 거름).
 
 ### OUTPUT
 `(ranked, need_filter_dropped)` (`ranking.py:57`). `need_filter_dropped`는 for/against에서만 non-empty(stance
@@ -298,12 +300,13 @@ pure·provider-free assembly. 전체 랭킹은 ⑥에 로그, **응답은 `limit
 decision-maker 아니라 **mapper**: 이미 결정된 중간물을 읽어 기록. provider I/O 없음 — clock/id_factory/
 provider_versions/contract_version/sink 전부 composition root 주입(결정성·D4).
 
-### INPUT (`DecisionLog.record()` `decision_log.py:71`)
-`query`(raw) + `normalized` + `grounding` + `candidate_pool`(= survivors + gate.dropped) +
-`dropped`(= gate.dropped + filter_dropped, 병합) + `ranked` + `recommendation`.
+### INPUT (`DecisionLog.record()` `decision_log.py:69`)
+`normalized` + `grounding` + `candidate_pool`(= survivors + gate.dropped) +
+`dropped`(= gate.dropped + filter_dropped, 병합) + `ranked` + `recommendation`. **raw `Query`는 받지
+않는다** — 정규화가 순수 검증뿐이라 raw/normalized를 나란히 남길 이유가 사라졌다.
 
 ### 처리
-- `_logged_query`: raw `user_stance_ref` + normalized stance(**confidence는 여기가 유일 surface**).
+- `_logged_query`: `topic_text`/`need_type`/`lang`/`limit` + `proposition`(canonical proposition, audit only).
 - `_logged_grounding`: `method`/`fallback_used`/`substitution_used`(파생)/provenance/`considered` +
   `trajectory`(agentic 채택의 tool 스텝 trace, additive block; symbolic·abstain은 없음).
 - `candidate_pool`→`PoolEntry`(agent/anchor/via/via_qid), `dropped`→`DropEntry`(reason 없으면 `ValueError`
@@ -342,7 +345,6 @@ provider_versions/contract_version/sink 전부 composition root 주입(결정성
 
 | slice | flag | serving | eval (결정적 gold gate) |
 |-------|------|---------|--------------------------|
-| ⓠ stance normalizer | `STANCE_NORMALIZER_ENABLED` | 기본 OFF | 미주입 |
 | ① **agentic grounder** | `GROUNDING_AGENT_ENABLED` | 기본 OFF (ON이면 아래 rung 은퇴) | 미주입 (`grounder=None`) |
 | ① rung ② rerank | (flag 없음) | **항상 주입** (8A live; agent ON이면 은퇴) | 미주입 (`reranker=None`) |
 | ① rung ③ expansion | `EXPANSION_ENABLED` | 기본 OFF | 미주입 |
