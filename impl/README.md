@@ -1,6 +1,6 @@
 # 구현 이해 가이드 — bourbon-agent-recommendation-api (Alpha)
 
-이 문서는 지금까지(Phase 0–8A + 재설계된 8B 폴백 사다리 Track 1–4 + 8-5/8-7 및 stance ④a dormant slice) 구현한 것을 **개념이 쌓이는 순서**로 정리한 것입니다.
+이 문서는 지금까지(Phase 0–8A + 재설계된 8B 폴백 사다리 Track 1–4 + 8-5/8-7·stance ④a·Phase 10 real edge dormant slice) 구현한 것을 **개념이 쌓이는 순서**로 정리한 것입니다.
 빌드 순서(Phase 0→7)는 "계약을 먼저 얼리고 의존성 역순으로 짓는" 순서라서 처음 이해하기엔
 거꾸로입니다. 아래는 "무엇을 왜 만드는가 → 무엇이 흐르는가 → 어떻게 처리하는가 →
 어떻게 서빙/평가하는가" 순입니다.
@@ -82,9 +82,9 @@ flowchart TD
 
     KP[("KnowledgeEntityProvider<br/>(real HTTP / anchored)")] -. inject .-> L
     KP -. inject .-> R
-    EP[("MemoryEdgeProvider · mock")] -. inject .-> R
-    ELP[("EligibilityProvider · mock")] -. inject .-> G
-    PP[("PersonaProvider · mock")] -. inject .-> G
+    EP[("MemoryEdgeProvider<br/>real 배선 · dormant")] -. inject .-> R
+    ELP[("EligibilityProvider<br/>allow-all · dormant")] -. inject .-> G
+    PP[("PersonaProvider<br/>Null · 항상 None")] -. inject .-> G
     SP[("StanceEvidenceSearchProvider<br/>· dormant")] -. inject .-> ST
 ```
 
@@ -144,14 +144,16 @@ Query ──normalize──▶ NormalizedQuery ──linker──▶ GroundingRe
 - **[05. gate + stance + ranking](05-gate-and-ranking.md)** — ③ need-무관 탈락 vs ④a query-time 입장
   판정 vs ④b need-의존 순서 (for/against 절대 position, coverage round-robin, experience).
 - **[06. serving + decision log](06-serving-and-decision-log.md)** — ⑤ payload/침묵 + ⑥ 감사 기록.
-- **[12. agent recommendation algorithm](12-agent-recommendation-algorithm.md)** — 제품 관점: 현재 topic-expertise 축(구현 중) + 이후 personalization/social 축(future). 파이프라인 단계 위의 알고리즘 레이어링.
+- **[12. agent recommendation algorithm](12-agent-recommendation-algorithm.md)** — 제품 관점: 현재 topic-expertise 축 + 이후 personalization/social 축(future). 파이프라인 단계 위의 알고리즘 레이어링.
 
 ---
 
 ## 5. 어떻게 서빙되는가 — composition root + API/CLI
 
-파이프라인은 모듈만 조합하고, provider 배선은 **composition root**에서 합니다. FastAPI
-`POST /recommend`, lifespan에서 client 1회 생성, 도메인 에러 → HTTP 매핑은 API layer 전용.
+파이프라인은 모듈만 조합하고, provider 배선은 **composition root**에서 합니다. 소유는 두 층으로 갈립니다 —
+**lifespan이 httpx pool을 가진 client 3개를 만들고 닫고**, `build_pipeline`은 받은 것을 배선만 하는
+**client 비소유 조립기**입니다(조립이 실패해도 자기가 소유한 적 없는 자원을 샐 수 없음). FastAPI `POST /recommend`,
+도메인 에러 → HTTP 매핑(422 둘 · 503 셋)은 API layer 전용.
 
 **→ 자세히: [07. composition + API + CLI](07-composition-api-cli.md)**
 
@@ -185,14 +187,17 @@ B2 judge(8-4)·Open-Beta gate 필드(8-6)뿐.
 
 ---
 
-## 8. 앞으로 — 남은 미구현 (8-4/8-6 + Phase 10)
+## 8. 앞으로 — 남은 미구현 (8-4/8-6 + Phase 10 turn-on)
 
 8B 폴백 사다리(rerank②→expansion③→substitution④→silence)·**Phase 9 (eval→CI 게이트)**·풍부한 per-need
 reason(8-5)·**agentic grounder 재설계(8-7, 기본 OFF)**·**query-time stance 판정(④a, 기본 OFF)**는 이제
 구현됨(구 자유형 stance 정규화 8-3은 구현됐다가 요청 모델 재설계와 함께 **제거**). 남은
-미구현은 LLM 품질 슬라이스(8-4 B2 silver judge / 8-6 Open-Beta gate fields) + **Phase 10 (real edge 통합 =
-user-facing Alpha 성립의 마지막 조각)**. 합의된 다음 순서는 **Phase 10 → 8B 잔여 튜닝**(expansion
-threshold/stratum). **8-7의 online 활성화 게이트는 8-4 judge**(context grounding 품질은 결정적 gold로 보증 불가).
+미구현은 LLM 품질 슬라이스(8-4 B2 silver judge / 8-6 Open-Beta gate fields)와 **Phase 10의 production
+turn-on**입니다. Phase 10의 **edge projection·composition 배선은 완료**돼 `REAL_EDGE_ENABLED` 뒤에 dormant로
+실려 있고 — ON이면 dev/진단 stage에서 실제로 부팅, production stage는 startup에서 거부 — 남은 것은
+**추가 배선이 아니라 promotion 게이트 4개를 닫는 구현·계약 작업**입니다(requester self-exclusion 구현 ·
+producer-side derivation pin + 테스트 · phantom agent 검증·정책 · memory-api R1–R6 구현·검증).
+합의된 다음 순서는 **Phase 10 turn-on → 8B 잔여 튜닝**(expansion threshold/stratum). **8-7의 online 활성화 게이트는 8-4 judge**(context grounding 품질은 결정적 gold로 보증 불가).
 **2026-07-15:** 동음이의 disambiguation은 memory-api 검색 `context=`(이후 제거됨)가 아니라 **대화 맥락을 읽는
 agentic grounder**로 확정 — 구 §8-7 "C-lite backend 검색 → linker 채택계약 변경" 계획은 폐기(그 이전 real-anchor
 재측정 GROUND 7 / TIE 10 / MISS 3에서 실패 원인이 recall→tiebreak로 이동한 것이 재설계의 배경). 기존 코드/계약이

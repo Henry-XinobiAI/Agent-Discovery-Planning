@@ -76,6 +76,12 @@ class Query(ApiModel):
 
 핵심 필드:
 - `agent_id`, `anchor_id`(= QID, **join 키**)
+- `memory_owner_id: UUID | None` — **내부 routing identity이지 추천 identity가 아님**. memory-api는
+  owner 공간에서 동작하고 `agent_id`는 owner의 UUID5 파생이라 둘은 **다른 문자열**입니다. evidence 조회
+  (④a statement search)는 이걸로 스코프를 잡고, 사용자에게 보이는 모든 것(응답·decision log)은 agent
+  공간에 머뭅니다. **향후 requester self-exclusion도 agent 공간에서 수행해야 합니다** — 아직 미구현이고
+  Phase 10 turn-on 게이트 중 하나입니다. mock/eval edge는 뒤에 owner가 없어 `None`이고, real
+  identity decorator가 **유일한 writer**입니다
 - `maturity` (0~1) — **1차 게이트 신호** (전문성 성숙도)
 - `evidence_strength`, `freshness` — 부차 신호 (freshness는 cutoff 아니라 decay)
 - `experience_source_type`(firsthand/secondhand/None), `experience_specificity` —
@@ -108,8 +114,10 @@ if set(self.source_owner) != set(_SOURCE_OWNER):
 ```
 
 **(3) `agent_id`의 소유자가 `DERIVED`인 이유** — Memory는 `owner_id`만 줍니다. `agent_id`는
-하위(bourbon-api `personal_agent_id`)에서 파생되므로 `SourceOwner.DERIVED`. (`OWNER`는
-routing_target 제거 후 활성 필드 없는 reserved.)
+하위(bourbon-api `personal_agent_id` = `uuid5(AGENT_NAMESPACE, f"personal_agent:{owner_id}")`)에서
+파생되므로 `SourceOwner.DERIVED`. (`OWNER`는 routing_target 제거 후 활성 필드 없는 reserved.)
+이 파생이 **단방향**이라는 게 `memory_owner_id`가 따로 필요한 이유입니다 — agent_id에서 owner_id를
+되돌릴 수 없으므로, evidence를 owner 공간에서 조회하려면 원본 owner를 edge가 들고 다녀야 합니다.
 
 **(4) experience 짝 불변식** — `experience_source_type=None`이면 `experience_specificity`도
 반드시 `None`. 둘은 함께 움직입니다.
