@@ -14,16 +14,19 @@
 순수, provider-free 조립 단계. ranked survivor + grounding → `Recommendation`.
 
 ```python
-def serve(ranked, *, grounding, query, reasons_by_agent=None):   # reasons_by_agent: 8-5 (아래 (3))
-    returned = ranked[: query.limit]          # top-limit 잘라냄
-    items = [_item(c, rank, is_stance=..., reasons_by_agent=reasons_by_agent)
-             for rank, c in enumerate(returned, start=1)]
+def serve(ranked, *, grounding, query, reasons_by_agent=None, stance_silence_reason=None):
+    if stance_silence_reason is None:
+        items = [_item(c, rank, is_stance=..., reasons_by_agent=reasons_by_agent)
+                 for rank, c in enumerate(ranked[: query.limit], start=1)]   # top-limit 잘라냄
+        reason = None if items else "no_candidates"
+    else:
+        items, reason = [], stance_silence_reason.value   # ④a의 명시 침묵 — payload를 강제로 비움
     return Recommendation(
         anchor=AnchorView(qid=grounding.qid, label=grounding.label),
         grounding=_grounding_view(grounding),  # 항상 실림 (mode + fallback provenance)
         need_type=query.need_type,
         recommendations=items,                 # 각 item = signals(항상) + reasons + stance?
-        silence=SilenceView(silent=not items, reason=None if items else "no_candidates"),
+        silence=SilenceView(silent=not items, reason=reason),
     )
 ```
 
@@ -31,6 +34,26 @@ def serve(ranked, *, grounding, query, reasons_by_agent=None):   # reasons_by_ag
 
 **(1) silence = `not items` 기준** — 입력 pool이 아니라 **payload** 기준. `limit`이 비어있지 않은
 ranking을 0으로 잘라도 응답이 자기 일관적. (리뷰 Medium 반영.)
+
+**(1-b) 침묵 사유는 두 어휘의 합** — `SilenceView.reason`이 `str | None`인 이유입니다.
+
+| 사유 | 어디서 | 뜻 |
+|---|---|---|
+| `no_candidates` | serve (모든 need) | 랭킹 결과가 비어 payload가 0 |
+| `StanceSilenceReason` 6값 | ④a stance (for/against만) | 입장을 **정할 수 없었던** 구체적 이유 |
+
+여섯 값(`stance_judge_disabled` · `stance_judge_unavailable` · `stance_judge_failed` ·
+`stance_query_generation_failed` · `stance_evidence_search_failed` · `all_candidates_insufficient`)의
+정의와 결정 주체는 [00 ④a 절](00-pipeline-io-reference.md)에 있습니다. serve는 enum의 `.value`
+문자열만 싣습니다 — `no_candidates`가 그 집합에 없으므로 필드 타입을 enum으로 좁히지 않았습니다.
+
+**(1-c) stance 침묵은 payload를 강제로 비웁니다** — 그리고 `no_candidates`보다 **우선**합니다.
+`ranked`가 비어있지 않아도 사유가 있으면 아이템을 안 실어서, 평가기가 사유와 후보를 **동시에**
+돌려주더라도 후보가 새 나갈 수 없습니다(파이프라인이 이 강제-비움에 의존해 `ranked`를 그대로 넘김).
+rich reason 생성도 건너뜁니다 — 서빙될 아이템이 없으므로.
+
+for/against가 아닌 쿼리에 stance 사유가 오면 배선 버그이므로 `ValueError`로 loud-fail합니다
+(엉뚱한 need를 조용히 침묵시키는 것보다 낫다).
 
 **(2) top-limit 비대칭** — *로그*는 전체 ordering trace를 유지하고, *payload*는 top-N만.
 `serving.returned`는 실제 반환된 top-N만 기록.
@@ -98,7 +121,7 @@ DecisionLog(
 ```python
 row = DecisionLogRecord(
     log_id=id_factory(), ts=clock(),
-    query=_logged_query(query, normalized),          # raw + normalized stance 둘 다
+    query=_logged_query(normalized),                 # topic/need/lang/limit + proposition (audit only)
     grounding=_logged_grounding(grounding),          # considered trace, fallback_used, trajectory(agentic)
     candidate_pool=[_pool_entry(c) for c in candidate_pool],  # survivors + gate.dropped
     dropped=[_drop_entry(c) for c in dropped],       # gate.dropped + filter_dropped 병합
@@ -114,8 +137,10 @@ sink.write(row)
 - **`fallback_used=grounding.fallback_used`** (Phase 8A) — rerank fallback이 grounding을 구제하면
   True로 기록되어 serving 경로에선 live. eval은 reranker를 주입하지 않아(offline default) 항상
   False → [ambiguous_fallback_rate](10-eval-metrics-and-gates.md)가 eval에서 0.0인 이유.
-- **`need_filter="same_axis_required_stance"` 상수** — 방향은 각 entry의 `stance.dir`에 있음.
-  그래서 "against"가 절대 stance 라벨로 오독되지 않고 "유저의 반대 편"으로 읽힘.
+- **`need_filter="need_type_required_position"` 상수** — 필터의 근거가 need_type이라는 걸 라벨이
+  말해줍니다. 각 entry의 실제 입장은 `stance.position`(supports/opposes, 주장에 대한 **절대** 값)에
+  따로 있으므로 "against"라는 need 이름이 stance 라벨로 오독될 여지가 없습니다.
+  (구 라벨 `same_axis_required_stance`는 Ranker의 axis 비교·상대 방향 규칙과 함께 폐기.)
 - **`ConsideredEntity.confidence`** (score 아님) — 시스템 전역 "no scalar score" 규칙과의 혼동
   방지. entity-linking confidence는 별개 개념.
 - **`feature_breakdown`은 raw + derived band 항상** — Post-OB 튜닝이 band cutoff를 refit 가능.
@@ -133,11 +158,11 @@ sink.write(row)
 
 ```
 log_id, ts, contract_version
-query (LoggedQuery)          — topic, need, raw+normalized stance
+query (LoggedQuery)          — topic, need, lang, limit, proposition (for/against canonical proposition)
 grounding (LoggedGrounding)  — resolved_qid, method, fallback_used, considered[], trajectory (agentic 채택 시)
 candidate_pool [PoolEntry]   — agent_id, anchor_id, via, via_qid
 dropped [DropEntry]          — agent_id, reason
-ranked [RankedEntry]         — rank, feature_breakdown, ordering_keys, stance (no score!)
+ranked [RankedEntry]         — rank, feature_breakdown, ordering_keys, stance (StanceLog{proposition, position}; no score!)
 reasons [LoggedReason]
 serving (LoggedServing)      — silent, reason, returned
 provider_versions            — mock↔real 비교용 provenance

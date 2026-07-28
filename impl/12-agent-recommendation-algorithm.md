@@ -44,13 +44,13 @@ topic + need
 | 축 | 현재 상태 | 의미 |
 |---|---|---|
 | topic grounding | **agentic LLM-primary grounding shipped (기본 OFF, dormant)** | `topic_text` + 최근 대화 context로 하나의 QID를 확정하거나 abstain |
-| candidate retrieval | Phase 10 real edge 통합 예정 | QID에 연결된 agent-topic edge 수집 |
-| eligibility | Alpha는 얇은 stub 예정, Open Beta에서 확장 | 노출 가능 여부, discoverable/privacy/safety |
+| candidate retrieval | **real edge 배선됨 (`REAL_EDGE_ENABLED` 기본 OFF, dormant)** | QID에 연결된 agent-topic edge 수집 (memory-api competence → 투영) |
+| eligibility | 잠정 allow-all 정책 배선됨, Open Beta에서 real 신호 | 노출 가능 여부, discoverable/privacy/safety |
 | maturity | 구현된 rank/gate 신호 | 해당 topic에 대한 agent 지식 성숙도 |
 | evidence_strength | 구현된 rank 신호 | 답변 근거의 강도 |
 | freshness | 구현된 rank 신호 | 해당 topic 관련 기억/근거의 최신성 |
-| experience signals | 구현된 rank 신호 | firsthand/secondhand, specificity |
-| stance | for/against need에서 구현 | 같은 편/반대 편 agent 추천 |
+| experience signals | ranking 계약은 구현됨 · **real-edge projection이 `None`이라 real serving에선 신호 미보유** | firsthand/secondhand, specificity |
+| stance | **query-time judge 구현 (`STANCE_JUDGE_ENABLED` 기본 OFF, dormant)** | proposition을 지지/반대하는 agent 추천 |
 | coverage | 구현 | 한 facet에 쏠리지 않도록 anchor group round-robin |
 | reason + signals | Phase 8-5 구현 | 추천 이유와 원 신호를 응답에 노출 |
 | decision log | 구현 | 왜 이 추천이 나왔는지 감사 가능하게 기록 |
@@ -72,18 +72,27 @@ decision log의 `feature_breakdown`이 같은 원 신호 계열을 공유하므�
 
 현재 topic-expertise 추천 자체에도 미완성 지점이 있다.
 
-### 3.1 real edge 통합
+### 3.1 real edge 통합 — 배선 완료, turn-on 대기
 
-Phase 10의 핵심이다. mock edge가 아니라 memory-api의 `GroundingMatch`/`Competence`를
-`AgentTopicEdge`로 투영해야 한다.
+Phase 10의 핵심이었고 **projection과 composition wiring은 끝났다**. memory-api의 per-owner competence를
+`AgentTopicEdge`로 투영하는 세 겹(HTTP projection → 순수 `translate` → identity 데코레이터)이
+`REAL_EDGE_ENABLED` 뒤에 dormant로 실려 있다. 상세 = [02 provider 경계](02-provider-boundary.md) ·
+[07 composition](07-composition-api-cli.md).
 
-주요 작업:
+당초 나열했던 작업의 결말:
 
-- `/personal/groundings/{qid}` 기반 cross-owner 후보 수집
-- `Competence` 신호를 `maturity`, `evidence_strength`, `freshness`, experience signal로 변환
-- `support_ids`를 외부 응답/로그에서 쓸 수 있는 `evidence_refs`로 노출하거나 dereference하는 계약
-- eligibility/privacy/safety/discoverable 계약 확정
-- stance axis/dir/confidence를 어디서 만들지 확정
+| 당시 작업 | 결말 |
+|---|---|
+| `/personal/groundings/{qid}` 기반 cross-owner 후보 수집 | **경로 정정 후 완료** — 그 라우트는 존재하지 않았고, `GET /{prefix}/personal/entities/{qid}`에서 `owner_id`를 생략하는 방식으로 구현 |
+| `Competence` → maturity/evidence/freshness 변환 | **완료** — `discovery/edge_translate.py`(순수 함수). experience signal은 **미투영**(`hands_on_ratio`만으로는 firsthand/secondhand를 못 가름 → `None`) |
+| `support_ids` → `evidence_refs` 노출 계약 | **완료** — `"statement:<uuid>"`로 투영. 별도 계약이 필요 없었음 |
+| eligibility/privacy/safety/discoverable 계약 확정 | **부분** — 잠정 allow-all이 배선됐고 real 신호는 Open Beta |
+| ~~stance axis/dir/confidence를 어디서 만들지 확정~~ | **질문 자체가 폐기** — 폐기된 것은 *production 추천이 edge stance를 sourcing/ranking하는 모델*이고, stance는 **query-time judge 산출**이 됨(④a). `observed_stance`/`stance_axis`/`stance_confidence` 필드 자체는 frozen edge에 남아 결정적 eval mirror가 사용 |
+
+남은 것은 **추가 배선이 아니라 production promotion 게이트 4개를 닫는 작업**이다(self-exclusion ·
+producer-side derivation pin · phantom agent 정책 · memory-api R1–R6). **넷 다 구현·테스트 또는 upstream
+계약 착지를 요구한다** — B1도 bourbon-api에 pin 테스트와 immutable 선언을 착지시키는 작업이지 문서 작업이
+아니다. [11 로드맵 Phase 10](11-forward-roadmap.md) 상태 박스 참조.
 
 ### 3.2 agentic context-aware grounding
 
@@ -241,7 +250,8 @@ AIA/KTA 같은 고도 평가 프레임은 장기적으로 중요하지만, Open 
 - exploration/diversity policy
 
 이 레이어가 "이용자의 관심사나 퍼소나에 따라 agent를 추천"하는 영역이다. 현재 Discovery 파이프라인의
-부족한 부분이며, Phase 10 real edge가 안정된 뒤 별도 설계가 필요하다.
+부족한 부분이며, Phase 10 real edge가 프로덕션에서 **켜진** 뒤 별도 설계가 필요하다(projection·배선은
+끝났고 promotion 게이트가 남았다).
 
 ---
 
@@ -281,7 +291,7 @@ topic expertise ordering
 
 | 항목 | 성격 | 위치 |
 |---|---|---|
-| `RecommendationFeedbackSignal` | Open Beta feedback 계약 | Phase 10 이후 / Open Beta |
+| `RecommendationFeedbackSignal` | Open Beta feedback 계약 | Phase 10 turn-on 이후 / Open Beta |
 | `UserAgentInteractionEvent` | impression/click/start/revisit/dismiss 로그 | Open Beta |
 | `UserInterestProfile` | 장기 관심사/선호 모델 | Post-Alpha |
 | `UserAgentAffinity` | 사용자-agent 관계/선호 점수 | Post-Alpha |
@@ -301,8 +311,10 @@ topic expertise ordering
 ## 8. 결론
 
 현재 구현 중인 Discovery는 추천 알고리즘의 **전문성 기반 후보 생성과 deterministic ranking**을 맡는다. 이 축은
-Alpha/Pull API에 맞고, real edge 통합과 agentic context-aware grounding이 붙으면 "이 대화 맥락의 이 주제에
-대해 누구를 추천할까"라는 문제는 꽤 단단해진다.
+Alpha/Pull API에 맞고, real edge와 agentic context-aware grounding이 **켜지면** "이 대화 맥락의 이 주제에
+대해 누구를 추천할까"라는 문제는 꽤 단단해진다. 둘 다 각자의 flag 뒤에 실려 잠들어 있으므로 남은 것은
+**활성화 조건**이다 — agentic grounder는 8-4 judge라는 평가 게이트 하나지만, real edge의 게이트 넷은
+self-exclusion·phantom-agent 검증 같은 **구현 작업을 포함**한다.
 
 다만 제품으로서의 agent recommendation은 여기서 끝나지 않는다. 이후에는 persona, social graph, beta feedback,
 사용자 행동 로그를 별도 개인화 레이어로 추가해야 한다. 그때의 핵심 질문은 "누가 잘 아는가"에서 "이 사용자에게

@@ -120,11 +120,11 @@ baseline은 **(need, anchor)**마다 시나리오 하나(5 need × 20 anchor = 1
 - `stratum` — 난이도 밴드: `easy` / `hard`(ranking-hard: 근접하게 동점인 maturity) / `ambiguous`
   (거의 동등한 경쟁 후보) / `guard`.
 - `is_needle` — known-item 프로브: 정확히 한 에이전트가 rank-1을 차지해야 한다. need당 needle ≥ 1개.
-- `user_stance_ref` / `expected_axis` — `for` / `against`에만 존재하고 방향성을 가진다.
+- `proposition` — 판단 대상 주장. `for` / `against`에만 존재(non-blank). eval에서는 axis-id 문자열이다.
 - `tags` — coverage row의 guard 이름.
 
-for/against는 **상대적(relative)** need다: 코퍼스는 항상 유저 자신의 stance를 `for`로 선언하므로,
-`for` 시나리오는 같은 방향 에이전트를 유지하고 `against` 시나리오는 반대 편을 유지한다.
+for/against는 proposition에 대해 **절대적으로(absolutely)** 판정된다: `need_type=for`는 그 주장을 지지하는
+에이전트를, `need_type=against`는 반대하는 에이전트를 유지한다(방향은 오직 `need_type`에만 있다).
 
 ### `edges.json` — 전문성 edge (`AgentTopicEdge`)
 

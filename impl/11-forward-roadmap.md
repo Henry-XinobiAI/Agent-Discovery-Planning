@@ -29,29 +29,28 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
 > **이미 착지 (동작 설명은 [03. linker](03-normalize-and-linker.md) / [06. serving](06-serving-and-decision-log.md)):**
 > LLM rerank fallback(rung ②, Phase 8A) · `fallback_used` 신호(Phase 8A) · 재정의된 8B 그라운딩 폴백
 > 사다리 전체(expansion ③ + substitution ④ rung + Decision A 라우팅 + report-only eval strata) ·
-> **for/against 자유형 stance 정규화(8-3, 문법 우선 + LLM 폴백, 기본 OFF)** · **풍부한 per-need reason +
+> ~~for/against 자유형 stance 정규화(8-3)~~ **→ 구현 후 제거**(§8-3) · **query-time stance 판정(④a: symmetric
+> query 생성 + owner-scoped evidence 검색 + claim judge, `STANCE_JUDGE_ENABLED` 기본 OFF)** · **풍부한 per-need reason +
 > 원 신호 노출(8-5, 보강 + `signals` always-on, 기본 OFF)** · **agentic grounder 재설계(8-7, 최근 대화
 > context → LLM tool-use ReAct 루프, 기본 OFF; 켜지면 module ①의 primary가 되어 symbolic 사다리를 대체)**.
 > agent OFF(현 기본 배포)에선 정밀 코어가 유지되고 LLM은 gate·신호가 걸린 폴백/보강에서만 돌며, agent ON에선
 > agentic이 primary·symbolic이 결정적 폴백으로 강등된다(둘 다 [03](03-normalize-and-linker.md)에 서술).
 > **여기서는 아래 둘(8-4 · 8-6)만 남았습니다.**
 
-### 8-3. for/against stance 자유형 정규화 — ✅ **구현 완료** (동작 설명은 [03. normalize](03-normalize-and-linker.md)의 "자유형 stance 정규화" 절)
-보수적 문법 파서를 **자유형 LLM normalizer 폴백**으로 보강. 문법이 canonical 경로로 남고, LLM은 문법
-파싱이 실패할 때만 도는 폴백. rerank과 같은 dormant-ships(`STANCE_NORMALIZER_ENABLED` 기본 OFF).
-- **실제 구현 (설계와 달라진 점):**
-  - `normalize_query`를 async화하지 **않고** sync·문법 전용으로 유지 + 새 `normalize_query_async`
-    sibling에 LLM 폴백을 얹음. 이유 = `eval/corpus/structs.py`의 sync `@model_validator`가
-    `normalize_query`를 부르는데 통째 async화하면 조용히 깨짐(await 불가). blast radius = 파이프라인 1줄.
-  - LLM wire 스키마는 새 `discovery/stance_normalize.py`의 `StanceNormalization`(strict, `extra=forbid`),
-    concrete `LLMStanceNormalizer`도 여기. `StanceNormalizer` **Protocol은 소비자 `normalize.py`가 소유**
-    (linker의 Reranker/Expander/Substituter 관례) — impl은 Protocol을 import하지 않는 duck-type.
-  - `UserStanceRef.confidence` — Alpha에서 문법 경로는 항상 `None`, LLM normalizer가 채움 (query-side
-    parse confidence, struct 변경 없음=이미 forward-compat). **decision log(audit)에만** 흐르고
-    응답·gate·ranking 미노출 (parser지 policy 아님).
-  - 결정성 보존: eval harness는 normalizer 미주입(`None`)이라 LLM 경로 dead + 모든 fixture가 문법형 →
-    `baseline.json` byte-identical. 코드 repo `feat/phase-8-3-stance-normalizer` T1–T5 (contracts →
-    `LLMStanceNormalizer` → `normalize_query_async` → wiring → 통합 테스트).
+### 8-3. for/against stance 자유형 정규화 — ⛔ **구현됐다가 제거됨** (2026-07-21)
+보수적 문법 파서(`"axis=…; dir=…; text=…"` → `UserStanceRef`)를 **자유형 LLM normalizer 폴백**으로 보강한
+슬라이스로, `feat/phase-8-3-stance-normalizer` T1–T5로 구현·머지까지 갔습니다. 이후 stance 재설계가 요청
+모델 자체를 절대 verdict 모델로 바꾸면서 **문법·`UserStanceRef`·`LLMStanceNormalizer`·
+`STANCE_NORMALIZER_ENABLED`·`normalize_query_async`가 전부 삭제**됐습니다.
+
+- **왜 제거됐나** — normalizer의 존재 이유가 "자유 문장에서 `{axis, dir}`를 추출한다"였는데, 요청이
+  `proposition` 한 문장만 받고 방향은 `need_type`이 절대적으로 정하게 되면서 **추출할 구조가 없어졌습니다**.
+  남은 자유 텍스트는 *해석* 대상이 아니라 judge에게 넘길 *명제*입니다.
+- **살아남은 설계 교훈** — sync 코어를 지키고 async sibling을 따로 두는 패턴(이유: `eval/corpus/structs.py`의
+  sync `@model_validator`가 `normalize_query`를 부르므로 통째 async화 불가)과, Protocol은 소비자가 소유하고
+  concrete impl은 duck-type하는 관례는 그대로 남아 이후 슬라이스들이 씁니다.
+- **대체물** — for/against의 LLM 사용은 ⓠ가 아니라 **④a**로 옮겨갔습니다(stance query generator + judge).
+  [05](05-gate-and-ranking.md) · [08](08-llm-layer.md) 참조.
 
 ### 8-4. B2 silver judge + judge-derived 지표
 - **추가:** LLM judge가 silver 라벨(`b2_silver`) 생성. 품질 지표를 gold에서 확장.
@@ -75,7 +74,8 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
     freshness + presence-based 경험 필드) 신규 — **flag 무관 항상** 실림(결정적·`serve` settings-free).
     `maturity_band`는 신호가 아니라 cutoff artifact라 **제외**(클라이언트가 튜닝값에 결합되는 것 방지;
     band는 `feature_breakdown`=로그/튜닝에만). `reasons`는 list라 schema 변경 없음.
-  - **sync-core + async-sibling** (8-3 `normalize_query`/`_async`와 동형): `serve`는 sync·순수 유지하고
+  - **sync-core + async-sibling** (당시 8-3 `normalize_query`/`_async`와 동형이던 패턴; 8-3 자체는 이후
+    제거됐지만 이 형태는 남음): `serve`는 sync·순수 유지하고
     `reasons_by_agent` 맵을 소비만. 파이프라인이 `serve` 전에 `generate_reasons_async`(serving.py)를 await —
     `returned`는 **top-N 서빙 슬라이스만**, `topic`은 `grounding.label`(주제명이자 언어 신호).
   - **단일 소스 `_signals`:** 응답의 `signals`와 LLM 입력을 같은 함수로 지어 프로즈가 함께 실린 신호만
@@ -179,6 +179,29 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
 
 ## Phase 10 — real edge 통합 (user-facing Alpha 성립) — **2026-07-07 신설**
 
+> **상태 (2026-07-28): real-edge projection과 composition wiring은 완료. 남은 것은 *추가 배선*이 아니라
+> production promotion gate를 닫는 구현·계약 작업입니다.**
+>
+> contract slice와 turn-on Step 1이 머지돼(`REAL_EDGE_ENABLED`, 기본 OFF) **ON이면 dev/진단 stage에서
+> 실제로 부팅**합니다. 다만 아래 게이트는 **넷 다 구현·테스트 또는 upstream 계약 착지를 요구**합니다
+> (self-exclusion 구현 · phantom-agent 검증·정책 구현 · R1–R6 구현·검증 · B1도 bourbon-api에
+> namespace/vector pin 테스트와 immutable 선언을 착지시키는 작업) — "코드가 끝났다"는 건
+> **edge projection·배선에 한정**된 이야기입니다. 구현 결과는 [02 provider 경계](02-provider-boundary.md)(세 겹 구조)와
+> [07 composition](07-composition-api-cli.md)(Guard 0/1 · lifespan client 3개 · production 거부 가드)에
+> 있습니다. 아래 §"선행" 절은 그 협의가 **어떻게 진행됐는지의 이력**으로 읽으세요 — 일부 전제는 2026-07-24
+> 소스 감사에서 뒤집혔고, 정정은 각 항목에 표시했습니다.
+>
+> **프로덕션 turn-on을 막고 있는 4개 게이트** (전부 닫혀야 `_reject_real_edge_in_production` 삭제):
+>
+> | 게이트 | 무엇이 없나 | 소유 |
+> |---|---|---|
+> | requester self-exclusion | 요청자가 자기 에이전트를 추천받을 수 있음 | discovery + bourbon-api (요청 B2: 신뢰 가능한 requester identity 전달) |
+> | producer-side derivation pin | discovery가 UUID5 파생을 **복제**했고 upstream drift를 탐지 못 함 | bourbon-api (요청 B1) |
+> | phantom agent 정책 | 파생 agent ID가 실제 카탈로그에 있는지 미확인, 없을 때 처리(loud-fail vs drop) 미정 | 미정 |
+> | memory-api R1–R6 | 비활성 owner가 후보로 남음(R1) 외 5건 | memory-api |
+>
+> 권위 있는 목록은 [Phase 10 real-edge 스펙 §9](../docs/superpowers/specs/2026-07-24-phase10-real-edge-contract-slice-design.md)입니다.
+
 Roadmap §10 Alpha 단계 2(agent-topic edge projection)·4(maturity gate)에 대응합니다. Phase 8/9가 전부
 품질·평가 작업인 반면, 배포된 Pull API가 grounding 후 후보 단계에서 503을 반환하는 현 상태를 해소하는
 **유일한 성립 작업**이라 별도 phase로 승격했습니다. (real edge를 Open Beta로 미루면 어차피 OB의 크리티컬
@@ -200,10 +223,17 @@ Roadmap §10 Alpha 단계 2(agent-topic edge projection)·4(maturity gate)에 �
   재사용 불가 — `discovery/providers/`에 얇은 stub을 신설하고, decision log의 `ProviderVersions`도
   edge·eligibility 둘 다 `unavailable@v0`에서 real/stub 표기로 갱신(출처 정직성). Phase 2의
   `HttpKnowledgeEntityProvider`가 real HTTP provider의 템플릿.
+> **★ 2026-07-24 소스 감사 정정 — 아래 (a)의 엔드포인트는 존재하지 않습니다.** `/personal/groundings/{qid}`
+> 라우트도 `GroundingMatch` 타입도 memory-api에 없습니다. 실제 경로는 **`GET /{prefix}/personal/entities/{qid}`
+> 에 `owner_id`를 생략**하는 것이고(그러면 전 owner 반환 = cross-owner 후보), grounding은 별도 라우트가
+> 아니라 그 엔티티 응답에 embed돼 있습니다. 구현이 실제로 부른 것도 이쪽입니다
+> ([02](02-provider-boundary.md) 세 겹 구조). 아래 (b)(c)와 매핑 표의 나머지는 유효합니다.
+
 - **선행(진짜 크리티컬 패스) — cross-team 계약:** (1) **memory-api edge = Competence vector 투영 계약**
   (2026-07-14 감사로 재정의). memory-api가 이미 주는 것: **(a) cross-owner 후보 검색** —
-  `GET /personal/groundings/{qid}?owner_ids=…`(생략 시 전 owner)가 public QID 기준으로 owner별 매치를
-  돌려줌(`Page[GroundingMatch]`, 각 항목이 `owner_id` 보유). **(b) agent identity** — `owner_id`에서 파생
+  ~~`GET /personal/groundings/{qid}?owner_ids=…`(생략 시 전 owner)가 public QID 기준으로 owner별 매치를
+  돌려줌(`Page[GroundingMatch]`, 각 항목이 `owner_id` 보유)~~ → **정정: `GET /{prefix}/personal/entities/{qid}`
+  에서 `owner_id` 생략**(위 박스). **(b) agent identity** — `owner_id`에서 파생
   (bourbon-api `personal_agent_id`; 2026-07-03 rec-signal owner_id-only 계약 그대로 → memory-api 갭 아님).
   **(c) expertise 신호** — #64 "competence vector"(`8092bc3`, "salience-orthogonal expertise axis **for
   Discovery**"·커밋이 "supersedes gap-proposal §4② maturity fields"라고 명시): `Competence{frequency,
@@ -213,9 +243,12 @@ Roadmap §10 Alpha 단계 2(agent-topic edge projection)·4(maturity gate)에 �
   아니라 "이미 있는 competence/groundings를 Discovery `AgentTopicEdge`로 투영하는 계약 + translation
   layer"로 이동.** 신호 매핑(직접 대체 아님·translation layer의 입력):
 
-  | AgentTopicEdge | memory-api 소스 | 성격 |
+  아래 표는 **2026-07-14 협의 시점의 후보 매핑**입니다(역사). 실제 구현은 이 중 일부만 채택했고, 채택한
+  것도 공식이 다릅니다 — **현행은 바로 아래 "실제 구현된 매핑" 표**를 보세요.
+
+  | AgentTopicEdge | memory-api 소스 (당시 후보) | 성격 |
   |---|---|---|
-  | cross-owner 후보 검색 | `/personal/groundings/{qid}` (`owner_id` 포함) | ✅ 이미 있음 |
+  | cross-owner 후보 검색 | ~~`/personal/groundings/{qid}`~~ → `GET /{prefix}/personal/entities/{qid}`(owner_id 생략) | ✅ 이미 있음 (경로 정정) |
   | agent identity | `owner_id`→`personal_agent_id` 파생 (bourbon-api) | ✅ 갭 아님 |
   | maturity | `depth`(+`breadth`+`consistency` 조합) | ⚠️ 입력신호, 직접 대체 아님 |
   | evidence_strength | `support_ids` 수 + statement confidence + `consistency`/`frequency` | ⚠️ 조합 |
@@ -227,10 +260,31 @@ Roadmap §10 Alpha 단계 2(agent-topic edge projection)·4(maturity gate)에 �
   | **eligibility**(discoverable/privacy/safety) | 없음 | ❌ **진짜 갭** |
   | **stance** verdict(for/against) | edge에 **저장 안 함** — query-time judge 산출 | ▶ **memory-api 갭 아님**; edge는 claims/evidence만 공급 (설계 ↓) |
 
+  **실제 구현된 매핑** (`discovery/edge_translate.py` + `providers/identity_edge.py`, 현행):
+
+  | AgentTopicEdge | 실제 계산 |
+  |---|---|
+  | `maturity` | `depth × (0.6 + 0.4 × consistency)` — **곱셈**. `breadth`는 **안 씀** |
+  | `evidence_strength` | dedup된 `support_ids` 개수 `n`에 대해 `n / (n + 4)`. statement confidence·`consistency`·`frequency` **안 씀** |
+  | `freshness` | `last_seen` 기준 90일 반감기 decay(`last_seen=None` → 0.0, 미래는 0으로 clamp) |
+  | `experience_source_type` / `_specificity` | **둘 다 `None`** — `hands_on_ratio`는 **안 씀**(firsthand/secondhand를 못 가름) |
+  | `evidence_refs` | `support_ids` → `"statement:<uuid>"` (계약 대기 아님, 이미 투영) |
+  | `observed_stance` / `stance_axis` / `stance_summary` / `stance_confidence` | 전부 `None` (stance는 query-time judge 소유) |
+  | `discoverable` | `True` 고정 — 호환 sentinel이지 privacy verdict가 아님(AllowAll 슬라이스) |
+
   즉 남은 진짜 갭 = **① Discovery edge projection(**eligibility** — stance는 edge에 저장하는 필드가 아니라
   **query-time judge 산출**이므로 여기선 claims/evidence 공급만; ↓ 스펙) ② competence→edge signal
   translation layer(maturity/evidence/freshness 파생) ③ evidence-ref 노출 계약** — 대부분
   discovery·bourbon-api·persona 몫이지 memory-api가 새 edge를 만들 일이 아님.
+
+  > **★ 세 갭의 현재 상태 (2026-07-28):** ②는 `discovery/edge_translate.py`로 **구현 완료**(순수 함수·
+  > clock 주입). ③은 `support_ids` → `"statement:<uuid>"` 형태로 `evidence_refs`에 **투영됨** — 별도
+  > memory-api 계약이 필요 없었음(갭 아니었음). ①의 eligibility는 real provider가 아니라
+  > `AllowAllEligibilityProvider`라는 **승인된 잠정 정책**으로 채워졌고, real 신호는 Open Beta 몫입니다.
+  >
+  > 정리하면: **이 세 projection 갭 중 memory-api에 새 edge 엔드포인트/필드를 요구하는 구현 블로커는 0**
+  > 입니다. 다만 **production turn-on 블로커인 R1–R6은 그대로 남아 있습니다**(위 상태 박스) — 둘은 다른
+  > 층위의 요청입니다: 전자는 "edge를 만들 수 있는가", 후자는 "그 edge를 프로덕션에서 신뢰할 수 있는가".
 
   - **★ stance(①의 일부)·evidence-ref(③) 하위 슬라이스 설계 = [agentic stance retrieval 스펙](../docs/superpowers/specs/2026-07-20-agentic-stance-retrieval-design.md)** (2026-07-20 재작성 — 구 for/against 스펙 PR #12 `009917b` + axis-registry 스펙을 단일 **agentic on-demand** 설계로 통합, **axis_id registry 폐기**). 요지: for/against **verdict는 Discovery 소유 LLM claim-judge**가 만들고 memory-api엔 stance verdict/`stance_dir`를 요청하지 않음(query-무관 evidence/prior만) · **on-demand 파이프라인**(Tier 1 QID cross-owner shortlist → Tier 1.5 agentic statement search[요청당 batch·symmetric 검색어·escalation] → Tier 2 judge) · judge OFF/degraded → **명시 silence**(topic-discussers fallback 금지). **이 작업은 독립 phase가 아니라 Phase 10의 stance 슬라이스로 얹힌다** — 단 memory-api **neutral statement-search 엔드포인트** 계약 협의는 lead-time상 먼저 킥오프하고, verdict 품질 검증은 **8-4 B2 silver judge** stratum에 의존한다. (aspect 세밀도는 파편화 내재 비용으로 **Open Beta 이월**.) (2) **agent moderator의
   `context_messages` 공급** — agentic grounder(§8-7) sense 선택 context의 유일 소스(discovery는 대화를 직접 안 봄);
@@ -292,6 +346,12 @@ Alpha(Pull + for/against, 내부)에서 Open Beta(외부)로 가려면 **새 기
 ---
 
 **요점:** Alpha가 계약 struct와 Protocol 이음매를 먼저 얼려둔 덕에, 남은 Phase 8 잔여·9·10 변경의 대부분은
-여전히 **additive**로 흡수됩니다 (`UserStanceRef.confidence`·`OpeBlock`·b1/b2 gold tier·eligibility 필드
-같은 예약 hook). 그 배당금의 마지막 수취처가 **Phase 10**입니다 — user-facing Alpha를 성립시키는 real edge
-교체가 provider 구현 1개 + 배선으로 끝나는 것은 seam을 먼저 얼려뒀기 때문입니다.
+여전히 **additive**로 흡수됐습니다 (`OpeBlock`·b1/b2 gold tier·eligibility 필드 같은 예약 hook). 그 배당금의
+마지막 수취처가 **Phase 10**이었고, 실제로 real edge의 **projection·배선 부분**이 provider 구현 + 배선으로
+끝났습니다. 다만 범위는 정확히 — 계약과 owner-space routing이 먼저 정렬된 뒤 **lifespan turn-on 배선 자체가
+discovery 파이프라인 변경 없이** 끝났다는 뜻이고, 그 선행 정렬에는 파이프라인 변경이 포함됐습니다
+(`AgentTopicEdge.memory_owner_id` 신설 + `discovery.stance._evidence_key()` 도입 — agent 공간과 owner 공간이
+갈리면서 evidence 조회 키를 바꿔야 했음). 더 큰 예외는 stance 슬라이스였습니다: 요청 모델이 바뀌면서
+`user_stance_ref`/`UserStanceRef`가 **제거**됐고(§8-3), 여기서 얻은 교훈은 "예약 hook은 *같은 질문*이
+유지될 때만 additive를 보장한다"는 것입니다 — 질문이 "유저와 같은 편인가"에서 "이 주장을 지지하는가"로
+바뀌자 그 자리에 예약해둔 필드는 쓸모가 없었습니다.

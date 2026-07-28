@@ -41,7 +41,11 @@ flat 디렉터리. 러너가 한 곳에서 읽음:
 ### scenario 필드
 - `need_type`, `anchor_query_id`(anchors.queries[]로 들어가는 안정 handle — 문구 편집이 링크를
   안 깸), `stratum`(easy/hard/ambiguous/guard), `is_needle`(정확히 1개가 rank-1), for/against면
-  `user_stance_ref`/`expected_axis`, guard면 `tags`, 그리고 `context_messages`(agentic grounder
+  `proposition`(필수·non-blank — `Scenario._stance_matches_need`가 실제 `/recommend` 파이프라인이 쓰는
+  것과 **같은 `normalize_query()` 규칙**으로 검증하므로 잘못된 코퍼스는 load 시점에 실패함. 요구
+  position은 need_type에서 바로 읽히므로 별도 `expected_*` 필드 없음. 커밋 코퍼스의 값은 `f"axis:{expected_qid}"` — 같은 문자열을
+  edge의 `stance_axis`에도 심어둬서 결정적 mirror 평가기가 LLM 없이 매칭할 수 있게 한 **eval 전용
+  관례**이지 프로덕션 proposition 형태가 아님), guard면 `tags`, 그리고 `context_messages`(agentic grounder
   stratum용 대화 맥락 — `None`이 기본이고 커밋 코퍼스는 미보유 → symbolic 경로).
 
 ### 9개 guard (두 레이어로 분리)

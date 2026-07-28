@@ -15,25 +15,43 @@
 
 | 타입 | base | 무엇 | 특징 |
 |---|---|---|---|
-| `Query` | `ApiModel` | API 요청과 1:1 | 원시 `user_stance_ref` **문자열**을 그대로 담음 |
-| `NormalizedQuery` | `StrictBaseModel` | 파이프라인 입력 | `user_stance_ref`가 `UserStanceRef`로 파싱됨, 원시 문자열은 사라짐 |
+| `Query` | `ApiModel` | API 요청과 1:1 | for/against `proposition`(판단 대상 주장)을 담음 |
+| `NormalizedQuery` | `StrictBaseModel` | 파이프라인 입력 | `proposition` 검증·strip 완료, raw `context_messages`는 사라짐 |
 | `Recommendation` | `ApiModel` | API 응답과 1:1 | `decision_log_id`로 로그에 연결 |
 
 - `api/routers/recommend/structs.py`가 `Query`를 `RecommendRequest`로 re-export만 합니다 —
   그래서 도메인은 `api/`를 **절대 의존하지 않음**.
-- linker/ranker/serving은 `NormalizedQuery`만 봅니다. 원시 문자열 파싱의 애매함이 파이프라인
+- linker/ranker/serving은 `NormalizedQuery`만 봅니다. 요청 표면의 optional·wire 형태가 파이프라인
   안으로 새지 않습니다.
 
 ```python
 class Query(ApiModel):
     topic_text: str = Field(min_length=1)
     need_type: NeedType
-    user_stance_ref: str | None = None   # "axis=…; dir=…; text=…" (§3.1), 나중에 파싱
+    proposition: str | None = None       # 판단할 주장 문장 — for/against는 필수·non-blank, 그 외 need는 무시
     lang: str | None = "ko"
     limit: int = Field(default=10, ge=1, le=50)
     eligibility_context: dict[str, Any] | None = None    # eligibility용 호출 컨텍스트 (③ gate까지 verbatim 전달)
     context_messages: list[ContextMessage] | None = None # 최근 대화 턴 (agentic grounding용, ⓠ에서 grounding_context로 투영)
 ```
+
+> **`proposition`이 구 `user_stance_ref`를 대체했습니다.** 구 모델은 반구조 문법
+> `"axis=…; dir=…; text=…"`를 파싱해 `UserStanceRef{axis, dir, text, confidence}`를 만들고 need를 그
+> 방향의 **상대**로 해석했습니다. 지금은 유저가 주장 문장 하나만 주고, 방향은 `need_type`이 절대적으로
+> 정하며(`for`→supports / `against`→opposes), 후보의 입장은 query-time judge가 정합니다. `UserStanceRef`
+> 타입과 Phase 8-3 LLM stance normalizer는 **제거**됐습니다.
+
+### stance 타입 세 개를 구분할 것
+
+같은 "stance"라는 말이 세 군데에 다른 뜻으로 있습니다. 섞이면 계약이 무너집니다.
+
+| 타입 | 어디 | 값 | 뜻 |
+|---|---|---|---|
+| `Stance` | `structs/edge.py` | for/against/neutral | **memory 소유** edge 필드(`observed_stance`)의 관측 stance. 파이프라인 랭킹은 **안 읽음** |
+| `StanceVerdictLabel` | `structs/stance.py` | supports/opposes/**insufficient** | judge 출력. `insufficient`는 drop이지 저장되는 입장이 아님 |
+| `StancePosition` | `structs/recommend.py:60` | supports/opposes | `Candidate`·`StanceView`·`StanceLog`가 나르는 **two-value 절대 입장** (`insufficient`는 저장 안 됨). 값이 있다고 서빙되는 건 아님 — `wrong_stance`/저confidence로 탈락한 후보도 들고 있음 |
+
+`insufficient`가 서빙 후보에 새지 않도록 judge 출력과 저장 타입을 **일부러 다른 enum**으로 뒀습니다.
 
 > **대화 맥락 (구현됨 — `context_messages`):** grounding에 대화 맥락을 싣는 필드는 위 `context_messages`로
 > **구현됐다**(Phase 8-7). **agent moderator**(대화를 보유한 상위 계층)가 최근 턴을 실어 보내면 ⓠ가
@@ -58,11 +76,21 @@ class Query(ApiModel):
 
 핵심 필드:
 - `agent_id`, `anchor_id`(= QID, **join 키**)
+- `memory_owner_id: UUID | None` — **내부 routing identity이지 추천 identity가 아님**. memory-api는
+  owner 공간에서 동작하고 `agent_id`는 owner의 UUID5 파생이라 둘은 **다른 문자열**입니다. evidence 조회
+  (④a statement search)는 이걸로 스코프를 잡고, 사용자에게 보이는 모든 것(응답·decision log)은 agent
+  공간에 머뭅니다. **향후 requester self-exclusion도 agent 공간에서 수행해야 합니다** — 아직 미구현이고
+  Phase 10 turn-on 게이트 중 하나입니다. mock/eval edge는 뒤에 owner가 없어 `None`이고, real
+  identity decorator가 **유일한 writer**입니다
 - `maturity` (0~1) — **1차 게이트 신호** (전문성 성숙도)
 - `evidence_strength`, `freshness` — 부차 신호 (freshness는 cutoff 아니라 decay)
 - `experience_source_type`(firsthand/secondhand/None), `experience_specificity` —
   **experience를 depth와 가르는 신호**
-- `observed_stance`, `stance_axis`, `stance_confidence` — for/against용
+- `observed_stance`, `stance_axis`, `stance_summary`, `stance_confidence` — memory가 소유한 관측 stance.
+  **production serving/ranking은 이 필드들을 읽지 않습니다** (for/against는 query-time judge가 채운
+  `Candidate.stance_*`만 봄). 단 결정적 eval의 `EdgeMirrorStanceEvaluator`는 `observed_stance`·
+  `stance_axis`·`stance_confidence` 셋을 읽어 query-time 필드로 투영합니다 — LLM 없는 stand-in
+  ([09. eval harness](09-eval-harness.md)). 소비자가 아예 없는 건 `stance_summary` 하나뿐
 - `discoverable` — privacy가 소유하는 노출 플래그
 - `source_owner` — **필드마다 누가 소유·거버넌스하는지의 맵**
 
@@ -86,17 +114,20 @@ if set(self.source_owner) != set(_SOURCE_OWNER):
 ```
 
 **(3) `agent_id`의 소유자가 `DERIVED`인 이유** — Memory는 `owner_id`만 줍니다. `agent_id`는
-하위(bourbon-api `personal_agent_id`)에서 파생되므로 `SourceOwner.DERIVED`. (`OWNER`는
-routing_target 제거 후 활성 필드 없는 reserved.)
+하위(bourbon-api `personal_agent_id` = `uuid5(AGENT_NAMESPACE, f"personal_agent:{owner_id}")`)에서
+파생되므로 `SourceOwner.DERIVED`. (`OWNER`는 routing_target 제거 후 활성 필드 없는 reserved.)
+이 파생이 **단방향**이라는 게 `memory_owner_id`가 따로 필요한 이유입니다 — agent_id에서 owner_id를
+되돌릴 수 없으므로, evidence를 owner 공간에서 조회하려면 원본 owner를 edge가 들고 다녀야 합니다.
 
 **(4) experience 짝 불변식** — `experience_source_type=None`이면 `experience_specificity`도
 반드시 `None`. 둘은 함께 움직입니다.
 
 ---
 
-## `Candidate` — 모듈 ②→④를 관통하는 내부 객체 (`structs/recommend.py`)
+## `Candidate` — ③에서 태어나 ④b까지 관통하는 내부 객체 (`structs/recommend.py`)
 
-edge를 감싸서 파이프라인 중간 상태를 나릅니다.
+edge를 감싸서 파이프라인 중간 상태를 나릅니다. ③ Gate가 `EdgeHit` + eligibility(+persona)로 만들고,
+④a/④b가 in-place로 살을 붙입니다.
 
 ```python
 class Candidate(StrictBaseModel):
@@ -107,11 +138,17 @@ class Candidate(StrictBaseModel):
     eligibility: Eligibility
     features: dict[str, float]          # 원시 연속 정렬 입력값
     ordering_keys: list[str]            # 이 need의 사전식 정렬 키 이름
-    stance_axis / stance_dir            # 관측된 stance 반영
+    # query-time stance — StanceEvaluator가 채움. edge에서 미러링하지 않음
+    stance_proposition: str | None = None
+    stance_position: StancePosition | None = None      # judge의 절대 verdict (supports/opposes)
+    stance_confidence: float | None = None             # graded confidence [0,1]
     drop_reason: str | None = None      # gate/filter 탈락 사유 (로그용)
 ```
 
 - **scalar score 필드가 없음** — Alpha 랭킹은 ordering contract라서. score를 안 두는 게 계약.
+- **stance 3필드는 전부 `None`으로 시작**합니다. for/against 후보가 랭커에 도달할 때까지 `None`이면
+  `stance_unevaluated`로 drop — edge의 `observed_stance`로 **폴백하지 않습니다**. "평가 안 됨"이 조용히
+  "입장 있음"으로 승격되는 경로를 아예 없앤 설계.
 - **`via_qid` iff `neighbor` 불변식**을 validator로 강제 (retrieval의 `EdgeHit`과 동일한 불변식을
   미러). `via==neighbor`일 때 정확히 `via_qid`가 설정됨.
 
