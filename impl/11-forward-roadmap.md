@@ -167,7 +167,7 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
   dependency, discovery 8B가 지는 작업 아님). **2026-07-10 실측**으로 gap 확인(예: `q=JavaScript` → 정본
   top-50 밖). 맥락-무관 recall/ranking(A)과 동음이의 sense 선택(맥락 필요, §8-7)은 **별개**다 —
   [findings](findings-real-anchor-grounding-ties.md) "Memory-api public search relevance",
-  `memory_api_agent_recommendation_requirements*.md`.
+  `../archive/memory_api_agent_recommendation_requirements.md`.
 - **2026-07-14 갱신:** memory-api가 **다국어 인덱스 overwrite 버그를 fix + 전체 재색인** → cross-language
   burial 해소(예: `q=JavaScript`→Q2005 rank 1). 전량 재측정(20-seed) = **GROUND 7 / TIE 10 / MISS 3**; 실패
   원인이 recall→**tiebreak**로 이동(canonical이 rank 1로 표면화하나 exact-label 동점을 linker가 margin 0으로

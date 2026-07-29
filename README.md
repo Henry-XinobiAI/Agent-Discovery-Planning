@@ -48,6 +48,24 @@ Alpha 구현이 진행되며 실측·계약 기준이 `impl/`로 이동해 대�
 | `archive/agent_discovery_recommendation_build_plan.md` | Phase 1–7 실행 계획(레포 레이아웃·모듈·순서) | `impl/` + 코드 레포 `tasks/todo.md` |
 | `archive/agent_discovery_recommendation_walkthrough.md` | 초기 동작 설명(요청→응답 시나리오) | `impl/README.md` + `impl/01`–`11` |
 
+### 2c. 외부 협의·결정 이력
+
+타 팀(memory-api·bourbon-api)과의 협의 문서 중 **더 이상 열린 요청이 아닌 것**. 결정의 *내용*은 `impl/`과
+아래 active 레지스터가 갖고, 여기 있는 문서는 **무엇을 왜 요청했고 어떻게 착지했는지**의 경위를 보존한다
+(각각 상단에 masthead).
+
+| 문서 | 당시 다루던 것 | 성격 / 현재 위치 |
+|---|---|---|
+| `archive/memory_api_statement_attribution_request.md` | statement `owner_asserted: bool` 필드 + 검색 필터 (K-A1 rev 3) | **채택되지 않은 초안** — 필드는 미생성. assertion-source `confidence` tier를 `attribution` enum으로 투영하는 형태로 착지 |
+| `archive/memory_api_statement_attribution_followup.md` | 위 협의의 종결 기록 (K-A1 rev 5) | **채택된 종결 결정** — 의미론 + server-side 필터 둘 다 착지(`#129`/`3e4e7c1`, `f246f93`). 계약 요약은 `impl/00`, 잔여 테스트 공백은 R2, 연기된 리스크는 R7 |
+| `archive/memory_api_agent_recommendation_requirements.md` | memory-api가 제공해야 할 최소 계약 (2026-07-14 이전) | **이전 협의 기록** — 현재 계약 아님. 현재 상태는 `impl/findings-real-anchor-grounding-ties.md` / `impl/11-forward-roadmap.md` |
+
+> **루트에서 활성 요청 레지스터 역할을 하는 문서는 이 둘뿐이다**:
+> `memory_api_discovery_open_requests.md`(memory-api R1–R7) ·
+> `bourbon_api_discovery_open_requests.md`(bourbon-api B1–B2).
+> 단 **이 둘이 열린 cross-team 항목 전체는 아니다** — 아직 승격되지 않은 deferred 항목이
+> `docs/superpowers/specs/`의 스펙 §Open items에 남아 있을 수 있다(현재 1건, memory-api 레지스터 상단 참조).
+
 ---
 
 ## 3. 읽는 순서

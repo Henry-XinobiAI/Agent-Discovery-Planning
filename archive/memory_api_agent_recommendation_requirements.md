@@ -1,6 +1,6 @@
 # Memory API Requirements for Agent Recommendation
 
-> **📌 Dated negotiation record — not the current contract (2026-07-14).** This is a cross-team ask history between discovery and memory-api, preserved for provenance. For what memory-api actually ships today, read the dated "Update 2026-07-14" blocks inline and the audit reflected in `impl/findings-real-anchor-grounding-ties.md` / `impl/11-forward-roadmap.md`.
+> **📌 Dated negotiation record — not the current contract (2026-07-14).** This is a cross-team ask history between discovery and memory-api, preserved for provenance. For what memory-api actually ships today, read the dated "Update 2026-07-14" blocks inline and the audit reflected in `../impl/findings-real-anchor-grounding-ties.md` / `../impl/11-forward-roadmap.md`.
 
 ## Purpose
 
@@ -149,7 +149,7 @@ features:
 > untuned BM25 (memory-api's continuing work). **The §"Out of scope — context NOT requested" note below
 > is now reversed:** context disambiguation *is* shipped as a search-layer bias — `context=` (prose
 > `should` boost 0.5) + `types=` (positive `instance_of` filter). Detail:
-> `impl/findings-real-anchor-grounding-ties.md` "Update (2026-07-14)". **Remaining ask** here: a query-time
+> `../impl/findings-real-anchor-grounding-ties.md` "Update (2026-07-14)". **Remaining ask** here: a query-time
 > relevance/`_score` projection onto `EntitySummary` (for the linker's tie margin).
 
 Agent-recommendation grounding starts by mapping topic text to a QID via `GET /knowledge/entities`. In some
@@ -198,7 +198,7 @@ search requirement.
   `Grounder.ground(mention, *, context=)` (offline-only; it created the `/personal/groundings` edges). Its
   candidate step uses the **same lexical recall**, so the search improvement above is a prerequisite for it
   too. Exposing it as a read endpoint is a separate discussion. Details/evidence:
-  `impl/findings-real-anchor-grounding-ties.md`.
+  `../impl/findings-real-anchor-grounding-ties.md`.
 
 ### Acceptance (search relevance)
 - Common tech queries like `JavaScript`, `TypeScript` surface the canonical entity near the top (e.g. top-3).
