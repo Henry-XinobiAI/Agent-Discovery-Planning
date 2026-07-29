@@ -245,20 +245,23 @@ _STATUS_BY_CODE = {
 agent 공간**의 edge — edge만 감싸면 그 사이 정보가 사라집니다([02](02-provider-boundary.md) 세 겹 구조).
 `sink`로는 `ListDecisionLogSink`를 주입해 record를 되읽어 트레이스로 렌더합니다.
 
-**종료 코드 계약**(문자열 파싱 금지 — transport 실패와 계약 위반이 설계상 같은 도메인 예외 타입이라
-메시지로 가르는 건 추측입니다):
+**종료 코드 계약 — 축은 시간이 아니라 "누가 고쳐야 하는가"입니다**(문자열 파싱 금지 — transport 실패와
+계약 위반이 설계상 같은 도메인 예외 타입이라 메시지로 가르는 건 추측입니다):
 
 | | 뜻 |
 |---|---|
 | `0` | 결론이 선 진단 결과 — 추천·**빈 결과**·명시 silence·`GroundingFailedError`. 빈 결과도 발견이다 |
-| `1` | provider I/O·상류 계약 위반·생성기 degrade·cleanup 실패·예상 밖 예외 |
-| `2` | **로컬 전제만** — CLI 사용법·범위 밖 `--limit`·공백 인자·`STAGE=prod`·fixture 부재/해시 불일치 |
+| `1` | **상류가 잘못 답했거나 못 답함** — provider I/O·계약 위반·생성기 degrade·cleanup 실패·예상 밖 예외 |
+| `2` | **운영자가 고칠 것** — CLI 사용법·범위 밖 `--limit`·공백 인자·`STAGE=prod`·fixture 부재/해시 불일치·대화형 proposition 선택 오답 |
 
-이 구분은 문서가 아니라 **구조로** 강제됩니다: preflight phase A는 **sync 함수**이고 provider를 하나도 안
-받습니다 — provider 호출은 전부 coroutine이므로 phase A가 그중 **어느 것도 부른 적이 없음**이 타입으로
-드러납니다. 즉 **exit 2는 provider client가 만들어지기 전, network I/O 이전에 확정**됩니다. ("I/O를 전혀 안
-한다"는 아닙니다 — fixture 부재·해시 불일치는 `load_fixture`의 **로컬 파일** I/O 결과이고, 그것도 exit 2입니다.
-경계는 sync/async가 아니라 **로컬 전제 vs 상류 응답**입니다.) phase B가 보고하는 건 전부 I/O 결과입니다.
+**exit 2를 "아직 아무것도 안 썼다"로 읽으면 안 됩니다.** `run` 경로에서는 마침 그렇습니다 — preflight
+phase A는 **sync 함수**이고 provider를 하나도 안 받는데, provider 호출은 전부 coroutine이므로 phase A가
+그중 **어느 것도 부른 적이 없음**이 타입으로 드러납니다(→ exit 2가 provider client 생성 전·network I/O
+이전에 확정). 하지만 **`create`에는 그 보장이 없습니다**: proposition 후보 3개를 LLM으로 받은 **뒤에야**
+운영자에게 고르라고 묻기 때문에, 잘못된 번호를 입력하면 **network 호출 이후에 나는 exit 2**입니다
+(`cli/e2e/run.py::_choose_proposition`, 회귀 테스트
+`test_create_exits_2_on_an_invalid_selection_after_the_llm_call`). 안정적인 계약은 **소유권**이지 타이밍이
+아닙니다.
 
 **단일 불변식 = 저장된 리포트가 프로세스 종료 방식과 절대 어긋나지 않는다.** 실패해도 부분 리포트가
 남고, cleanup 중 `BaseException`(Ctrl-C 포함)도 기록한 뒤 남은 cleanup을 마치고 재전파합니다. 외부 리뷰
