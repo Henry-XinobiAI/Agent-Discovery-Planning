@@ -66,10 +66,13 @@ crowding/lexical 분류(§6)를 위해 **각 query를 개별로** 검색한다. 
 실제 wire hit(`StanceEvidenceHit`)과 evaluator 입력(`Candidate`/`edge`·`NormalizedQuery`)을 **실제 경로로** 만들 수 있어야 하므로, corpus는 3층으로 커밋한다:
 
 - **eval case** — `{ case_id, topic_qid, topic_text, proposition, owner_ids: [...] }`. 한 case = 한 `evaluate()` 호출. `owner_ids`는 그 case의 shortlist(= Candidate 세트).
-- **statement** — `{ statement_key, case_id, owner_id, subject_qid, subject_entity_key, text (영어 요약형), statement_kind, epistemic, confidence, provenance_message_ids }`.
+- **statement** — `{ statement_key, case_id, owner_id, subject_qid, subject_entity_key, text (영어 요약형), statement_kind, epistemic, confidence, attribution, provenance_message_ids }`.
   - `text`는 build 시점 LLM extractor의 **영어 요약형**을 모사(원문 발췌 아님·§D6-2 note).
   - `subject_entity_key` = 안정 fixture 키 → 시딩이 실제 `subject_entity_id`로 매핑(§4). `StanceEvidenceHit`의 wire-required 필드(`subject_entity_id`·`provenance_message_ids`)를 채우기 위함.
-- **GT** — `(topic_qid, proposition, owner_id) → { statement_key: supports | opposes }`. corpus와 **함께 커밋**. `statement_key`는 fixture 안정 키(§4에서 실제 memory-api statement id로 매핑).
+  - **`attribution`(required · `owner`/`engaged`/`other`) — K-A2 이후 추가.** fixture에는 owner와 **non-owner attribution을 모두** 포함해 `_admit`의 admit/drop 경로를 실제로 태운다(owner-only fixture는 그 필터가 있는지조차 확인하지 못한다). **`confidence`를 이 용도로 overload 금지** — attribution은 assertion source, confidence는 별개 축이다.
+- **GT** — `(topic_qid, proposition, owner_id) → { statement_key: supports | opposes }`. corpus와 **함께 커밋**. `statement_key`는 fixture 안정 키(§4에서 실제 memory-api statement id로 매핑). **GT는 positional label만 소유한다** — `attribution`은 corpus statement fixture의 필드이고 GT에 저장하지 않는다(검색·`_admit` 통과 여부를 정하는 값이지 정답 라벨이 아니다).
+
+**Artifact 스키마 계약 (LOCK):** stance-recall이 읽고 쓰는 **모든 serialized artifact model** — corpus · GT · query snapshot · seed mapping · report · manifest — 는 **unknown field를 거부**한다. (여섯 개가 전부 `schema_version`을 갖는다는 계약은 아니다 — 여기서 고정하는 것은 **직렬화 경계의 동작**이다.) 이유: fixture의 오타 필드가 조용히 drop되면 실험 provenance가 **거짓**이 된다(측정은 성공하고 값은 틀린다). 어떤 base로 강제하는지는 구현 주석의 몫이다.
 
 > ⚠️ **`case_id`는 fixture bookkeeping 전용 — 검색 격리 필드가 아니다.** memory-api는 `case_id`로 필터링하지 않으므로, **같은 `(owner_id, subject_qid)`를 공유하는 다른 case의 statement도 검색에 함께 들어온다**. 격리는 오직 `(owner_id, subject_qid)`로만 이뤄진다. corpus 작성자는 case 독립성을 가정하면 안 되며, cross-case 오염을 피하려면 case마다 **distinct owner/QID**를 쓰거나 GT가 cross-case statement를 감안해야 한다.
 
@@ -137,6 +140,7 @@ query generator 입력은 `(topic, proposition)`이므로 **한 표본 파일은
 ```
 - **prompt version은 수동 문자열만으로 부족** — `prompt_identity`(prompt/schema/model/generator_commit **hash**)로 표본의 출처를 고정한다. run/manifest가 이 identity를 기록·검증.
 - **loader는 corpus의 case 집합 == snapshot의 case 집합**을 **정확히** 검사(누락/잉여 case면 loud fail). 각 case의 `queries`는 유효한 symmetric `StanceQueries`.
+- **★ 한 `queries_<ver>/` 디렉터리는 정확히 하나의 `prompt_identity`만 포함한다 (LOCK).** K개 표본의 identity가 하나라도 다르면 **loud fail**. 이유: prompt/schema/model/generator는 그 디렉터리의 **고정 실험 조건**이고 **LLM 출력만** 독립 표본이다 — 섞인 identity를 평균내면 prompt 버전 비교가 **조용히 무효**가 된다. manifest(§7)도 `prompt_identity`를 하나만 담으므로 혼합 디렉터리는 애초에 표현 불가다.
 
 ### 5.2 refresh / run 분리 (artifact 생성 ≠ 측정)
 seed/run 분리 원칙과 맞추어 **refresh를 별도 커맨드**로 둔다(§8):
@@ -172,7 +176,7 @@ seed/run 분리 원칙과 맞추어 **refresh를 별도 커맨드**로 둔다(§
 
 ### 6.3 miss 3분류 (LOCK · 명명 고정)
 각 GT statement를 정확히 하나로 분류:
-- **`batch_recalled`** — production ANY-match@`per_owner_limit`(=40)의 `by_owner`에서 recall.
+- **`batch_recalled`** — 해당 run이 **선언하고 manifest에 기록한** `per_owner_limit`으로 실행한 production ANY-match 결과(`by_owner`)에서 recall. *(비규범 참고: 2026-07-29 기준 production default는 10 — 튜닝 대상이므로 숫자를 계약으로 박지 않는다.)*
 - **`single_query_recoverable`** — batch에서는 miss지만 **단일-query 진단 중 하나**에서 recall. → **ANY-match dilution / cross-query crowding의 강한 증거.**
 - **`unresolved_miss`** — 단일-query 진단에서도 miss. → **lexical mismatch 또는 single-query 내부 cap crowding**(둘을 합쳐 표현). **진짜 lexical miss로 단정하지 않는다** — 개별 query에서도 top-`<진단값>` 밖으로 밀렸을 수 있다. 순수 lexical miss 확정에는 **uncapped rank/trace 또는 semantic 비교**가 필요(이월).
 
@@ -180,6 +184,8 @@ seed/run 분리 원칙과 맞추어 **refresh를 별도 커맨드**로 둔다(§
 
 ### 6.4 진단 파라미터
 - 단일-query 진단 검색의 `per_owner_limit`은 **엔드포인트 ceiling(50)**까지 올려 single-query 내부 cap 영향을 줄이되, 그래도 밀릴 수 있음을 `unresolved_miss` 정의가 흡수.
+- **★ declared cap의 end-to-end 전달 (LOCK):** 측정 run은 사용할 `per_owner_limit`을 **명시적으로 선언**하고 **manifest에 기록**하며, **동일한 값을 `StanceEvaluator`의 settings에 주입**해 wire 요청까지 그 값이 흘러가게 해야 한다. **ambient/default settings 폴백은 금지** — 그렇지 않으면 evaluator가 자기 settings 기본값으로 검색하면서 **manifest가 주장하는 cap과 실제 측정 cap이 달라진다**(측정은 성공하고 기록은 거짓이 되는, §3.1 unknown-field와 같은 종류의 실패).
+- **cap 비교는 별도 run끼리** 한다. 한 run 안에서 여러 cap을 훑는 sweep은 이 eval의 계약이 아니다 — 합성 fixture는 cap이 트레이드하는 BM25 crowding·lexical mismatch를 재현하지 못하므로 **이 eval은 operational cap 결정 수단이 아니다**(그 판단은 실 트래픽 telemetry 몫).
 
 ---
 
@@ -198,11 +204,14 @@ seed/run 분리 원칙과 맞추어 **refresh를 별도 커맨드**로 둔다(§
 ```
 eval stance-recall seed            --tenant <eval-tenant>                      # network (ingestion) — port-only, unavailable until cross-team 계약(§1.1/§11)
 eval stance-recall refresh-queries --prompt-version <ver> [--force]            # network + LLM (new snapshot·atomic publish)
-eval stance-recall run             --tenant <eval-tenant> --prompt-version <ver>   # network-only — real 실행은 seed+hash 계약 후(§1.1)
-eval stance-recall compare         --tenant <eval-tenant> <verA> <verB>        # case-단위 paired delta (실패 표본 있으면 non-zero/publish 금지·§9)
+eval stance-recall run             --tenant <eval-tenant> --prompt-version <ver> --per-owner-limit <n>   # network-only — real 실행은 seed+hash 계약 후(§1.1)
+eval stance-recall compare         --tenant <eval-tenant> <verA> <verB> --per-owner-limit <n>            # case-단위 paired delta (실패 표본 있으면 non-zero/publish 금지·§9)
 ```
+- **`--per-owner-limit`은 `run`·`compare`의 required 인자다(§6.4 declared cap).** 설정 기본값으로 떨어지는 optional 인자가 아니다 — 선언 표면이 없으면 구현자는 ambient settings에서 값을 가져올 수밖에 없고, 그 순간 manifest가 주장하는 cap과 실제 측정 cap이 갈린다.
+- **`compare`의 A/B는 같은 cap이어야 한다** — cap이 다르면 그 delta는 prompt 버전 차이가 아니라 cap 차이를 재는 것이다. 인자를 A/B 공통으로 하나만 받는 이유가 이것이다.
 - run은 시작 시 corpus hash 검증(§4-6), 종료 시 **manifest** 기록.
-- **manifest** 필드: `memory_api_commit` · OpenSearch 설정/버전 · corpus hash · `prompt_identity`(prompt/schema/model/generator_commit hash) · 사용된 생성 query(표본별) · owner별 반환 statement id · cap/truncation 정보 · 계산된 지표(micro/macro/방향별/both-sides/3분류, mean/min/max).
+- **manifest** 필드: `memory_api_commit` · OpenSearch 설정/버전 · corpus hash · `prompt_identity`(prompt/schema/model/generator_commit hash) · 사용된 생성 query(표본별) · **선언된 `per_owner_limit`(§6.4)** · 반환 statement id · truncation 정보 · 계산된 지표(micro/macro/방향별/both-sides/3분류, mean/min/max).
+- **★ 반환 id·truncation의 키잉 = `sample → case_id → owner` (LOCK).** **owner-only 키잉 금지** — 같은 `owner_id`가 여러 case에 **정당하게** 등장하므로(§3.1의 case_id 경고와 같은 사실), owner를 최상위 키로 쓰면 한 case의 기록이 다른 case에 **조용히 덮이고** provenance가 손상된다. `case_id`는 검색 필터가 아니지만 **기록의 격리 단위**다.
 
 ---
 
