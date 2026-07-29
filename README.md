@@ -48,6 +48,20 @@ Alpha 구현이 진행되며 실측·계약 기준이 `impl/`로 이동해 대�
 | `archive/agent_discovery_recommendation_build_plan.md` | Phase 1–7 실행 계획(레포 레이아웃·모듈·순서) | `impl/` + 코드 레포 `tasks/todo.md` |
 | `archive/agent_discovery_recommendation_walkthrough.md` | 초기 동작 설명(요청→응답 시나리오) | `impl/README.md` + `impl/01`–`11` |
 
+### 2c. 외부 요청·결정 이력 (채택되지 않은 초안)
+
+타 팀에 보낼 요청서로 작성했다가 **협의 과정에서 다른 형태로 착지해 채택되지 않은** 초안. 결정의 *결과*가
+아니라 *무엇이 왜 철회됐는지*를 이해하는 비교 대상으로 남긴다(상단에 masthead).
+
+| 문서 | 당시 요청 | 실제 착지 / 현재 위치 |
+|---|---|---|
+| `archive/memory_api_statement_attribution_request.md` | statement `owner_asserted: bool` 필드 + 검색 필터 (K-A1 rev 3) | 필드는 **미생성** — assertion-source `confidence` tier를 `attribution` enum으로 투영(`#129`/`3e4e7c1`) + 요청 필터 `attribution: list[Attribution]`(`f246f93`). 결정 기록 = `memory_api_statement_attribution_followup.md`(rev 5), 잔여 항목 = `memory_api_discovery_open_requests.md` R2 |
+
+> **현재 살아 있는 cross-team 문서**(archive 아님): `memory_api_discovery_open_requests.md`(memory-api 미해결
+> 레지스터) · `bourbon_api_discovery_open_requests.md`(bourbon-api) ·
+> `memory_api_statement_attribution_followup.md`(K-A1 종결 기록) ·
+> `memory_api_agent_recommendation_requirements{,_ko}.md`(2026-07-14 이전 협의 이력 — 현재 계약 아님, 배너 참조).
+
 ---
 
 ## 3. 읽는 순서

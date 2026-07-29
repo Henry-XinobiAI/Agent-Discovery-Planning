@@ -5,7 +5,7 @@
 - **대상**: `bourbon-memory-api`
 - **기준 커밋**: memory-api `f246f93`, bourbon-api `b84b328`, discovery main `60c4cc2` (전 항목 이 시점 소스 직접 확인).
 - **성격**: 이 문서는 **단건 요청서가 아니라 미해결 요청 레지스터**다. 항목별로 독립 처리 가능하며, R1을 제외한 나머지는 Phase 10 real-edge turn-on(`REAL_EDGE_ENABLED=ON`) 설계 시점에 이미 식별된 blocker다.
-- **종결된 선행 요청**: statement `attribution` 계약(K-A1) — `memory_api_statement_attribution_request.md` / `..._followup.md` (rev 4). 응답 필드 `#129`/`3e4e7c1`, 요청 필터 `f246f93`로 **shipped**. 남은 것은 아래 R2(테스트)뿐.
+- **종결된 선행 요청**: statement `attribution` 계약(K-A1) — 결정 기록은 `memory_api_statement_attribution_followup.md`(rev 5). 응답 필드 `#129`/`3e4e7c1`, 요청 필터 `f246f93`로 **shipped**. 남은 것은 아래 R2(테스트)뿐. 최초 요청서(`owner_asserted: bool` 제안)는 **채택되지 않아** `archive/memory_api_statement_attribution_request.md`로 보관했다.
 
 ## 요약
 

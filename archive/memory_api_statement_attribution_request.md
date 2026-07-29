@@ -1,6 +1,17 @@
 # Memory API 요청 — statement `owner_asserted` 필드 + 검색 필터 (K-A1)
 
-- **상태**: DRAFT rev 3 — 발신 전 리뷰 필요.
+> **📌 채택되지 않은 초안 — 이 문서의 설계는 구현되지 않았다 (2026-07-29 보관).** 여기서 요청한
+> **`owner_asserted: bool` 필드는 만들어지지 않았다.** memory-api는 대신 저장된 assertion-source
+> `confidence` tier를 응답·검색 시점에 `attribution` enum(`owner`/`engaged`/`other`)으로 투영했다
+> (별도 필드 없음, 재색인 없음). 즉 **§2·§3-1의 "confidence 파생은 위험하다"는 반대 근거 자체가
+> 철회됐다** — 왜 철회됐는지는 `../memory_api_statement_attribution_followup.md` §1이 코드 근거와 함께
+> 기록한다.
+>
+> 이 문서는 그 철회를 이해하는 데 필요한 **비교 대상**으로만 보존한다(followup §1·§4가 여기의
+> §2·§3-1·§3-2를 직접 인용한다). **현재 계약을 알고 싶으면 이 문서를 읽지 말고** followup(종결 기록)과
+> `../memory_api_discovery_open_requests.md`(잔여 항목 레지스터)를 본다.
+
+- **상태**: ⛔ 이 형태로 **발신되지 않음** — DRAFT rev 3에서 종료. 후속 협의 결과는 followup 참조.
   - rev 2 (2026-07-22): provenance-sender 구성 → **assertion source** 의미론으로 교체, optional server-side 검색 필터 포함.
   - rev 3 (2026-07-22): 필수 계약을 5값 enum에서 **`owner_asserted: bool`**로 단순화(enum은 join이 닫히지 않고 Discovery의 실제 필요는 boolean 하나), "extraction이 asserter를 식별한다"는 전제를 확정 사실이 아닌 **확인할 구현 전제**로 완화, **OR의 범위를 same-claim merge로 한정**(superseding statement는 독립 계산·상속 금지 — confidence max-keep 패턴 적용 금지).
 - **요청 주체**: Agent Discovery (bourbon-agent-recommendation-api)
