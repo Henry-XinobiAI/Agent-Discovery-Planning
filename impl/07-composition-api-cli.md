@@ -13,7 +13,7 @@ client 소유는 lifespan.**
 
 이 경계가 이 문서에서 가장 중요합니다.
 
-| | `api/main.py` lifespan | `api/depends/pipeline.py` `build_pipeline` |
+| | `api/main.py` lifespan | `api/depends/pipeline.py` `build_edge_wiring` · `build_pipeline` |
 |---|---|---|
 | 역할 | **httpx pool을 가진 client를 만들고·주입하고·닫는다** | **client 비소유 조립기** — 받은 것을 배선만 |
 | flag 읽기 | 어떤 client를 **만들지** 정함 | 받은 인자로 가드 적용 |
@@ -25,6 +25,11 @@ client 소유는 lifespan.**
 **왜 이렇게 나눴나:** 조립이 도중에 raise해도 lifespan의 `finally`가 이미 만든 client를 전부 닫습니다.
 `build_pipeline`은 **자기가 소유한 적 없는 자원을 샐 수 없습니다**. 반대로 client를 안에서 만들면
 "조립 실패 시 방금 만든 pool이 새는" 경로가 생깁니다.
+
+**부수 효과 — 조립기가 재사용 가능해졌습니다.** client를 안 들기 때문에 lifespan 밖에서도 부를 수 있고,
+실제로 **두 번째 호출자**가 생겼습니다: e2e 진단 CLI(아래 "CLI" 절). 진단 도구는 앱과 **같은 그래프**를
+돌려야 의미가 있으므로(같은 가드·같은 provenance·같은 LLM leg) 두 번째 composition root를 파지 않고
+이 함수들을 그대로 씁니다.
 
 ## composition root (`api/depends/pipeline.py`)
 
@@ -39,6 +44,7 @@ def build_pipeline(
     eligibility_provider: EligibilityProvider | None = None,
     edge_version: str | None = None,
     eligibility_version: str | None = None,
+    sink: DecisionLogSink | None = None,                  # 미지정 = StructlogDecisionLogSink (배포 기본)
 ) -> RecommendationPipeline:
     edge, eligibility, edge_ver, elig_ver = _resolve_edge_wiring(...)   # Guard 0/1 (아래)
     settings = LinkerSettings.get()
@@ -67,7 +73,7 @@ def build_pipeline(
             provider_versions=ProviderVersions(          # edge/elig는 **넘겨받은 문자열 그대로**
                 anchor="memory-api@v0", edge=edge_ver, persona="null@v0", eligibility=elig_ver),
             contract_version="edge@v0",
-            sink=StructlogDecisionLogSink(),             # emit-only, 무한 메모리 없음
+            sink=sink if sink is not None else StructlogDecisionLogSink(),   # 배포 기본 = emit-only
         ),
     )
 ```
@@ -119,7 +125,7 @@ try:
     stance_search = HttpStanceEvidenceSearch.from_settings() if StanceSettings.get().STANCE_JUDGE_ENABLED else None
     if real_edge_enabled:
         edge_projection = HttpOwnerTopicProjectionProvider.from_settings()
-    edge, eligibility, edge_version, eligibility_version = _build_edge_wiring(edge_projection)
+    edge, eligibility, edge_version, eligibility_version = build_edge_wiring(edge_projection)
     app.state.pipeline = build_pipeline(knowledge, stance_search, edge_provider=edge, ...)
     yield
 finally:
@@ -131,8 +137,10 @@ finally:
   `wrapper.close_client()`가 닫습니다(안 만들었으면 no-op).
 - **`_close_lifespan_clients`는 중첩 `finally` 3단** — 하나가 raise해도 나머지 close가 전부 시도됩니다.
   둘 이상 raise하면 가장 안쪽 예외가 전파됩니다. 꺼진 단계의 client는 `None`이라 각 close가 가드됩니다.
-- **`_build_edge_wiring`은 flag를 안 읽습니다.** `edge_projection`의 존재 자체가 스위치이고, `None`이면
-  네 값 전부 `None`을 반환 — 그게 Guard 0을 만족시키는 방식입니다.
+- **`build_edge_wiring`은 flag를 안 읽습니다.** `edge_projection`의 존재 자체가 스위치이고, `None`이면
+  네 값 전부 `None`을 반환 — 그게 Guard 0을 만족시키는 방식입니다. (flag를 읽는 건 `build_pipeline` 안의
+  `_resolve_edge_wiring`이고, 이쪽이 Guard 0/1을 겁니다. 이름이 비슷하니 주의 — 하나는 **재료를 만들고**,
+  하나는 **flag와 대조해 검증**합니다.)
 
 ### production 거부 가드 (`_reject_real_edge_in_production`)
 
@@ -216,7 +224,59 @@ _STATUS_BY_CODE = {
   eval을 lazy import.
 - **`cli/corpus.py`** — 코퍼스 빌더 (`build` / `build-guards` / `build-anchors`). [09 문서](09-eval-harness.md).
 - **`cli/eval.py`** — `run`(Phase 6) + `gate`(Phase 7). [10 문서](10-eval-metrics-and-gates.md).
+- **`cli/e2e/`** — `e2e-recommend`(아래 절). **배포된 서빙 그래프를 real memory-api 상대로** 도는 유일한 CLI.
+  (`cli/corpus.py build-anchors`도 real memory-api를 치지만 그건 코퍼스 **빌드**용 검색이지 파이프라인 실행이
+  아닙니다. `cli/recommend.py`는 `--corpus` mock 전용.)
 - `eval/`은 각 핸들러 안에서 **lazy import** → `cli/`가 import-isolation 스캔 밖.
+
+### `e2e-recommend` — real 코퍼스 상대 진단 도구 (2026-07-29 머지, PR #28)
+
+**왜 있나:** `/recommend`가 빈 결과를 돌려줬을 때 트레이스만으로는 **"코퍼스가 비어서"와 "버그라서"를
+가를 수 없습니다.** 이 도구는 run에 쓸 client를 그대로 써서 memory-api에 **먼저 직접 물어보고**(preflight),
+그다음 파이프라인을 돌린 뒤, 둘을 한 리포트에 나란히 적습니다.
+
+`create`(합성 대화 fixture 생성) / `run`(fixture로 파이프라인 실행) 두 하위 명령입니다. **도구가 지어내는
+것은 requester↔requester-agent 대화 하나뿐**이고 후보 신호(competence·statement)는 전부 이미 있는 데이터며,
+**memory-api에 아무것도 쓰지 않습니다.**
+
+배선은 `_run`이 위 조립기를 그대로 부릅니다 — projection을 `RecordingProjection`으로 감싸 →
+`build_edge_wiring` → 돌아온 edge provider를 `RecordingEdgeProvider`로 **두 번째로** 감쌉니다.
+순서가 load-bearing입니다: 앞은 **owner 공간**의 competence, 뒤는 **identity resolution이 만들어낸
+agent 공간**의 edge — edge만 감싸면 그 사이 정보가 사라집니다([02](02-provider-boundary.md) 세 겹 구조).
+`sink`로는 `ListDecisionLogSink`를 주입해 record를 되읽어 트레이스로 렌더합니다.
+
+**종료 코드 계약**(문자열 파싱 금지 — transport 실패와 계약 위반이 설계상 같은 도메인 예외 타입이라
+메시지로 가르는 건 추측입니다):
+
+| | 뜻 |
+|---|---|
+| `0` | 결론이 선 진단 결과 — 추천·**빈 결과**·명시 silence·`GroundingFailedError`. 빈 결과도 발견이다 |
+| `1` | provider I/O·상류 계약 위반·생성기 degrade·cleanup 실패·예상 밖 예외 |
+| `2` | **로컬 전제만** — CLI 사용법·범위 밖 `--limit`·공백 인자·`STAGE=prod`·fixture 부재/해시 불일치 |
+
+이 구분은 문서가 아니라 **구조로** 강제됩니다: preflight phase A는 **sync 함수**이고 provider를 안 받으므로
+I/O를 한 적이 없음이 증명되고(→ exit 2는 client가 생기기 전에 확정), phase B가 하는 건 전부 I/O 결과입니다.
+
+**단일 불변식 = 저장된 리포트가 프로세스 종료 방식과 절대 어긋나지 않는다.** 실패해도 부분 리포트가
+남고, cleanup 중 `BaseException`(Ctrl-C 포함)도 기록한 뒤 남은 cleanup을 마치고 재전파합니다. 외부 리뷰
+5라운드가 전부 이 한 불변식의 서로 다른 누수 경로였습니다.
+
+**이 도구가 관측 못 하는 것을 리포트가 스스로 밝힙니다** — 탈락 후보의 원 verdict(drop이 `{agent_id, reason}`만
+남김: `wrong_stance`는 verdict가 있었다가 이 이음매에서 사라진 것, `stance_unevaluated`는 애초에 없던 것 →
+다르게 출력), raw competence 신호(어댑터 내부 translation에만 존재), preflight QID는 symbolic 규칙 기반
+**heuristic**(agentic grounder는 그 규칙을 안 씀 → `probe_qid`라 부르고 불일치 시 명시), agent catalog 존재는
+`unverified`(bourbon-api에 조회 수단 없음 = turn-on 게이트 3).
+
+**안전 봉투:** `STAGE=prod` 거부(앱 startup 가드와 같은 규칙) · **requester self-exclusion 미구현**(리포트가
+매번 `self_exclusion_enforced: false`를 싣습니다 — 막지는 못하고 말하기만 합니다 = turn-on 게이트 1) ·
+artifacts는 로컬 전용(gitignore) · 실제 statement 본문은 120자 절단이 기본.
+
+**재현성**은 seed가 아니라 **fixture 재사용**입니다(proxy가 seed-결정적이지 않음). fixture는 대화 본문의
+`content_hash`를 들고 다니고 `run`이 재계산해 불일치를 거부합니다 — 턴을 고치고 해시를 그대로 두면 조용히
+로드돼 그 이후의 모든 비교가 무효가 되기 때문입니다. 생성기는 턴 수·화자 순서·공백·중복 위반 시 **패딩하거나
+재시도하지 않고 `None`으로 degrade**합니다(자기 입력을 고치는 진단 도구는 없느니만 못함).
+
+사용법·환경변수·acceptance 체크리스트의 단일 소스는 코드 repo `cli/e2e/README.md`입니다.
 
 ---
 
@@ -226,11 +286,15 @@ _STATUS_BY_CODE = {
 
 | sink | 동작 | 쓰는 곳 |
 |---|---|---|
-| `ListDecisionLogSink` | in-memory list 보관, `records` 읽기 전용 노출 | 테스트 / eval / CLI `--corpus` |
+| `ListDecisionLogSink` | in-memory list 보관, `records` 읽기 전용 노출 | 테스트 / eval / CLI `--corpus` / `e2e-recommend` |
 | `StructlogDecisionLogSink` | record당 structured event 1개 emit, **아무것도 안 보관** | 배포 서빙 |
 
 배포 경로가 `List`를 쓰면 long-running 서버에서 무한 증가 → leak. 그래서 배포는 `Structlog`.
 `decision_log_id`가 로그 event로 되짚는 join 키.
+
+`build_pipeline`의 `sink` 인자가 이 선택을 **호출자에게** 넘깁니다(미지정 = `Structlog` = 기존 배포 동작
+그대로). `e2e-recommend`가 `List`를 주입하는 이유는 record를 **되읽어야** 하기 때문입니다 — emit-only sink
+위에서는 트레이스를 렌더할 수 없고, 그렇다고 로그를 파싱하는 건 계약이 아닙니다.
 
 ---
 

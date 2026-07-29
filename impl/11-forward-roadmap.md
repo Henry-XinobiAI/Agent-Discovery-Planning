@@ -201,6 +201,25 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
 > | memory-api R1–R6 | 비활성 owner가 후보로 남음(R1) 외 5건 | memory-api |
 >
 > 권위 있는 목록은 [Phase 10 real-edge 스펙 §9](../docs/superpowers/specs/2026-07-24-phase10-real-edge-contract-slice-design.md)입니다.
+>
+> **★ 2026-07-29 — 게이트를 재는 도구가 생겼습니다 (`e2e-recommend`, PR #28 머지).** real memory-api
+> 코퍼스를 상대로 배포된 그래프를 그대로 돌려 grounding→projection→identity→eligibility→stance→ranking을
+> 한 리포트로 뽑는 진단 CLI입니다 (구현·계약 = [07 composition](07-composition-api-cli.md) 말미).
+> 게이트 판단에 직접 닿는 부분:
+>
+> - **게이트 1(self-exclusion)** — 여전히 **미구현**이지만, 이제 매 리포트가 `self_exclusion_enforced: false`를
+>   싣고 요청자가 자기 에이전트를 추천받았는지 **실제로 보여줍니다**. 빈도를 추정이 아니라 관측으로 말할 수 있습니다.
+> - **게이트 3(phantom agent)** — preflight의 agent-catalog 항목이 `ok`가 아니라 **`unverified`**로 고정입니다.
+>   파생 agent ID는 계산되지만 bourbon-api에 존재 조회 수단이 없다는 사실이 도구 출력에 박제됐습니다.
+> - **게이트 4(memory-api R1–R6)** — R1(비활성 owner가 후보로 남음) 같은 항목은 **real 코퍼스에서만** 보입니다.
+>   이 도구가 그 관측을 처음으로 가능하게 합니다.
+>
+> **다만 아직 실행하지 않았습니다.** acceptance 시나리오 8개는 **전부** 오프라인 테스트가 커버하지만
+> (배포된 `build_pipeline`을 그대로 돌리고 상류만 fake), 체크리스트 마지막 행 — **배포당 real run 1회
+> (manual)** — 이 미실행입니다. 그 1회가 위 네 게이트 중 무엇이 진짜로 남았는지를 추정이 아니라 데이터로
+> 정합니다 — **다음 액션**입니다.
+> 도구가 관측 못 하는 것(탈락 후보의 원 verdict, raw competence 신호, heuristic probe QID)은 리포트가
+> 스스로 밝히므로, 게이트 판단에 그 항목들을 근거로 쓰지 마세요.
 
 Roadmap §10 Alpha 단계 2(agent-topic edge projection)·4(maturity gate)에 대응합니다. Phase 8/9가 전부
 품질·평가 작업인 반면, 배포된 Pull API가 grounding 후 후보 단계에서 503을 반환하는 현 상태를 해소하는

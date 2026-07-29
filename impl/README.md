@@ -153,7 +153,8 @@ Query ──normalize──▶ NormalizedQuery ──linker──▶ GroundingRe
 파이프라인은 모듈만 조합하고, provider 배선은 **composition root**에서 합니다. 소유는 두 층으로 갈립니다 —
 **lifespan이 httpx pool을 가진 client 3개를 만들고 닫고**, `build_pipeline`은 받은 것을 배선만 하는
 **client 비소유 조립기**입니다(조립이 실패해도 자기가 소유한 적 없는 자원을 샐 수 없음). FastAPI `POST /recommend`,
-도메인 에러 → HTTP 매핑(422 둘 · 503 셋)은 API layer 전용.
+도메인 에러 → HTTP 매핑(422 둘 · 503 셋)은 API layer 전용. 그 조립기에 **두 번째 호출자**가 있습니다 —
+real memory-api 코퍼스를 상대로 같은 그래프를 돌리는 진단 CLI `e2e-recommend`(2026-07-29).
 
 **→ 자세히: [07. composition + API + CLI](07-composition-api-cli.md)**
 
