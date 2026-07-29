@@ -17,6 +17,7 @@
 | **R4** | freshness 입력 의미(`evidence_last_seen`) | turn-on blocker | real-edge turn-on / freshness 정확도 | 중간 |
 | **R5** | persisted link/entity ownership 검증 | turn-on blocker | real-edge turn-on | 중간 |
 | **R6** | stale-competence currentness 계약 | turn-on blocker | real-edge turn-on | 높음 |
+| **R7** | `attribution` 의미론 불변식 pin | **deferred/conditional** — 지금 막는 것 없음 | 현재 release·turn-on 아님. `confidence` 의미 변경·재색인 시점 | 낮음 |
 
 R3~R6의 원 출처는 Discovery 스펙 `docs/superpowers/specs/2026-07-24-phase10-real-edge-contract-slice-design.md` §9다. 이 문서는 그중 **memory-api가 소유한 항목만** 추려 memory 팀이 단독으로 읽을 수 있게 재작성했다.
 
@@ -188,6 +189,43 @@ Discovery는 competence를 maturity / evidence_strength / freshness로 투영해
 - currentness 불일치 상태의 owner가 cross-owner 조회에 competence를 노출하지 않는다(또는 불일치 사실을 소비자가 판별할 수 있다).
 - 기존 stale 데이터 정리 계획이 정해진다.
 - (Discovery 측) currentness 불일치 owner가 후보로 새지 않는 회귀 테스트를 추가한다 — 이건 Discovery가 맡는다.
+
+---
+
+## R7. `attribution` 의미론 불변식 pin — deferred / conditional
+
+> **지금 아무것도 막지 않는다.** 현재 release도, `STANCE_JUDGE_ENABLED=ON`도, real-edge turn-on도 이 항목을
+> 기다리지 않는다. 트리거가 왔을 때 꺼내 볼 항목으로 등록해 둔 것이다 — R1~R6과 성격이 다르므로 blocker
+> 목록으로 읽지 말 것.
+
+### 현상
+
+Discovery는 `attribution == "owner"`를 "owner가 그 claim을 직접 주장했다"로 신뢰하고 stance evidence를
+admit한다. 이 신뢰의 근거는 `attribution`이 assertion-source **tier**에서 파생된다는 점이다 —
+`_util._statement_confidence`가 claim의 provenance 메시지 sender에 owner가 있을 때만(`any(s == owner_id for
+s in cited)`) OWNER를 부여한다. 즉 numeric confidence가 높아서가 아니다.
+
+이 파생이 계약으로 고정되어 있지 않다. `confidence`가 훗날 다른 목적(일반 품질 점수 등)으로 **재용도되면**
+OWNER 파생이 조용히 깨지고, Discovery는 owner가 주장하지 않은 statement를 owner 주장으로 읽는다 — stance
+verdict의 근거가 오염되는데 아무 오류도 나지 않는다.
+
+### 요청
+
+`attribution == "owner"` ⟺ claim provenance에 owner sender가 있음, 이 불변식을 **테스트로 고정**해 달라.
+그러면 `confidence`의 의미를 바꾸는 변경이 이 파생을 깨뜨릴 때 memory-api CI에서 먼저 잡힌다.
+
+### 트리거 (이 시점 전에 처리)
+
+- `confidence` tier를 재용도하거나 의미를 바꾸는 변경
+- `attribution` 파생 규칙 자체의 변경
+
+둘 다 어차피 **재색인을 요구**하는 변경이라, 그 작업과 함께 처리하기로 2026-07-23에 합의했다.
+
+### 배경
+
+이 항목은 K-A1 협의(rev 4 §1-4)에서 "연기된 장기 리스크"로 합의된 것이다. 의미론 종결의 코드 근거와 내가
+우려했던 두 오분류(owner의 질문이 OWNER로 잡히는 과대 / 타인 선주장 claim의 owner 재주장이 누락되는 과소)가
+왜 구조적으로 생기지 않는지는 `memory_api_statement_attribution_followup.md` §1에 기록돼 있다.
 
 ---
 
