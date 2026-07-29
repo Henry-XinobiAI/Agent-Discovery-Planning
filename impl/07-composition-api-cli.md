@@ -254,8 +254,11 @@ agent 공간**의 edge — edge만 감싸면 그 사이 정보가 사라집니�
 | `1` | provider I/O·상류 계약 위반·생성기 degrade·cleanup 실패·예상 밖 예외 |
 | `2` | **로컬 전제만** — CLI 사용법·범위 밖 `--limit`·공백 인자·`STAGE=prod`·fixture 부재/해시 불일치 |
 
-이 구분은 문서가 아니라 **구조로** 강제됩니다: preflight phase A는 **sync 함수**이고 provider를 안 받으므로
-I/O를 한 적이 없음이 증명되고(→ exit 2는 client가 생기기 전에 확정), phase B가 하는 건 전부 I/O 결과입니다.
+이 구분은 문서가 아니라 **구조로** 강제됩니다: preflight phase A는 **sync 함수**이고 provider를 하나도 안
+받습니다 — provider 호출은 전부 coroutine이므로 phase A가 그중 **어느 것도 부른 적이 없음**이 타입으로
+드러납니다. 즉 **exit 2는 provider client가 만들어지기 전, network I/O 이전에 확정**됩니다. ("I/O를 전혀 안
+한다"는 아닙니다 — fixture 부재·해시 불일치는 `load_fixture`의 **로컬 파일** I/O 결과이고, 그것도 exit 2입니다.
+경계는 sync/async가 아니라 **로컬 전제 vs 상류 응답**입니다.) phase B가 보고하는 건 전부 I/O 결과입니다.
 
 **단일 불변식 = 저장된 리포트가 프로세스 종료 방식과 절대 어긋나지 않는다.** 실패해도 부분 리포트가
 남고, cleanup 중 `BaseException`(Ctrl-C 포함)도 기록한 뒤 남은 cleanup을 마치고 재전파합니다. 외부 리뷰
@@ -267,9 +270,11 @@ I/O를 한 적이 없음이 증명되고(→ exit 2는 client가 생기기 전�
 **heuristic**(agentic grounder는 그 규칙을 안 씀 → `probe_qid`라 부르고 불일치 시 명시), agent catalog 존재는
 `unverified`(bourbon-api에 조회 수단 없음 = turn-on 게이트 3).
 
-**안전 봉투:** `STAGE=prod` 거부(앱 startup 가드와 같은 규칙) · **requester self-exclusion 미구현**(리포트가
-매번 `self_exclusion_enforced: false`를 싣습니다 — 막지는 못하고 말하기만 합니다 = turn-on 게이트 1) ·
-artifacts는 로컬 전용(gitignore) · 실제 statement 본문은 120자 절단이 기본.
+**안전 봉투:** `STAGE=prod` 거부(앱 startup 가드와 같은 규칙) · **requester self-exclusion 미구현** —
+리포트가 매번 `self_exclusion_enforced: false`라는 **정책 상태**를 싣지만, 실제 self-recommendation
+**검출은 `--requester-owner-id`를 준 run에서만** 되고 생략하면 "could not be checked at all"이라고 씁니다
+(막지는 못하고 말하기만 합니다 = turn-on 게이트 1) · artifacts는 로컬 전용(gitignore) · 실제 statement
+본문은 120자 절단이 기본.
 
 **재현성**은 seed가 아니라 **fixture 재사용**입니다(proxy가 seed-결정적이지 않음). fixture는 대화 본문의
 `content_hash`를 들고 다니고 `run`이 재계산해 불일치를 거부합니다 — 턴을 고치고 해시를 그대로 두면 조용히
