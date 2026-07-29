@@ -244,7 +244,7 @@ for a reason rerank cannot fix: the canonical entity never enters the candidate 
 - **(A) context-independent recall/ranking bug** — JavaScript (cross-language burial), TypeScript
   (disambiguation page #1). A bare query should surface the canonical entity; it doesn't. **Fixable in
   memory-api ranking alone**, no context anywhere. → this is the ask in
-  `memory_api_agent_recommendation_requirements*.md` ("공개 엔티티 검색 relevance").
+  `../archive/memory_api_agent_recommendation_requirements.md` ("공개 엔티티 검색 relevance").
 - **(B) context-dependent sense selection** — Python homonyms. Choosing language-vs-snake genuinely needs
   context; the bare `q` interface cannot express intent (see Spike 2's dominant-sense finding). This is NOT
   a memory-api ranking ask.

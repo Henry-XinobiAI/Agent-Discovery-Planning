@@ -4,7 +4,7 @@
 > **`owner_asserted: bool` 필드는 만들어지지 않았다.** memory-api는 대신 저장된 assertion-source
 > `confidence` tier를 응답·검색 시점에 `attribution` enum(`owner`/`engaged`/`other`)으로 투영했다
 > (별도 필드 없음, 재색인 없음). 즉 **§2·§3-1의 "confidence 파생은 위험하다"는 반대 근거 자체가
-> 철회됐다** — 왜 철회됐는지는 `../memory_api_statement_attribution_followup.md` §1이 코드 근거와 함께
+> 철회됐다** — 왜 철회됐는지는 `memory_api_statement_attribution_followup.md` §1이 코드 근거와 함께
 > 기록한다.
 >
 > 이 문서는 그 철회를 이해하는 데 필요한 **비교 대상**으로만 보존한다(followup §1·§4가 여기의

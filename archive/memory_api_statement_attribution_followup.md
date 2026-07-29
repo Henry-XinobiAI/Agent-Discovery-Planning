@@ -1,8 +1,15 @@
 # Memory API 계약 종결 기록 — `attribution` (#129) + server-side 필터 (K-A1 rev 4)
 
+> **📌 보관된 협의 기록 — 활성 요청서가 아니다 (2026-07-29 보관).** K-A1 협의는 **종결**됐다(아래 §0).
+> 계약의 *내용*은 `../impl/00-pipeline-io-reference.md`(`_admit`의 `attribution=OWNER` 의미론)이 갖고,
+> 아직 열려 있는 항목은 `../memory_api_discovery_open_requests.md`의 **R2**(필터 acceptance 테스트 공백)와
+> **R7**(deferred — `confidence` 재용도 시 불변식 pin)이 갖는다. 이 문서는 **그 결정이 왜 그렇게 났는지의
+> 경위**로 남긴다 — 특히 §1은 원 요청의 `owner_asserted` 반대 근거를 철회한 코드 근거를 담고 있어,
+> 같은 폴더의 `memory_api_statement_attribution_request.md`(채택되지 않은 초안)를 읽을 때의 대조본이다.
+
 - **상태**: ✅ **RESOLVED — 의미론·server-side 필터 둘 다 착지 (2026-07-29 갱신)**. 이 문서는 memory 팀과의 논의 결과를 확정 계약으로 기록한다 (발신용 요청서 아님).
-- **관련**: bourbon-memory-api `#129` / `3e4e7c1`(응답 필드) · `f246f93`(요청 필터). 원 요청은 **채택되지 않은 초안**으로 `archive/memory_api_statement_attribution_request.md`(K-A1 rev 3, commit `29c3e73`)에 보관 — 요청한 `owner_asserted: bool`은 만들어지지 않았고 `attribution` enum 투영으로 대체됐다.
-- **성격**: Discovery for/against 기능(`STANCE_JUDGE_ENABLED=ON`)의 release blocker였다. **계약 자체는 전부 종결**되었고, 남은 것은 계약이 아니라 memory-api 쪽 **테스트 공백** 하나뿐 → `memory_api_discovery_open_requests.md` **R2**로 이관(§2-5 참조).
+- **관련**: bourbon-memory-api `#129` / `3e4e7c1`(응답 필드) · `f246f93`(요청 필터). 원 요청은 **채택되지 않은 초안**으로 `memory_api_statement_attribution_request.md`(K-A1 rev 3, commit `29c3e73`)에 보관 — 요청한 `owner_asserted: bool`은 만들어지지 않았고 `attribution` enum 투영으로 대체됐다.
+- **성격**: Discovery for/against 기능(`STANCE_JUDGE_ENABLED=ON`)의 release blocker였다. **계약 자체는 전부 종결**되었고, 남은 것은 계약이 아니라 memory-api 쪽 **테스트 공백** 하나뿐 → `../memory_api_discovery_open_requests.md` **R2**로 이관(§2-5 참조).
 
 ---
 
@@ -94,7 +101,7 @@ router fake로 검증 불가 — OpenSearch를 실제로 태워야 함).
 
 기능은 동작하므로 Discovery 개발을 막지 않는다. 다만 **`STANCE_JUDGE_ENABLED=ON` 이전 release gate**로
 남는다. 이 항목의 권위 있는 위치는 이 문서가 아니라
-[`memory_api_discovery_open_requests.md` **R2**](memory_api_discovery_open_requests.md#r2-attribution-필터-테스트-green)이다
+[`memory_api_discovery_open_requests.md` **R2**](../memory_api_discovery_open_requests.md#r2-attribution-필터-테스트-green)이다
 — 진행 상황은 거기서 추적한다.
 
 ---
@@ -117,8 +124,8 @@ router fake로 검증 불가 — OpenSearch를 실제로 태워야 함).
   스칼라 `owner_asserted: bool`이 아니라 **리스트 enum 필터**로 착지했고, Discovery는 `["owner"]`를 보낸다.
   이전 판이 이 절을 "유일한 잔여 blocker / ❌ PENDING"으로 적어 두어 실제 상태와 어긋나 있었다.
 - **잔여 항목을 계약에서 테스트로 재분류**: 남은 것은 필터가 아니라 §2-4 acceptance test와 router fake의
-  공백이며, 권위 있는 추적 위치를 `memory_api_discovery_open_requests.md` **R2**로 이관(§2-5).
-- **원 요청서 보관**: `archive/memory_api_statement_attribution_request.md`로 이동 + "채택되지 않은 초안"
+  공백이며, 권위 있는 추적 위치를 `../memory_api_discovery_open_requests.md` **R2**로 이관(§2-5).
+- **원 요청서 보관**: `memory_api_statement_attribution_request.md`(같은 `archive/`)로 이동 + "채택되지 않은 초안"
   masthead 추가. 이 문서 §1·§4가 그 §2·§3-1·§3-2를 인용하므로 삭제하지 않고 archive에 남겼다.
 
 **rev 4 (2026-07-23)**:

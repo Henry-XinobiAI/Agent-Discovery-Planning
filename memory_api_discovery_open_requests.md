@@ -5,7 +5,7 @@
 - **대상**: `bourbon-memory-api`
 - **기준 커밋**: memory-api `f246f93`, bourbon-api `b84b328`, discovery main `60c4cc2` (전 항목 이 시점 소스 직접 확인).
 - **성격**: 이 문서는 **단건 요청서가 아니라 미해결 요청 레지스터**다. 항목별로 독립 처리 가능하며, R1을 제외한 나머지는 Phase 10 real-edge turn-on(`REAL_EDGE_ENABLED=ON`) 설계 시점에 이미 식별된 blocker다.
-- **종결된 선행 요청**: statement `attribution` 계약(K-A1) — 결정 기록은 `memory_api_statement_attribution_followup.md`(rev 5). 응답 필드 `#129`/`3e4e7c1`, 요청 필터 `f246f93`로 **shipped**. 남은 것은 아래 R2(테스트)뿐. 최초 요청서(`owner_asserted: bool` 제안)는 **채택되지 않아** `archive/memory_api_statement_attribution_request.md`로 보관했다.
+- **종결된 선행 요청**: statement `attribution` 계약(K-A1) — 결정 기록은 `archive/memory_api_statement_attribution_followup.md`(rev 5). 응답 필드 `#129`/`3e4e7c1`, 요청 필터 `f246f93`로 **shipped**. 남은 것은 아래 R2(테스트)뿐. 최초 요청서(`owner_asserted: bool` 제안)는 **채택되지 않아** `archive/memory_api_statement_attribution_request.md`로 보관했다.
 
 ## 요약
 
@@ -225,7 +225,7 @@ verdict의 근거가 오염되는데 아무 오류도 나지 않는다.
 
 이 항목은 K-A1 협의(rev 4 §1-4)에서 "연기된 장기 리스크"로 합의된 것이다. 의미론 종결의 코드 근거와 내가
 우려했던 두 오분류(owner의 질문이 OWNER로 잡히는 과대 / 타인 선주장 claim의 owner 재주장이 누락되는 과소)가
-왜 구조적으로 생기지 않는지는 `memory_api_statement_attribution_followup.md` §1에 기록돼 있다.
+왜 구조적으로 생기지 않는지는 `archive/memory_api_statement_attribution_followup.md` §1에 기록돼 있다.
 
 ---
 

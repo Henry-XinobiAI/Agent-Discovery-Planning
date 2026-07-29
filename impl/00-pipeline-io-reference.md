@@ -265,8 +265,8 @@ edge에 관측된 stance를 미러링하는 게 아니라 **요청 시점에** �
    > **`OWNER`의 의미 (계약).** numeric confidence가 높다는 뜻이 **아니다.** 현 memory-api 계약에서 `OWNER`는
    > claim의 **provenance에 owner sender가 있을 때만** 부여되는 **assertion-source attribution**이다. Discovery는
    > 이 의미론을 신뢰해 admit하고, 그럼에도 응답을 `_admit`에서 재검증한다(defense in depth). 협의 경위와 코드
-   > 근거는 `memory_api_statement_attribution_followup.md` §1, 향후 `confidence` 의미 변경 리스크는
-   > `memory_api_discovery_open_requests.md` **R7**(deferred — 지금 막는 것 없음).
+   > 근거는 `../archive/memory_api_statement_attribution_followup.md` §1, 향후 `confidence` 의미 변경 리스크는
+   > `../memory_api_discovery_open_requests.md` **R7**(deferred — 지금 막는 것 없음).
    > **provider 호출 1회 ≠ HTTP POST 1회.** 엔드포인트가 `owner_ids`를 20명으로 캡하므로 HTTP 어댑터가
    > owner chunk별로 **`ceil(K/20)`개의 POST**로 fan-out합니다(`STANCE_SEARCH_MAX_CONCURRENCY`=5로 동시성
    > 제한, chunk 하나라도 실패하면 부분 recall이 verdict를 뒤집을 수 있으므로 **전체 실패**). 기본
