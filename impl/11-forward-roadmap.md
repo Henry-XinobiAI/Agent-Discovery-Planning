@@ -201,6 +201,34 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
 > | memory-api R1–R6 | 비활성 owner가 후보로 남음(R1) 외 5건 | memory-api |
 >
 > 권위 있는 목록은 [Phase 10 real-edge 스펙 §9](../docs/superpowers/specs/2026-07-24-phase10-real-edge-contract-slice-design.md)입니다.
+>
+> **★ 2026-07-29 — 게이트를 재는 도구가 생겼습니다 (`e2e-recommend`, PR #28 머지).** real memory-api
+> 코퍼스를 상대로 배포된 그래프를 그대로 돌려 grounding→projection→identity→eligibility→stance→ranking을
+> 한 리포트로 뽑는 진단 CLI입니다 (구현·계약 = [07 composition](07-composition-api-cli.md) 말미).
+> **먼저 범위를 못 박습니다: 이 도구는 게이트를 닫지 못합니다.** 게이트 closure는 각 소유자의 **구현·계약·
+> acceptance**로만 결정됩니다(self-exclusion=discovery 구현 + bourbon-api B2, B1=bourbon-api의 pin 테스트와
+> immutable 선언, phantom-agent=정책 결정 + 조회 수단, R1–R6=memory-api 구현·검증). 도구가 주는 건
+> **production promotion 판단에 필요한 첫 real diagnostic evidence**이지 판정이 아닙니다.
+>
+> 게이트별로 실제 얻는 것:
+>
+> - **게이트 1(self-exclusion)** — 여전히 **미구현**입니다. 도구는 `--requester-owner-id`를 **명시한 run에
+>   한해** self-recommendation 발생 여부를 검출합니다. 생략하면 리포트가 "could not be checked at all"이라고
+>   씁니다(그래서 발생률 추정의 표본이 아닙니다). 매 리포트가 싣는 건 검출 결과가 아니라
+>   `self_exclusion_enforced: false`라는 **정책 상태**입니다.
+> - **게이트 2(B1 producer-side pin)** — **런타임 관측 대상이 아닙니다.** 파생 규칙의 upstream 고정 여부는
+>   실행으로 드러나지 않습니다. 도구는 여기에 기여하지 않습니다.
+> - **게이트 3(phantom agent)** — preflight의 agent-catalog 항목이 `ok`가 아니라 **항상 `unverified`**입니다.
+>   조회 수단이 없다는 사실이 도구 출력에 박제된 것이지, 검증이 수행되는 게 아닙니다.
+> - **게이트 4(memory-api R1–R6)** — real owner/projection이 live path에서 어떻게 흘러오는지 **증거를
+>   수집**합니다. 다만 CLI는 owner의 활성/탈퇴 상태를 조회하지 않으므로 **R1(비활성 owner가 후보로 남음)을
+>   자체 판별하지 못합니다** — 별도 lifecycle 정보와 대조해야 합니다. 검증·closure는 memory-api 몫입니다.
+>
+> **아직 실행하지 않았습니다.** acceptance 시나리오 8개는 **전부** 오프라인 테스트가 커버하지만(배포된
+> `build_pipeline`을 그대로 돌리고 상류만 fake), 체크리스트 마지막 행 — **배포당 real run 1회(manual)** —
+> 이 미실행입니다. **다음 액션**이며, 그 결과는 현재 데이터 경로에 대한 진단 증거이지 게이트 판정이 아닙니다.
+> 도구가 관측 못 하는 것(탈락 후보의 원 verdict, raw competence 신호, heuristic probe QID)은 리포트가
+> 스스로 밝히므로, 게이트 판단에 그 항목들을 근거로 쓰지 마세요.
 
 Roadmap §10 Alpha 단계 2(agent-topic edge projection)·4(maturity gate)에 대응합니다. Phase 8/9가 전부
 품질·평가 작업인 반면, 배포된 Pull API가 grounding 후 후보 단계에서 503을 반환하는 현 상태를 해소하는
