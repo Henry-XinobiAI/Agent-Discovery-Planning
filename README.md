@@ -60,10 +60,11 @@ Alpha 구현이 진행되며 실측·계약 기준이 `impl/`로 이동해 대�
 | `archive/memory_api_statement_attribution_followup.md` | 위 협의의 종결 기록 (K-A1 rev 5) | **채택된 종결 결정** — 의미론 + server-side 필터 둘 다 착지(`#129`/`3e4e7c1`, `f246f93`). 계약 요약은 `impl/00`, 잔여 테스트 공백은 R2, 연기된 리스크는 R7 |
 | `archive/memory_api_agent_recommendation_requirements.md` | memory-api가 제공해야 할 최소 계약 (2026-07-14 이전) | **이전 협의 기록** — 현재 계약 아님. 현재 상태는 `impl/findings-real-anchor-grounding-ties.md` / `impl/11-forward-roadmap.md` |
 
-> **현재 살아 있는 cross-team 문서는 미해결 요청 레지스터 둘뿐이다**(루트):
+> **루트에서 활성 요청 레지스터 역할을 하는 문서는 이 둘뿐이다**:
 > `memory_api_discovery_open_requests.md`(memory-api R1–R7) ·
 > `bourbon_api_discovery_open_requests.md`(bourbon-api B1–B2).
-> 이 둘에 없는 cross-team 항목은 열려 있지 않다.
+> 단 **이 둘이 열린 cross-team 항목 전체는 아니다** — 아직 승격되지 않은 deferred 항목이
+> `docs/superpowers/specs/`의 스펙 §Open items에 남아 있을 수 있다(현재 1건, memory-api 레지스터 상단 참조).
 
 ---
 

@@ -1,4 +1,4 @@
-# Memory API 계약 종결 기록 — `attribution` (#129) + server-side 필터 (K-A1 rev 4)
+# Memory API 계약 종결 기록 — `attribution` (#129) + server-side 필터 (K-A1 rev 5)
 
 > **📌 보관된 협의 기록 — 활성 요청서가 아니다 (2026-07-29 보관).** K-A1 협의는 **종결**됐다(아래 §0).
 > 계약의 *내용*은 `../impl/00-pipeline-io-reference.md`(`_admit`의 `attribution=OWNER` 의미론)이 갖고,
@@ -9,7 +9,7 @@
 
 - **상태**: ✅ **RESOLVED — 의미론·server-side 필터 둘 다 착지 (2026-07-29 갱신)**. 이 문서는 memory 팀과의 논의 결과를 확정 계약으로 기록한다 (발신용 요청서 아님).
 - **관련**: bourbon-memory-api `#129` / `3e4e7c1`(응답 필드) · `f246f93`(요청 필터). 원 요청은 **채택되지 않은 초안**으로 `memory_api_statement_attribution_request.md`(K-A1 rev 3, commit `29c3e73`)에 보관 — 요청한 `owner_asserted: bool`은 만들어지지 않았고 `attribution` enum 투영으로 대체됐다.
-- **성격**: Discovery for/against 기능(`STANCE_JUDGE_ENABLED=ON`)의 release blocker였다. **계약 자체는 전부 종결**되었고, 남은 것은 계약이 아니라 memory-api 쪽 **테스트 공백** 하나뿐 → `../memory_api_discovery_open_requests.md` **R2**로 이관(§2-5 참조).
+- **성격**: Discovery for/against 기능(`STANCE_JUDGE_ENABLED=ON`)의 release blocker였다. **계약 자체는 전부 종결**되었다. 현재 action item은 memory-api 쪽 **테스트 공백 하나(R2)**뿐이고, **R7**은 지금 아무것도 막지 않는 **조건부 미래 리스크**다 — 둘 다 `../memory_api_discovery_open_requests.md`가 추적한다(§2-5 참조).
 
 ---
 
