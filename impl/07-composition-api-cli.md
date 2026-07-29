@@ -252,7 +252,7 @@ agent 공간**의 edge — edge만 감싸면 그 사이 정보가 사라집니�
 |---|---|
 | `0` | 결론이 선 진단 결과 — 추천·**빈 결과**·명시 silence·`GroundingFailedError`. 빈 결과도 발견이다 |
 | `1` | **실행이 실패함** — provider I/O·상류 계약 위반·생성기 degrade·**cleanup 실패**·**도구 내부 예상 밖 예외** |
-| `2` | **운영자가 입력을 고쳐 다시 돌리면 되는 것** — CLI 사용법·범위 밖 `--limit`·공백 인자·`STAGE=prod`·fixture 부재/해시 불일치·대화형 proposition 선택 오답 |
+| `2` | **운영자가 입력을 고쳐 다시 돌리면 되는 것** — CLI 사용법·범위 밖 `--limit`·공백 인자·**stance 캡 초과 proposition**(직접 입력 또는 replay fixture)·**topic-only 시나리오에 준 `--proposition`**·`STAGE=prod`·fixture 부재/해시 불일치·대화형 proposition 선택 오답 |
 
 반대편을 "상류"로 부르지 않는 이유: **exit 1이 전부 상류 탓은 아닙니다.** cleanup 실패와 도구 내부의
 예상 밖 예외도 여기 들어가고, 그건 어떤 upstream도 고칠 수 없습니다.
@@ -265,6 +265,41 @@ phase A는 **sync 함수**이고 provider를 하나도 안 받는데, provider �
 (`cli/e2e/run.py::_choose_proposition`, 회귀 테스트
 `test_create_exits_2_on_an_invalid_selection_after_the_llm_call`). 안정적인 계약은 **"운영자가 고칠 수 있는
 전제 오류 vs 실행 중 실패"**이지 타이밍이 아닙니다.
+
+**입력 생성기도 자기가 먹이는 계약 안에 있어야 합니다** (코드 main `f3a245c`). proposition은
+`stance_query_generate.MAX_PROPOSITION_CHARS`(200, 공개 상수)를 넘으면 검색 **전에** None으로 거부되는데,
+**이 변경 전에는** 캡을 넘긴 proposition이 모든 로컬 검사를 통과해 저장된 뒤 `stance_query_generation_failed`
+침묵으로 끝났습니다 — **진단 대상의 실패가 아니라 진단 입력의 실패**였습니다. 지금은 proposition이
+들어오는 **세 지점 각각에서, 실패 소유자에 맞는 코드로** 거부됩니다:
+
+| 출처 | 검사 위치 | 종료 코드 |
+|---|---|---|
+| 생성 후보 | `generate._valid_propositions` → `None` | **1** (생성기 degrade) |
+| `--proposition` | `run._check_options` | **2** (운영자 몫) |
+| replay fixture | `preflight._proposition_item` | **2** |
+
+**캡은 `ConversationFixture` 모델에는 두지 않습니다.** 캡은 *이 빌드의* stance generator 소유이고 fixture는
+다른 머신에서 replay되는 durable artifact라, 캡이 내려가도 이미 쓴 fixture가 로드 불가가 되면 안 됩니다
+(judge 플래그를 fixture 계약에 넣지 않은 것과 같은 이유 — 그래서 replay 경로의 검사도 모델이 아니라
+preflight에 있습니다). 값은 `Options` 생성 시점부터 canonical이고(`normalize`가 어차피 strip하므로 캡은
+generator가 보는 값에 걸립니다), 손으로 고친 fixture의 공백은 — 이건 artifact 정규성이라 **모델이** —
+조용히 고치지 않고 **거부**합니다.
+
+**fixture는 `conversation-fixture@v2`이고, version literal은 정확히 하나의 wire shape를 지칭합니다.**
+default 있는 additive 필드도 bump 사유입니다 — 한 버전이 두 shape를 가리키는 것이 literal이 막으려던
+바로 그것이기 때문입니다. v1 loader는 없습니다 — bump 시점이 **real run 이전**이고 커밋된 fixture도
+없어서, 보존해야 할 재사용 fixture가 없었습니다(호환 분기를 두면 도달 경로가 없는 코드가 영구히 남습니다).
+추가된 `proposition_generation`은 **경로 기반** provenance입니다: 생성기가 내놓을 문자열을 운영자가
+그대로 타이핑해도 `None`이며, `proposition`과의 조합이 세 상태(topic-only / operator-supplied / generated)를
+닫습니다.
+
+**conversation 프롬프트의 의미 조항은 불변식이 아니라 지시입니다** — post-parse 검증이 보는 것은
+shape(턴 수·교대·blank)뿐이라, 조항을 무시한 대화도 그대로 저장됩니다. (proposition 쪽은 다릅니다:
+개수·non-blank·상이성·200자 캡이 전부 검증됩니다.) 그래서 문서·help는 그 의미 조항에 대해
+"보장한다"가 아니라 **"지시한다"** 로 쓰고, 동명이의어는 **입력에 이미 있는 판별 단서 반영까지만**
+요구합니다(운영자가 의도한 sense를 전달하는 입력이 없으므로). 판별 정보 조작은 요구한 범주
+전체(domain·use·place·period·person·identifier·biographical fact)를 금지합니다 — 요구와 금지의 범위가
+어긋나면 요구한 것만 조작 가능해집니다.
 
 **단일 불변식 = 저장된 리포트가 프로세스 종료 방식과 절대 어긋나지 않는다.** 실패해도 부분 리포트가
 남고, cleanup 중 `BaseException`(Ctrl-C 포함)도 기록한 뒤 남은 cleanup을 마치고 재전파합니다. 외부 리뷰
