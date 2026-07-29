@@ -60,7 +60,7 @@ Alpha 구현이 진행되며 실측·계약 기준이 `impl/`로 이동해 대�
 > **현재 살아 있는 cross-team 문서**(archive 아님): `memory_api_discovery_open_requests.md`(memory-api 미해결
 > 레지스터) · `bourbon_api_discovery_open_requests.md`(bourbon-api) ·
 > `memory_api_statement_attribution_followup.md`(K-A1 종결 기록) ·
-> `memory_api_agent_recommendation_requirements{,_ko}.md`(2026-07-14 이전 협의 이력 — 현재 계약 아님, 배너 참조).
+> `memory_api_agent_recommendation_requirements.md`(2026-07-14 이전 협의 이력 — 현재 계약 아님, 배너 참조).
 
 ---
 
