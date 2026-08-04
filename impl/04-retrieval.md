@@ -6,6 +6,11 @@
 linker가 확정한 앵커 QID로 agent-topic edge를 모읍니다. 핵심은 **sparse할 때만 한 홉 확장**하고
 **direct가 이긴다**는 두 규칙입니다.
 
+> **retrieval은 "한 agent를 대표하는 edge"를 고르지 않습니다** (2026-08-04 `24ebc2d`). 그건 need를
+> 아는 [Ranker](05-gate-and-ranking.md) 몫입니다. 여기 남은 축소는 두 가지뿐 — direct pool의
+> **같은 `(agent_id, anchor_id)` 중복 제거**와, **한 agent 안에서** direct가 그 agent의 neighbor edge를
+> 밀어내는 **선점**. 한 agent가 여러 이웃 QID에 걸쳐 있으면 그 facet들은 **전부 Gate로 넘어갑니다**.
+
 ---
 
 ## 산출물: `EdgeHit` (Candidate가 아님)
@@ -28,20 +33,23 @@ class EdgeHit(StrictBaseModel):
 ## 흐름 (`Retriever.retrieve`)
 
 ```python
-async def retrieve(self, anchor_qid):
+async def retrieve(self, anchor_qid):                                       # retrieval.py:113
     direct = await self._edges.get_edges(anchor_qid)
-    direct_hits = _dedupe_direct_wins([EdgeHit(edge=e, via=DIRECT) for e in direct])
-    hits = list(direct_hits)
-    if len(direct_hits) < RETRIEVAL_MIN_DIRECT_EDGES:   # sparse면
-        hits.extend(await self._expand_neighbors(anchor_qid))
-    return _dedupe_direct_wins(hits)
+    direct_hits = _one_hit_per_direct_agent([EdgeHit(edge=e, via=DIRECT) for e in direct])
+    if len(direct_hits) >= RETRIEVAL_MIN_DIRECT_EDGES:   # sparse가 아니면 확장 없음
+        return direct_hits
+    neighbor_hits = await self._expand_neighbors(anchor_qid)
+    return direct_hits + _preempted_by_direct(direct_hits, neighbor_hits)
 ```
 
-### (1) direct fetch → **dedupe 먼저**
-sparsity 판정은 **distinct direct agent 수**(usable pool)를 셉니다. 그래서 한 에이전트의 중복
-edge가 확장을 억누르면 안 됩니다 → 판정 전에 dedupe.
+### (1) direct fetch → agent별 1개로 축소 (`_one_hit_per_direct_agent`, `retrieval.py:72`)
+direct edge는 **모두 같은 확정 앵커 위에** 있으므로, 같은 agent의 두 번째 direct hit은 같은
+`(agent_id, anchor_id)`의 중복 — 따로 랭크할 facet이 아닙니다. 그래서 여기서 접는 게 안전합니다.
 
-핵심 finding: sparse 판정을 raw edge가 아니라 **deduped agent pool** 기준으로 해야 함.
+동시에 이 축소가 `len()`을 **distinct direct agent 수**로 만들어 sparsity 판정의 의미를 정합니다.
+한 에이전트의 중복 edge가 확장을 억눌러선 안 됩니다 → 판정 전에 축소.
+
+핵심 finding: sparse 판정을 raw edge가 아니라 **distinct agent pool** 기준으로 해야 함.
 
 ### (2) sparse면 one-hop 확장
 ```python
@@ -58,15 +66,23 @@ async def _expand_neighbors(self, anchor_qid):
 - **이웃 QID 수집** (`_neighbor_qids`): `broader/narrower/links_out/links_in` 전부를 균일하게
   다룸 (relationship-type weighting은 후속 튜닝). 앵커 자신은 제외. `dict.fromkeys`로 dedupe +
   결정적 순서, `RETRIEVAL_MAX_NEIGHBORS=50`으로 cap (concurrent fan-out 제한).
-- `asyncio.gather`(never `as_completed`)라 이웃 순서 보존 → 다운스트림 dedupe가 결정적.
+- `asyncio.gather`(never `as_completed`)라 이웃 순서 보존 → 다운스트림 선점·대표 선택이 결정적.
 
-### (3) direct-wins dedupe
+### (3) direct-wins = **선점**(dedupe 아님) — `_preempted_by_direct` (`retrieval.py:88`)
 ```python
-def _dedupe_direct_wins(hits):
-    # agent_id당 하나만 유지. direct hit이 앞에 나열되므로 direct가 neighbor를 이김 (R3).
+def _preempted_by_direct(direct_hits, neighbor_hits):
+    direct_agents = {hit.edge.agent_id for hit in direct_hits}
+    return [hit for hit in neighbor_hits if hit.edge.agent_id not in direct_agents]
 ```
-같은 `agent_id`가 direct로도 neighbor로도 왔으면 **direct 우선**. (retrieve 마지막에 한 번 더
-호출 — direct_hits가 리스트 앞에 있으므로 순서만으로 direct-wins 보장.)
+같은 `agent_id`가 direct로도 neighbor로도 왔으면 **direct 우선**(R3). 여기서 밀려나는 건 **그 agent의
+neighbor edge뿐**입니다 — direct edge가 없는 agent는 자기 neighbor edge를 **전부** 유지합니다.
+
+> **★ 두 함수를 하나로 합치지 마세요.** 예전 `_dedupe_direct_wins`는 호출 지점 2개(sparsity 계수용
+> 축소 / R3 선점)를 겸했는데, 둘은 역할이 다릅니다. 합치면 "agent별 1개"가 pool 전체에 다시 걸려
+> **한 agent의 여러 neighbor facet 중 하나만 traversal 순서로 살아남고**, sparsity 판정이 세는 대상도
+> 조용히 바뀝니다. 실제로 그 형태가 real run `run-72ecb8940fb5`에서 maturity 0.500 edge를 0.250 edge로
+> 가려 `no_candidates`를 만들었습니다 — 대표 선택을 need별 순서로 하는 Ranker로 옮긴 이유
+> ([05. ranking](05-gate-and-ranking.md)의 "대표 edge" 절).
 
 ---
 
@@ -91,5 +107,6 @@ memory-api taxonomy cap이 100이라 real provider도 안전.
 ---
 
 **요점:** retrieval은 앵커 QID로 `EdgeHit` pool을 만들되, direct가 sparse할 때만 이웃으로 넓히고
-direct를 우선합니다. 이 pool이 다음 단계 [05. gate](05-gate-and-ranking.md)에서 `Candidate`로
-완성되고 걸러집니다.
+direct를 우선합니다. pool은 **한 agent의 여러 edge를 담을 수 있고**(여러 이웃 facet), 그 중 누가 그
+agent를 대표하는지는 여기서 정하지 않습니다. 이 pool이 다음 단계
+[05. gate](05-gate-and-ranking.md)에서 `Candidate`로 완성되고 걸러집니다.

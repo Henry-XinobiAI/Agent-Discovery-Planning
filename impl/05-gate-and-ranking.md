@@ -13,21 +13,32 @@
 `EdgeHit` → 완성된 `Candidate`. per-agent provider I/O를 **여기서 전부** 처리해서, Ranker를 순수
 함수로 남깁니다.
 
-### 두 provider를 바인딩
+### 두 provider를 바인딩 — **agent당 1회** 질문
 ```python
 async def screen(self, hits, *, context):
-    # Phase 1: eligibility는 hard-required — 전부 동시 fetch, 첫 실패 전파(swallow 금지)
-    eligibilities = await asyncio.gather(*(self._eligibility.check(h.edge.agent_id, context=context) for h in hits))
-    # need-무관 partition
-    for hit, elig in zip(hits, eligibilities, strict=True):
-        reason = _need_agnostic_drop(hit.edge, elig, maturity_min=...)
+    # Phase 1: eligibility는 hard-required — unique agent당 1회 동시 fetch, 첫 실패 전파(swallow 금지)
+    eligibilities = await _fetch_once_per_agent(
+        (hit.edge.agent_id for hit in hits), partial(self._eligibility.check, context=context))
+    # need-무관 partition (검사는 edge별)
+    for hit in hits:
+        reason = _need_agnostic_drop(hit.edge, eligibilities[hit.edge.agent_id], maturity_min=...)
         (dropped if reason else rankable) ...
-    # Phase 2: persona는 optional — survivor에 대해서만 fetch
-    personas = await asyncio.gather(*(self._persona.get_prior(h.edge.agent_id) for h, _ in rankable))
+    # Phase 2: persona는 optional — survivor를 가진 agent당 1회
+    personas = await _fetch_once_per_agent((hit.edge.agent_id for hit in rankable), self._persona.get_prior)
 ```
 
+- **eligibility·persona는 agent-level 판정**이므로 `_fetch_once_per_agent`(`gate.py:73`)가 unique agent당
+  한 번만 묻고 그 agent의 모든 edge가 결과를 공유합니다. 한 agent가 여러 anchor에 걸치는 pool(②)에서
+  edge마다 물으면, real provider가 한 요청 안에서 다르게 답할 때 같은 agent의 edge들이 **모순된 verdict**를
+  갖게 됩니다. `dict.fromkeys`로 first-appearance 순서 유지, `gather`(no `return_exceptions`)로 첫 실패 전파.
+- **per-edge 검사(maturity·`edge.discoverable`)는 그대로 edge별**입니다 — 그건 edge 필드니까. 그래서 한
+  agent의 미성숙 edge는 탈락하고 형제 edge는 살아남을 수 있습니다.
 - eligibility 실패는 전체 gate를 실패시킴 (real provider의 503이 swallow되면 안 됨).
-- **dropped 후보는 persona를 안 fetch** — 랭킹 신호인데 랭킹 안 될 거라서.
+- **dropped 후보는 persona를 안 fetch** — 랭킹 신호인데 랭킹 안 될 거라서. 단 이 규칙은 **agent 기준**:
+  한 edge가 drop돼도 형제 edge가 필요한 prior는 fetch되고, 두 edge가 다 살아도 재fetch하지 않습니다.
+- 공유된 prior가 후보들을 결합시키지 않는 근거는 `StrictBaseModel`의 `revalidate_instances="always"` —
+  nested 컨테이너까지 deep-revalidate해 **후보별 별 인스턴스**가 됩니다(`tests/test_gate.py`가 mutation으로
+  고정).
 - `gather()`에 코루틴 0개면 `[]` 반환 → 전부 drop된 pool도 특수 처리 불필요.
 
 ### need-무관 drop 우선순위
@@ -117,6 +128,34 @@ COVERAGE:   [coverage_group, maturity_band, evidence, freshness, agent_id]
 ```
 모든 순서는 `agent_id asc`로 종료 (완전한 total order → 결정적).
 
+### ★ 대표 edge — "한 agent를 대표하는 edge"는 ranking 결정
+한 agent는 ranked slot을 **최대 1개**만 가집니다. 그런데 pool은 한 agent의 edge를 여러 개 담을 수
+있습니다(② one-hop 확장에서 같은 사람이 여러 이웃 facet에 걸림). 그 중 누가 대표인지를 **Ranker가**
+정하고 나머지를 `duplicate_agent_edge`로 drop합니다 (2026-08-04 `24ebc2d`).
+
+**왜 retrieval이 아닌가.** ②는 need를 모릅니다. traversal 순서로 하나만 남기면 experience 요청에
+firsthand edge가 아닌 쪽이 대표가 되거나, 심하면 **게이트를 통과할 edge가 통과 못 할 edge에 가려**
+후보가 0이 됩니다. 실제로 real run `run-72ecb8940fb5`가 그렇게 `no_candidates`가 됐습니다 — maturity
+0.500 edge(게이트 통과)가 0.250 edge(탈락)에 가려짐.
+
+**규칙:** 대표 선택은 **그 need의 기존 ordering key로** 합니다. 새 tiebreak key를 만들지 않고, depth
+중심 규칙을 다른 need에 강요하지도 않습니다. 적용 지점은 need별로 key가 확정되는 **가장 이른 곳**:
+
+| need | 지점 | 함수 |
+|---|---|---|
+| depth / experience | 정렬 **후** 1회 스캔 | `_keep_one_edge_per_agent` (`ranking.py:57`) |
+| coverage | round-robin **안** (skip-and-backfill) | `_coverage_round_robin` (`ranking.py:187`) |
+| for / against | `stance_shortlist` **안** (judge 앞) | `stance_shortlist` (`ranking.py:106`) |
+
+- **coverage는 사후 dedupe가 불가**합니다: 중복을 정렬 뒤에서 지우면 그 facet 그룹이 슬롯을 **통째로
+  잃습니다**(round-robin이 이미 그 자리를 그 그룹에 배분한 뒤라서). 그래서 그룹별 커서로 이미 대표된
+  agent를 **건너뛰고 그 그룹의 다음 후보로 backfill**합니다 — 대표 하나를 잃은 게 facet 하나를 잃는
+  일이 되지 않게.
+- **for/against는 judge 앞**이라 K의 단위가 걸립니다 → 위 ④a 절의 `stance_shortlist`.
+- 산출: `rank()`는 `(ranked, ranking_dropped)`를 반환하고, `ranking_dropped`에는 **모든 need의**
+  `duplicate_agent_edge`와 for/against의 stance 필터 drop이 함께 들어갑니다. 즉 비-stance need에서도
+  non-empty일 수 있습니다.
+
 ### 순수성 주의
 Ranker는 각 `Candidate`를 **in-place로 annotate**(`features`/`ordering_keys`/stance/`drop_reason`)
 해서 decision log로 상태를 나릅니다. 즉 referentially pure가 아님 — 같은 Candidate 객체를 여러
@@ -144,7 +183,7 @@ required = _REQUIRED_POSITION[query.need_type]
   사유**이지, `stance_axis` 필드 자체가 아닙니다(frozen edge 계약과 eval 코퍼스에 그대로 남아 있음).
   관련성 판정은 이제 judge의 `insufficient`가 맡고, 그 결과는 `stance_unevaluated`로 나타납니다.
 - `stance_confidence`는 **guard이자 late tiebreak** (게이트는 이미 적용됨, 정렬 키 끝에서 다시).
-- 산출: `(kept_ranked, dropped)` — dropped는 need-filter drop으로 로그로.
+- 산출: `(ranked, ranking_dropped)` — stance 필터 drop + `duplicate_agent_edge`가 함께 로그로.
 
 > **평가기 부재/전면 실패는 `stance_unevaluated`가 아닙니다.** 평가기가 아예 안 붙었거나(dormant)
 > 통째로 예외를 던지면 `_evaluate_stance`(`pipeline.py:158`)가 후보를 **빈 리스트**로 바꾸고
@@ -152,15 +191,18 @@ required = _REQUIRED_POSITION[query.need_type]
 > Ranker에 도달하지 않으므로 per-candidate drop도 기록되지 않습니다 — 침묵의 층위가 다릅니다
 > (요청 전체 vs 후보 하나).
 
-### coverage = round-robin
+### coverage = round-robin (+ skip-and-backfill)
 ```python
 groups = candidate.edge.anchor_id 별 그룹
 core_anchor = via==DIRECT인 첫 hit의 anchor_id  # 원 앵커
 group_order = core 먼저, 그다음 anchor_id asc
-# 각 그룹 내부는 _depth_key로 정렬, depth별로 그룹을 순회하며 round-robin
+cursors = 그룹별 커서   # 그룹을 번갈아 돌며 "아직 대표 안 된 agent"를 하나씩
+# 각 그룹 내부는 _depth_key로 정렬. 커서가 만난 후보가 이미 대표된 agent면
+# duplicate_agent_edge로 drop하고 같은 그룹의 다음 후보로 backfill(그 턴을 낭비하지 않음)
 ```
 한 sub-topic(facet)이 결과를 지배하지 못하게 앵커 그룹을 번갈아 뽑음. (via_qid는 R3 때문에 모든
-neighbor hit에서 원 앵커라 facet 구분 불가 → `edge.anchor_id`로 그룹.)
+neighbor hit에서 원 앵커라 facet 구분 불가 → `edge.anchor_id`로 그룹.) 커서를 그룹별로 두는 이유는
+위 "대표 edge" 절 — 공용 인덱스 하나로는 skip한 턴이 그 facet의 슬롯 손실이 됩니다.
 
 ### experience order
 `source → specificity → evidence → freshness → band`. firsthand(직접 경험, 낮은 maturity라도)가
