@@ -95,16 +95,16 @@ memory-api의 오프라인 재생. `AnchoredKnowledgeProvider`를 뒷받침하�
 - `queries[]` — 쿼리별: `query`, `limit`, 캡처된 `search` 후보 목록, 그리고 linker가 채택해야 할
   `expected_qid` (validator가 이것이 캡처된 search 후보 중에 있음을 assert한다). (구 `suggest` 메서드는
   memory-api 라우트 삭제[#87]로 discovery에서 제거됨 — grounding은 search-only라 캡처할 것도 없음.)
-- `entities` / `connections` / `articles` — `get` / `expand_connections` / `search_articles`용의
-  QID-keyed 상세 저장소.
+- `entities` / `connections` — `get` / `expand_connections`용의 QID-keyed 상세 저장소. (구 `articles`
+  블록은 `search_articles` 표면과 함께 제거됨 — 코드 `32d8cc6`, [02 문서](02-provider-boundary.md).)
 - `contract` — 출처(provenance): `memory_api_commit`, `entity_contract`, `generated_at`.
 
 **출처 — `manual-seed` vs. 실제 캡처 (D8).** 커밋된 fixture는 현재
 `memory_api_commit="manual-seed"`이다: 각 쿼리가 단일 **exact-label** 후보로 해소되도록 손으로 작성한
 대체물이며, 그래서 grounding은 confidence `1.0` / margin `1.0`으로 안착하고 모든 시나리오가 깨끗하게
 ground된다. `limit`은 `20`이다 (linker의 후보 limit과 일치 — provider의 캡처-지평(capture-horizon)
-가드). dense baseline pool이 one-hop expand를 절대 트리거하지 않기 때문에 `connections`는 비어 있고,
-Alpha의 후보 경로가 그것들을 사용하지 않기 때문에 `articles`도 비어 있다. memory-api에 도달 가능해지면
+가드). dense baseline pool이 one-hop expand를 절대 트리거하지 않기 때문에 `connections`는 비어 있다.
+memory-api에 도달 가능해지면
 `build-anchors`가 이것을 진짜 캡처로 **backfill**한다 (실제 `memory_api_commit`, 그리고 채워진
 `connections`); 모든 구조적 보장은 어느 쪽이든 유지된다.
 

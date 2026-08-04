@@ -71,21 +71,27 @@ request(topic_text, need_type, user_stance_ref?)
 
 ### 2.4 Provider 인터페이스 (sketch)
 
-경계는 4개 provider 인터페이스로 고정한다. 아래는 **언어중립 sketch이며 확정 시그니처가 아니다.** mock과 real은 같은 인터페이스를 구현한다(§7.1).
+**현행 경계는 5개 Protocol이며 정본은 [impl/02](impl/02-provider-boundary.md)다.** 아래는 초기 4개 seam의 **언어중립 sketch**(확정 시그니처가 아니다)에 현재 `KnowledgeEntityProvider` 계약을 반영한 것이고, 이후 추가된 다섯 번째 `StanceEvidenceSearchProvider`(④a stance 단계 — recall-only, 실패는 503이 아니라 **사유 붙은 침묵**)는 여기 복제하지 않고 impl/02를 따른다. mock과 real은 같은 인터페이스를 구현한다(§7.1).
 
 `KnowledgeEntityProvider` — **real** (`bourbon-memory-api` `/knowledge/entities`). memory-api가 `8ffcec8`에서 public read model을 `Anchor*`→`Entity*`로 개명했다. **Discovery 문서의 도메인 용어 "anchor"(topic을 고정하는 QID 기준점)는 유지하되, 코드 타입·provider명은 memory-api 계약을 미러해 `Entity*`로 맞춘다.** list 라우트는 `Page[T]={items,limit,truncated}` envelope을 반환하므로 **provider가 `.items`로 unwrap**하고 도메인엔 `list[Entity*]`만 넘긴다:
 
 ```
-search_candidates(text, limit?)      -> [EntitySummary{ qid, label, importance, pageview, … }]       # GET /knowledge/entities      (Page→.items)
-suggest(text, limit?)                -> [EntitySuggestion...]   # ⚠ DELETED memory-api #87 — route+struct 삭제; discovery 메서드만 stale(cleanup only)
-get(qid)                             -> Entity{ qid, label, labels, aliases, linked_qids, … }        # GET /knowledge/entities/{qid}    (bare)
-expand_connections(qid, limit)       -> EntityConnections{ center, broader, narrower, links_*, limit, truncated }  # GET /knowledge/entities/{qid}/connections (bare)
-search_articles(q, qid?, lang?, limit=10) -> [ArticleHit]                                            # GET /knowledge/articles (Page→.items; 보조; limit ge=1 le=100)
+search_candidates(text, limit?)   -> [EntitySummary{ qid, label, importance, pageview, … }]                # POST /knowledge/entities/search (Page→.items)
+search_entities(queries[], instance_of?, fanout?, limit?) -> [EntitySummary...]                          # 〃 멀티-쿼리(ANY-match) + 클래스 필터
+get(qid)                          -> Entity{ qid, label, labels, aliases, linked_qids, … }               # GET /knowledge/entities/{qid} (bare)
+expand_connections(qid, limit)    -> EntityConnections{ center, broader, narrower, links_out, links_in }  # GET /knowledge/entities/{qid}/connections (wire는 그룹별 NeighborPage → provider가 투영)
 ```
 
-`KnowledgeEntityProvider`는 full entity linker가 아니라 **memory-api entity substrate adapter**다 — entity 검색(`search_candidates`)·prefix autocomplete(`suggest`)·단건 조회·connections 호출을 감쌀 뿐 disambiguation을 결정하지 않는다. Query-side linker(모듈 1)가 candidate generation을 `search_candidates`(search-only)로 모으고, 필요 시 별도 entity linker(§4.1)를 조합해 최종 QID를 정한다(구현 계획에서는 `EntityCandidate`로 정규화 — build_plan §3.1). `suggest`는 **memory-api #87로 라우트가 삭제됨** — 원래도 linker recall 미사용(D2)이었고, discovery provider 메서드/`EntitySuggestion`는 이제 stale(cleanup 대상). **`lang`은 `search_articles`에만 있다** — entity 검색/suggest 계약엔 `lang` 파라미터가 없고 핵심 파라미터는 `q`다(계약 drift 방지).
+`KnowledgeEntityProvider`는 full entity linker가 아니라 **memory-api entity substrate adapter**다 — entity 검색(`search_candidates` 단일 / `search_entities` 멀티)·단건 조회·connections 호출을 감쌀 뿐 disambiguation을 결정하지 않는다. Query-side linker(모듈 1)가 candidate generation을 `search_candidates`(search-only)로 모으고, 필요 시 별도 entity linker(§4.1)를 조합해 최종 QID를 정한다(구현 계획에서는 `EntityCandidate`로 정규화 — build_plan §3.1). `suggest`는 **양쪽에서 제거 완료** — memory-api가 #87로 라우트+struct를 삭제했고, Discovery의 `suggest()`/`EntitySuggestion`도 뒤이어 제거됐다(원래도 linker recall 미사용 D2라 런타임 무영향). **어떤 메서드도 `lang`을 노출하지 않는다** — entity 검색은 body `queries[]`(1–16, 각 ≤200자, ANY-match) + `fanout`(0–50) + `limit`(1–100, 기본 20) + `instance_of`(QID ANY-match)만 받고 `lang`이 없다(계약 drift 방지). 원래 `lang`을 가졌던 `search_articles`는 표면 전체가 **제거됐다**(코드 `32d8cc6`): 소비자가 0개였고 memory-api PR #92가 그 라우트를 `POST /knowledge/articles/search`로 바꿔 이미 404였다.
 
-`expand_connections(qid, limit)`의 `limit`은 memory-api 기준으로 associative links(`links_out`/`links_in`)만 제한한다(`EntityConnections.limit`/`truncated`가 이 cap을 echo). taxonomy 방향의 `broader`/`narrower`는 memory-api 내부 cap을 따른다.
+`expand_connections(qid, limit)`의 `limit`은 **그룹마다 따로** 적용된다(memory-api `le=100`). 과거의 "associative links만 제한하고 taxonomy는 내부 cap"이라는 의미론은 **memory-api PR #92에서 폐기됐다.** 같은 PR이 응답 wire도 바꿨다 — 그룹마다 page 봉투를 두고, 그 안의 item을 typed edge로 감싸고, 다섯째 그룹 `typed_out`을 더 싣는다:
+
+```
+{center, broader|narrower|links_out|links_in|typed_out:
+    NeighborPage{items: [NeighborEdge{relation, entity}], limit, truncated, total}}
+```
+
+Discovery는 이 세 겹을 provider-private wire 모델로 검증하고 `EntityConnections`(center + 4그룹 `list[EntitySummary]`)로 **투영**한다. 그래서 도메인 타입에는 `limit`/`truncated`가 **없다** — 그룹별 봉투에서 request 단위 cap을 합성하면 응답이 더는 담지 않는 사실을 진술하게 되기 때문이다. `typed_out`은 검증만 하고 투영하지 않는다(소비자 없음). 상세 = [impl/02](impl/02-provider-boundary.md).
 
 `MemoryEdgeProvider` — Alpha: **eval mock** / 배포 **unavailable→503**:
 
@@ -109,7 +115,7 @@ get_prior(agent_id) -> PersonaPrior{ prior_stance?, stable_traits, expertise_cla
 check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privacy / (safety)
 ```
 
-`EntitySummary`·`Entity`·`EntityConnections`·`ArticleHit`만 real 응답(§2.6의 현재 API 표면)에 묶인다(`EntitySuggestion`은 memory-api #87로 삭제 — stale). 나머지 타입은 contract로 합의하고, **local/eval에서는 mock fixture로 채우되 배포 앱은 real 통합 전까지**: `edge`·`eligibility`는 hard-required라 **`Unavailable*` provider로 503**, `persona`는 optional/degradable이라 **`NullPersonaProvider`로 `None` degrade(503 아님)**(build_plan §3 — provider 필수성 구분)(§2.5 표·§7.2). 필드별 `source_owner` 규칙은 §7.2.
+`EntitySummary`·`Entity`·`EntityConnections`만 real 응답(§2.6의 현재 API 표면)에 묶인다(`EntitySuggestion`은 memory-api #87로 삭제, `ArticleHit`은 소비자 0개 표면과 함께 제거 — 코드 `32d8cc6`). 나머지 타입은 contract로 합의하고, **local/eval에서는 mock fixture로 채우되 배포 앱은 real 통합 전까지**: `edge`·`eligibility`는 hard-required라 **`Unavailable*` provider로 503**, `persona`는 optional/degradable이라 **`NullPersonaProvider`로 `None` degrade(503 아님)**(build_plan §3 — provider 필수성 구분)(§2.5 표·§7.2). 필드별 `source_owner` 규칙은 §7.2.
 
 ### 2.5 경계 요약표
 
@@ -117,7 +123,7 @@ check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privac
 
 | Provider / 호출 | 뒷단 | Alpha local/eval | 배포 앱(deployed) |
 |---|---|---|---|
-| `KnowledgeEntityProvider` (topic→QID, ~~suggest~~[#87 삭제], entity 단건, connections, articles) | `bourbon-memory-api` `/knowledge/entities*` | real / pinned `anchors.json` | **real** |
+| `KnowledgeEntityProvider` (topic→QID 검색, entity 단건, connections) | `bourbon-memory-api` `/knowledge/entities*` | real / pinned `anchors.json` | **real** |
 | `MemoryEdgeProvider` (agent-topic edge) | Memory (미통합) | eval mock | **unavailable → 503** (real 통합 전) |
 | `PersonaProvider` (persona prior) | Persona (미통합) | eval mock | **`NullPersonaProvider` → `None`** (degradable, 503 아님) |
 | `EligibilityProvider` (discoverability) | owner/privacy (미통합) | eval mock | **unavailable → 503** |
@@ -147,21 +153,21 @@ check(agent_id, context?) -> Eligibility{ discoverable, … }   # owner / privac
 
 | API | 용도 | Discovery 적용 |
 |---|---|---|
-| `GET /knowledge/entities?q=…` → `Page[EntitySummary]` | label/description full-text 검색, `importance` 정렬 | topic → QID 후보 생성 |
-| ~~`GET /knowledge/entities/suggest`~~ → ~~`Page[EntitySuggestion]`~~ | ~~autocomplete~~ | **삭제됨(memory-api #87)** — 라우트/struct 제거. grounding 미사용(search-only)이라 무영향; discovery provider `suggest()`는 stale cleanup |
+| `POST /knowledge/entities/search` → `Page[EntitySummary]` | body `queries[]` ANY-match full-text 검색, `importance` 정렬 | topic → QID 후보 생성 |
+| ~~`GET /knowledge/entities/suggest`~~ → ~~`Page[EntitySuggestion]`~~ | ~~autocomplete~~ | **양쪽 제거 완료** — memory-api #87이 라우트/struct를 삭제, Discovery의 `suggest()`/`EntitySuggestion`도 제거됨. grounding은 search-only라 무영향 |
 | `GET /knowledge/entities/{qid}` → `Entity` (bare) | QID 단건 조회 | 선택 anchor 검증, label/description 표시 |
 | `GET /knowledge/entities/{qid}/connections` → `EntityConnections` (bare) | `linked_qids` + hierarchy 기반 typed ego connections(`broader`/`narrower`/`links_out`/`links_in`) | sparse anchor fallback, 관련 anchor 확장 |
-| `GET /knowledge/articles?q=…` → `Page[ArticleHit]` | Wikipedia article chunk BM25 검색 | topic 설명/axis hint 보조. agent 추천 근거로 직접 쓰지 않음 |
+| ~~`GET /knowledge/articles?q=…`~~ → ~~`Page[ArticleHit]`~~ | ~~Wikipedia article chunk BM25 검색~~ | **라우트 교체됨(memory-api PR #92)** — 현행은 `POST /knowledge/articles/search` + 단건 `GET /knowledge/articles/{qid}`. Discovery는 소비자가 0개여서 계약 교정 대신 **표면 전체를 제거**(코드 `32d8cc6`) |
 
 `Entity`는 Wikidata QID를 `qid`로 보존한다. **Discovery의 `anchor_id`는 memory-api의 `qid`와 동일하게 둔다.**
 
-list 라우트(`entities`/`suggest`/`articles`)는 `Page[T]={items,limit,truncated}` transport envelope을 반환하고, detail(`Entity`)·connections(`EntityConnections`)는 bare 모델을 직접 반환한다(응답 표면이 다름). **`Page[T]` unwrap은 provider 책임**(`.items`만 도메인에 전달).
+list 라우트(`entities` 검색)는 `Page[T]={items,limit,truncated}` transport envelope을 반환하고, detail(`Entity`)·connections(`EntityConnections`)는 bare 모델을 직접 반환한다(응답 표면이 다름). **`Page[T]` unwrap은 provider 책임**(`.items`만 도메인에 전달).
 
-- **`GET /knowledge/entities?q=…` → `Page[EntitySummary]`** (`.items` 언랩); 각 `EntitySummary`: `qid`, `source`, `label`, `description`, `importance`, `pageview`, `pagerank`, `sitelink_count`, `categories`, `instance_of`, `abstract`.
-- **~~`GET /knowledge/entities/suggest`~~ → `Page[EntitySuggestion]`** — **삭제됨(memory-api #87)**: 라우트와 struct 모두 제거. grounding은 search-only라 런타임 무영향이나 discovery의 `EntitySuggestion`/`suggest()`(providers/base·entity_http·structs/entity)는 stale → code repo cleanup.
+- **`POST /knowledge/entities/search` → `Page[EntitySummary]`** (`.items` 언랩; body = `queries[]` + `fanout`/`limit`/`instance_of`); 각 `EntitySummary`: `qid`, `source`, `label`, `description`, `importance`, `pageview`, `pagerank`, `sitelink_count`, `categories`, `instance_of`, `abstract`.
+- **~~`GET /knowledge/entities/suggest`~~ → ~~`Page[EntitySuggestion]`~~** — **양쪽 제거 완료**: memory-api #87이 라우트와 struct를 삭제했고, Discovery의 `EntitySuggestion`/`suggest()`도 providers/base·entity_http·structs/entity에서 제거됐다. grounding은 search-only라 런타임 무영향.
 - **`GET /knowledge/entities/{qid}` → `Entity`**: `qid`, `source`, `label`, `labels`, `description`, `aliases`, `instance_of`, `subclass_of`, `occupations`, `sitelink_count`, `sitelinks`, `pageview`, `pagerank`, `importance`, `categories`, `linked_qids`, `abstract`, `fetched_at`. (`occupations`는 P106·people-only로 `EntitySummary`엔 없고 detail `Entity`에만 있다; memory-api `positioning.py`가 `instance_of`와 함께 broader positioning seed로 쓴다 — Alpha 미사용이나 향후 axis/coverage 신호 후보.)
-- **`GET /knowledge/entities/{qid}/connections` → `EntityConnections`**: `center`, `broader`, `narrower`, `links_out`, `links_in`, `limit`, `truncated`; 각 node는 `EntitySummary`.
-- **`GET /knowledge/articles?q=…` → `Page[ArticleHit]`** (`.items` 언랩); 각 `ArticleHit`: `chunk_id`, `qid`, `title`, `lang`, `section_path`, `ordinal`, `text`.
+- **`GET /knowledge/entities/{qid}/connections`** — wire는 `{center, broader, narrower, links_out, links_in, typed_out}`이고 **center를 뺀 다섯 그룹이 각각 `NeighborPage{items, limit, truncated, total}`**, 그 `items`는 `NeighborEdge{relation, entity}`다(`entity`가 `EntitySummary`). top-level `limit`/`truncated`는 **없다**(PR #92에서 그룹별 봉투로 이동). Discovery의 도메인 타입 `EntityConnections`는 이걸 투영한 `center` + 4그룹 `list[EntitySummary]`뿐이다.
+- **~~`GET /knowledge/articles?q=…`~~ → ~~`Page[ArticleHit]`~~** — **Discovery에서 제거됨**(코드 `32d8cc6`): memory-api PR #92가 이 GET을 `POST /knowledge/articles/search`(body `queries[]` + `qid`/`lang`/`limit`/`fanout`)로 대체했고 단건 읽기 `GET /knowledge/articles/{qid}`를 신설했다. Discovery 파이프라인에 소비자가 없어 계약을 교정하는 대신 Protocol·HTTP·`ArticleHit`·eval 미러·corpus 필드를 함께 걷어냈다. **기능 폐기가 아니라 미사용 transport seam 제거** — 필요해지면 현행 POST 계약과 실제 use case로 새 seam을 설계한다.
 
 `linked_qids`는 `EntitySummary`에는 없고 detail `Entity`에만 있다. 따라서 direct out-link 목록이 필요하면 `GET /knowledge/entities/{qid}`를 호출하고, typed neighbor pool이 필요하면 `GET /knowledge/entities/{qid}/connections`를 호출한다.
 

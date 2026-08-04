@@ -16,7 +16,6 @@ class KnowledgeEntityProvider(Protocol):
     async def search_entities(self, queries, *, instance_of=None, fanout=0, limit=20) -> list[EntitySummary]: ...  # 멀티-쿼리 (+instance_of 필터)
     async def get(self, qid) -> Entity | None: ...
     async def expand_connections(self, qid, *, limit=30) -> EntityConnections: ...
-    async def search_articles(self, q, *, qid=None, lang=None, limit=10) -> list[ArticleHit]: ...  # ⚠ stale surface (아래)
 
 class MemoryEdgeProvider(Protocol):
     async def get_edges(self, anchor_id) -> list[AgentTopicEdge]: ...
@@ -200,19 +199,22 @@ provider마다 "없을 때" 행동이 다릅니다. 이건 **의미론적 결정
   `EntityConnections`에 `limit`/`truncated`가 **없는** 것도 같은 재설계의 결과입니다: 그룹별 봉투에서 request
   단위 cap을 합성하면 응답이 더는 담지 않는 사실을 진술하게 됩니다. 이 wire 모양은 memory-api PR #92에서
   바뀌었고 Discovery는 그중 POST-search 부분만 반영해 3주간 `/connections`가 죽어 있었습니다.
-- **`search_articles`는 stale surface입니다 — serving 소비자 0개, 별도 결정 대기.** adapter는 여전히
-  `GET /knowledge/articles?q=…`를 호출하지만 라이브 memory-api에는 `POST /knowledge/articles/search`
-  (body `queries[]` + `qid`/`lang`/`limit`/`fanout`)와 단건 읽기 `GET /knowledge/articles/{qid}`만 있어
-  **404**입니다. connections와 **같은 upstream 커밋**(PR #92)에서 바뀐 세 번째 부분인데, 파이프라인 어디서도
-  호출하지 않아(오프라인에서는 eval mock이 Protocol을 만족) 아무것도 깨지지 않았습니다. 삭제할지 계약을
-  교정할지는 별도 트랙이며, 그때까지 **작동하는 GET으로 읽지 마세요.**
-- **read-only retry**: GET(`get`/`expand_connections`/`search_articles`)과 entity 검색
+- **article 표면은 제거됐습니다**(코드 `32d8cc6`). 원래 `search_articles`가 `GET /knowledge/articles?q=…`를
+  호출했지만 라이브 memory-api에는 `POST /knowledge/articles/search`와 단건 읽기
+  `GET /knowledge/articles/{qid}`만 있어 **첫 호출에서 404**였을 것입니다 — connections와 **같은 upstream
+  커밋**(PR #92)에서 바뀐 세 번째 부분입니다. 파이프라인 어디서도 호출하지 않았기 때문에(호출자는 그
+  메서드 자신의 테스트뿐) 아무것도 깨지지 않았고, 그래서 계약을 교정하는 대신 **표면 전체를 제거**했습니다:
+  Protocol·HTTP 구현·`ArticleHit`·eval provider 2개의 메서드와 상태·`PinnedAnchorFixture.articles`와 그
+  validator·builder의 `articles={}`·fixture의 빈 키까지. **article retrieval 기능을 폐기한 것이 아니라
+  소비자가 없는 transport seam을 걷어낸 것**이고, 나중에 필요해지면 현재 POST 계약과 실제 use case를 기준으로
+  새 seam을 설계합니다.
+- **read-only retry**: GET(`get`/`expand_connections`)과 entity 검색
   (`POST /knowledge/entities/search`, 읽기 전용이라 재시도 안전) 모두 429/5xx/transport 에러만 재시도,
   4xx/404는 즉시 처리. `get()`만 404→None, `expand_connections`는 404→raise.
 - 2xx인데 invalid → `UpstreamUnavailableError`로 래핑.
 - **entity 검색은 `lang`을 받지 않습니다** — `POST /entities/search`는 `queries`(+`instance_of`)만 받으므로
-  후보 검색에 `lang`을 넘기면 안 됩니다(계약 drift 가드). Protocol에서 `lang`이 `search_articles`에만
-  달려 있는 이유이고, 그 표면이 stale이어도 이 가드는 유효합니다.
+  후보 검색에 `lang`을 넘기면 안 됩니다(계약 drift 가드). article 표면이 사라진 뒤로는 **이 seam의 어떤
+  메서드도 `lang`을 노출하지 않습니다** — 대조할 표면이 없어졌을 뿐 가드는 그대로 유효합니다.
 - 공유 httpx client 하나를 `from_settings()`로 만들고 async-with 생명주기로 관리.
 
 ---

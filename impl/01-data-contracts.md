@@ -162,11 +162,14 @@ class Candidate(StrictBaseModel):
 - **`PersonaPrior`** (`persona.py`) — `prior_stance`, `stable_traits`, `expertise_claims`.
   **hollow guard**: stance/특성을 힌트할 뿐 topic `maturity`를 세울 수 없음. 랭킹은 밴드 내
   late tiebreak로만 쓰고, 밴드를 가로질러 승격시키지 못함. Alpha에선 사실상 no-op.
-- **`entity.py`** — memory-api 전송 타입(`Entity`, `EntitySummary`, `EntityConnections`, `ArticleHit`,
-  `EntityCandidate`). 도메인어로는 "anchor", 코드 타입으로는 `Entity*`. memory-api가
-  `/knowledge/entities/suggest` 라우트 + `EntitySuggestion` struct를 삭제함에 따라(#87), discovery의
-  `EntitySuggestion`/`suggest()`도 **제거됨**(providers·structs·tests에서 삭제; grounding은 search-only라
-  런타임 무영향). recall은 `search_candidates`(단일)/`search_entities`(멀티)만 사용.
+- **`entity.py`** — memory-api 전송 타입(`Entity`, `EntitySummary`, `EntityConnections`,
+  `EntityCandidate`). 도메인어로는 "anchor", 코드 타입으로는 `Entity*`. **upstream 표면 전체의 미러가
+  아니라 Discovery가 실제로 읽는 subset**만 둡니다 — 두 번 좁혔습니다: memory-api가
+  `/knowledge/entities/suggest` 라우트 + `EntitySuggestion` struct를 삭제함에 따라(#87) discovery의
+  `EntitySuggestion`/`suggest()`도 **제거됨**(grounding은 search-only라 런타임 무영향), 그리고
+  `ArticleHit`/`search_articles`도 **제거됨**(코드 `32d8cc6`) — 소비자가 0개인 transport seam이었고
+  memory-api PR #92가 그 라우트를 `POST /knowledge/articles/search`로 바꿔 이미 404였습니다
+  ([02 문서](02-provider-boundary.md)). recall은 `search_candidates`(단일)/`search_entities`(멀티)만 사용.
 - **`decision_log.py`** — 감사 기록 미러(순수 record). [06 문서](06-serving-and-decision-log.md).
 - **`base.py`** — `StrictBaseModel`(strict 타입), `ApiModel`, `UtcDateTime`(discovery측 소유로
   역의존 차단).
