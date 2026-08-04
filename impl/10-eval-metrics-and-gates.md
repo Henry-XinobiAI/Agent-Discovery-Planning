@@ -15,8 +15,8 @@ code를 냅니다. **전부 결정적 gold — LLM judge 없음** (safety 게이
 
 지표는 두 입력면을 `log_id == decision_log_id`로 join해서 계산:
 - **summary** (`execution.run.scenarios`) — 각 시나리오가 무엇을 서빙했나 `(agent_id, rank)`.
-- **decision logs** (`execution.decision_logs`) — pre-gate `candidate_pool`, grounding
-  `considered` trace, `fallback_used`.
+- **decision logs** (`execution.decision_logs`) — pre-gate `candidate_pool`, `ranked`(agent별 대표
+  `anchor_id`), grounding `considered` trace, `fallback_used`.
 
 ```python
 record_by_id = {r.log_id: r for r in execution.decision_logs}
@@ -38,9 +38,18 @@ completed만 join. stamped인데 record 없으면 **loud KeyError** (계약 위�
 | `retrieval_recall_easy_needle` | Ratio | 100% | target이 pre-gate pool에 존재 |
 
 - `must_not_show`: 서빙된 (scenario, agent) 중 gold=must_not_show 개수.
-- `discoverability_off_exposure`: agent-level(eligibility.discoverable=False) OR edge-level(pool에
-  기여한 edge의 discoverable=False). pool entry를 `(agent_id, anchor_id)`로 edges에 join — 파이프
-  라인이 쓴 것과 같은 QID join 키.
+- `discoverability_off_exposure`: agent-level(eligibility.discoverable=False) OR edge-level(**그 agent를
+  대표한 edge**의 discoverable=False). 결합 키 = `RankedEntry.anchor_id`(agent당 1행) → `(agent_id,
+  anchor_id)`로 edges에 join — 파이프라인이 쓴 것과 같은 QID join 키.
+  - **pool 전체 anchor에 `any()`를 걸면 안 됩니다** (2026-08-04 `24ebc2d`에서 교정): 한 agent가 private
+    edge와 public edge를 함께 갖고 있으면, private쪽은 gate가 떨어뜨리고 public쪽이 대표로 서빙되는
+    **정상 실행**인데 그걸 노출 위반으로 셉니다 — hard gate false positive.
+  - 지표가 **자기 입력 불변식을 스스로 강제**합니다(`metrics.py:198`, `metrics.py:214`): 같은 agent가
+    ranked에 두 번(대표 edge 없음) → `ValueError`, 서빙됐는데 ranked에 없음 → `ValueError`. dict
+    comprehension으로 조용히 덮어쓰거나 "anchor 없음 = 노출 아님"으로 기본값을 주면 **safety gate가
+    fail-open**하므로, 파이프라인의 보장을 빌리지 않고 여기서 거부합니다.
+  - ⚠️ 이 지표의 edge-level 갈래는 **현 코퍼스에서 도달 불가**입니다 — `edges.json`에
+    `discoverable=False` edge가 0개(agent-level만 fixture 있음). 유닛 테스트로만 커버됩니다.
 - `needle_top1`: needle당 정확히 1개 ideal이어야. 0/≥2면 **precondition violation**(분모에서 제외,
   silent skip 아님).
 - `retrieval_recall`: easy ∨ needle 범위, target ∈ {ideal, acceptable}, per-target micro-avg,
