@@ -27,7 +27,7 @@ rung별로 쪼갭니다. "왜 이렇게 설계했나"의 서술형 deep-dive는 
 | ② | retrieval | `retrieval.py` | `grounding.qid: str` | `list[EdgeHit]` |
 | ③ | gate | `gate.py` | `list[EdgeHit]` + `eligibility_context` | `GateResult(survivors, dropped)` |
 | ④a | stance *(for/against만)* | `stance.py` | `survivors`, `NormalizedQuery`, `subject_qid` | `StanceEvaluation(candidates, silence_reason)` |
-| ④b | ranking | `ranking.py` | `survivors`, `NormalizedQuery` | `(ranked, filter_dropped)` |
+| ④b | ranking | `ranking.py` | `survivors`, `NormalizedQuery` | `(ranked, ranking_dropped)` |
 | ⑤ | serving | `serving.py` | `ranked`, `grounding`, `reasons` | `Recommendation` |
 | ⑥ | decision log | `decision_log.py` | 전 단계 중간물 | `DecisionLogRecord` + `decision_log_id` stamp |
 
@@ -410,7 +410,7 @@ provider_versions/contract_version/sink 전부 composition root 주입(결정성
 
 ### INPUT (`DecisionLog.record()` `decision_log.py:69`)
 `normalized` + `grounding` + `candidate_pool`(= survivors + gate.dropped) +
-`dropped`(= gate.dropped + filter_dropped, 병합) + `ranked` + `recommendation`. **raw `Query`는 받지
+`dropped`(= gate.dropped + shortlist_dropped + ranking_dropped, 병합) + `ranked` + `recommendation`. **raw `Query`는 받지
 않는다** — 정규화가 순수 검증뿐이라 raw/normalized를 나란히 남길 이유가 사라졌다.
 
 ### 처리
