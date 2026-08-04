@@ -95,6 +95,13 @@ judge(각 1콜) → 후보에 verdict 주입`입니다. **provider 호출 1회�
 20명 chunk로 `ceil(K/20)`개 POST를 냅니다. 단계별 계약과 6가지 침묵 사유는
 **[00. 파이프라인 I/O 참조](00-pipeline-io-reference.md)의 ④a 절**에 정리돼 있습니다.
 
+**★ hard-K의 단위 = distinct agent** (`stance_shortlist`, spec §D2). K가 묶는 비용(검색 fan-out ·
+후보별 judge 콜)이 agent당 발생하는데 이 단계의 입력은 **edge**라서(② 확장에서 한 사람이 여러 facet),
+edge를 K개 세면 형제 edge 둘이 슬롯 둘을 먹고 judge는 한 번만 나갑니다. 그래서 후보는 세 상태로
+갈립니다 — **kept**(대표 없는 agent의 첫 edge + K 여유) / `duplicate_agent_edge`(형제가 대표로 judge됨) /
+`stance_shortlist_limit`(K 소진 후 처음 본 agent와 **그 agent의 모든 edge** — 아무것도 judge 안 됨).
+뒤의 두 사유를 합치면 "판정됐다"와 "판정 자체가 없었다"가 로그에서 구분되지 않습니다.
+
 여기서 꼭 짚을 두 가지:
 
 - **판정은 절대값이고, 방향 적용은 Ranker 몫입니다.** judge는 `need_type`을 아예 모릅니다 —

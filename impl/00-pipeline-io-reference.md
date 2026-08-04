@@ -257,12 +257,20 @@ edge에 관측된 stance를 미러링하는 게 아니라 **요청 시점에** �
 
 ### 처리 (`pipeline.py:107` → `StanceEvaluator.evaluate()`)
 
-0. **hard-K 선별** — evaluator가 붙어 있을 때만 `Ranker.stance_shortlist(limit=STANCE_SHORTLIST_LIMIT=20)`.
-   stance-무관 competence 키(`_depth_key`)로 상위 K만 남기고 나머지는 `stance_shortlist_limit`으로 drop
-   로그. **검색·judge 비용을 evidence 검색 이전에 묶는 유일한 지점.** 결정적 hard-K 근사이지 최종 stance
-   랭킹의 무손실 prefix가 아니다(`_stance_key`는 competence 3키 *뒤에* `stance_confidence`를 넣으므로,
-   경계 동점에서 잘린 후보가 나중에 더 높은 confidence를 받을 수 있다 — 알려진 trade-off).
-   dormant면 이 단계를 **건너뛴다**(judge가 없는데 K drop을 로그하면 거짓말).
+0. **hard-K 선별** — evaluator가 붙어 있을 때만 `Ranker.stance_shortlist(limit=STANCE_SHORTLIST_LIMIT=20)`
+   (`ranking.py:106`). stance-무관 competence 키(`_depth_key`)로 정렬해 상위 **agent** K명의 대표 edge만
+   남긴다. **검색·judge 비용을 evidence 검색 이전에 묶는 유일한 지점.**
+   - **★ K는 distinct agent를 센다, edge가 아니라** (spec §D2): K가 묶는 두 비용(검색 fan-out `ceil(K/20)`,
+     후보별 judge 콜)이 **agent당** 발생하는데, 이 단계의 입력은 edge다(한 agent가 여러 facet). edge를 세면
+     형제 edge 둘이 슬롯 둘을 먹고 judge는 한 번만 나가 recall이 조용히 줄어든다.
+   - **후보의 3-상태**: ① 대표 없는 agent의 첫 edge + K 여유 → **kept** · ② 이미 kept된 agent의 이후 edge →
+     `duplicate_agent_edge`(형제가 judge됨) · ③ K 소진 후 처음 본 agent와 **그 agent의 모든 edge** →
+     `stance_shortlist_limit`(그 agent는 아무것도 judge 안 됨). K는 한 번 소진되면 계속 소진 상태라 ③의
+     후속 edge도 같은 branch·같은 사유로 떨어진다. ②와 ③을 한 사유로 합치지 않는다 — 말하는 사실이 다르다.
+   - 결정적 hard-K 근사이지 최종 stance 랭킹의 무손실 prefix가 아니다(`_stance_key`는 competence 3키 *뒤에*
+     `stance_confidence`를 넣으므로, 경계 동점에서 잘린 agent가 나중에 더 높은 confidence를 받을 수 있다 —
+     알려진 agent-level trade-off).
+   - dormant면 이 단계를 **건너뛴다**(judge가 없는데 K drop을 로그하면 거짓말).
 1. **symmetric query 생성** (LLM 1콜) — `StanceQueryGenerator.generate(topic, proposition)` →
    `StanceQueries{neutral, support, oppose}`. 요청한 쪽만 검색하면 그 owner의 **반대 주장을 놓쳐**
    오추천하므로 세 방향을 항상 함께 만든다. 한 방향이라도 비면 편향된 확장이라 `None` 강등 →
@@ -436,7 +444,7 @@ provider_versions/contract_version/sink 전부 composition root 주입(결정성
 | `RETRIEVAL_MIN_DIRECT_EDGES` | 3 | ② 이보다 적으면 이웃 확장 |
 | `RETRIEVAL_MAX_NEIGHBORS` | 50 | ② 이웃 fan-out cap |
 | `MATURITY_MIN` | 0.45 | ③ rankable-eligibility floor (medium cutoff 0.50 **아래** — gate와 ordering 분리) |
-| `STANCE_SHORTLIST_LIMIT` (K) | 20 | ④a 검색·judge 이전 hard-K |
+| `STANCE_SHORTLIST_LIMIT` (K) | 20 | ④a 검색·judge 이전 hard-K — **distinct agent** 수 |
 | `STANCE_SEARCH_PER_OWNER_LIMIT` | 10 | ④a owner별 statement 상한 (cost cap) |
 | `STANCE_CONFIDENCE_MIN` (τ) | 0.60 | ④b for/against 신뢰 guard |
 | `MATURITY_HIGH/MEDIUM_CUTOFF` | 0.75 / 0.50 | ④b maturity band 절단 |

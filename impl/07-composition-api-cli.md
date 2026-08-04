@@ -305,9 +305,12 @@ shape(턴 수·교대·blank)뿐이라, 조항을 무시한 대화도 그대로 
 남고, cleanup 중 `BaseException`(Ctrl-C 포함)도 기록한 뒤 남은 cleanup을 마치고 재전파합니다. 외부 리뷰
 5라운드가 전부 이 한 불변식의 서로 다른 누수 경로였습니다.
 
-**이 도구가 관측 못 하는 것을 리포트가 스스로 밝힙니다** — 탈락 후보의 원 verdict(drop이 `{agent_id, reason}`만
-남김: `wrong_stance`는 verdict가 있었다가 이 이음매에서 사라진 것, `stance_unevaluated`는 애초에 없던 것 →
-다르게 출력), raw competence 신호(어댑터 내부 translation에만 존재), preflight QID는 symbolic 규칙 기반
+**이 도구가 관측 못 하는 것을 리포트가 스스로 밝힙니다** — 탈락 후보의 원 verdict(drop이
+`{agent_id, anchor_id, reason}`만 남김: `wrong_stance`는 verdict가 있었다가 이 이음매에서 사라진 것,
+`stance_unevaluated`는 애초에 없던 것, `duplicate_agent_edge`는 **같은 agent의 다른 edge가 대표로 뽑혀
+이 edge는 judge되지 않은 것**[stance run에서만 §11에 표시] → 세 경우를 다르게 출력. drop 집계 라벨이
+`edge drops:`인 이유도 이것 — 단위가 agent가 아니라 edge입니다), raw competence 신호(어댑터 내부
+translation에만 존재), preflight QID는 symbolic 규칙 기반
 **heuristic**(agentic grounder는 그 규칙을 안 씀 → `probe_qid`라 부르고 불일치 시 명시), agent catalog 존재는
 `unverified`(bourbon-api에 조회 수단 없음 = turn-on 게이트 3).
 
