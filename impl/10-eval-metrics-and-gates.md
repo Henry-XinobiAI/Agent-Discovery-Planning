@@ -156,6 +156,25 @@ byte-identical. JSON 리포트는 `eval-report` artifact. 전체 파이프라인
 
 즉 green CI = "회귀 없음"이지 "품질 증명"이 아니다.
 
+### ★ baseline byte-identical ≠ 안전 — 코퍼스가 **안 밟는 경로**가 있다 (2026-08-04 감사)
+
+`24ebc2d`(대표 edge 재설계)는 baseline을 byte 단위로 그대로 통과시켰습니다. 그게 "행동이 안 변했다"는
+뜻이 **아닙니다** — 이 코퍼스는 그 경로를 **한 번도 밟지 않습니다**:
+
+- `edges.json`의 20개 anchor는 **각각 정확히 5개 edge = 5명의 distinct agent**를 갖습니다. 전부
+  `RETRIEVAL_MIN_DIRECT_EDGES`(3) **이상**이므로 sparsity가 트리거되지 않고 **one-hop 확장이 발생하지
+  않습니다**. 111 시나리오의 pool 555개 항목이 **전부 `via=direct`**(실측).
+- 한 anchor의 5 edge가 서로 다른 agent이므로 **한 pool에 같은 agent가 두 번 나오는 일도 없습니다** →
+  `duplicate_agent_edge` 경로도 코퍼스에서 도달 불가.
+- 그래서 real run이 찾은 결함(neighbor facet 중복 → 게이트 통과 edge가 가려짐)을 eval이 못 찾았습니다.
+  **structural diff 0은 "eval이 이 경로를 보지 않는다"의 동의어**였습니다.
+- ⚠️ 흔한 오추론: "코퍼스 12 agent가 전부 multi-anchor이므로 pool이 커진다" — **틀립니다**. 12명이 각각
+  8~9개 anchor에 걸쳐 있는 건 사실이지만 그건 **코퍼스 전체 기준 속성**이고, 한 시나리오의 pool은
+  **확정된 anchor 하나의 direct edge 5개**만 담습니다(확장이 안 도니 다른 anchor의 edge는 들어올 길이 없음).
+
+→ 후속 = **neighbor-expansion stratum 신설**([11. 로드맵](11-forward-roadmap.md) Phase 9 "변별력의 현재
+한계"). 그 stratum 없이는 확장·대표 선택·`duplicate_agent_edge` 전체가 유닛 테스트로만 커버됩니다.
+
 ---
 
 ## 커밋된 baseline (`eval/corpus/baseline.json`)

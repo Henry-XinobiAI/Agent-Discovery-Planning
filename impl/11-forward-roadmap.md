@@ -161,6 +161,15 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
   불변식). 한계는 **evaluation coverage이지 gate leniency가 아니며**, 더 강한 **regression signal**은
   real anchor + ambiguous 층이 들어오는 **Phase 10 이후**에 붙는다. gold도 synthetic이라 change-detector
   이지 quality measure가 아니다 → [10](10-eval-metrics-and-gates.md).
+- **★ 후속 티켓 — neighbor-expansion stratum (2026-08-04 감사에서 신설):** 현 코퍼스는 anchor마다
+  **5명의 distinct agent**를 direct로 갖고 있어 sparsity(<3)가 트리거되지 않는다 → **one-hop 확장이 한
+  번도 돌지 않고**(pool 555/555가 `via=direct`), 한 pool에 같은 agent가 두 번 나오지도 않는다. 그래서
+  ② 확장 · ④b 대표 edge 선택 · `duplicate_agent_edge`가 **전부 유닛 테스트로만** 커버되며, `24ebc2d`가
+  고친 real-run 결함을 eval은 구조적으로 볼 수 없었다(baseline byte-identical이 안전 신호가 아니었던
+  이유 — [10](10-eval-metrics-and-gates.md)). **필요한 fixture 속성**: direct agent ≤2인 sparse anchor +
+  이웃 QID에 edge를 가진 agent + **한 agent가 두 이웃 facet에 걸치되 maturity/experience가 갈리는** 케이스
+  (게이트 통과 edge가 탈락 edge에 가려지지 않는지, need별 대표가 그 need의 키로 뽑히는지). 이 stratum은
+  코퍼스 확장이라 **ratchet 재freeze를 동반**한다 → real-anchor 층(Phase 10)과 같은 배치에서 처리.
 - **선행 전제(2026-07-08/07-10):** real 앵커는 **동음이의 exact-label 동점**을 드러냄(오프라인에서 7/25만
   ground — [findings](findings-real-anchor-grounding-ties.md)). 강한 재측정의 실질 선행은 **memory-api
   search relevance 개선**(alias는 이미 검색되나 흔한 이름은 label^3에 밀림; memory-api 팀 소유 외부
