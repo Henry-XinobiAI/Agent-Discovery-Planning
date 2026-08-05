@@ -368,6 +368,10 @@ Alpha 랭킹은 **ordering contract**: need별 사전식 정렬 키를 **정수 
 
   coverage는 사후 dedupe가 불가하다: 중복을 뒤에서 지우면 그 facet이 **슬롯을 통째로 잃는다**. 그래서
   그룹별 커서로 이미 대표된 agent를 **건너뛰고 그 그룹의 다음 후보로 backfill**한다.
+- **완전 동점의 tie-break = 입력 순서**(정책): ordering key가 `agent_id`로 끝나는데 형제 edge는 그 값이
+  같으므로, need feature까지 전부 같으면 키가 tie를 못 깨고 stable sort가 **retrieval traversal 순서**를
+  남긴다(결정적). tie를 깨자고 `anchor_id` 같은 새 key를 넣지 않는다 — need와 무관한 선호가 된다.
+  단 이때 `RankedEntry.anchor_id`가 입력 순서에서 나온다는 점은 명시해 둔다.
 
 ### OUTPUT
 `(ranked, ranking_dropped)` (`ranking.py:84`). `ranking_dropped`에 들어가는 것은 (a) 모든 need의

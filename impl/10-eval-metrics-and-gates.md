@@ -45,7 +45,8 @@ completed만 join. stamped인데 record 없으면 **loud KeyError** (계약 위�
     edge와 public edge를 함께 갖고 있으면, private쪽은 gate가 떨어뜨리고 public쪽이 대표로 서빙되는
     **정상 실행**인데 그걸 노출 위반으로 셉니다 — hard gate false positive.
   - 지표가 **자기 입력 불변식을 스스로 강제**합니다(`metrics.py:198`, `metrics.py:214`): 같은 agent가
-    ranked에 두 번(대표 edge 없음) → `ValueError`, 서빙됐는데 ranked에 없음 → `ValueError`. dict
+    ranked에 두 번(대표 edge를 **하나로 결정할 수 없음** — 코드의 `no single representative edge`) →
+    `ValueError`, 서빙됐는데 ranked에 없음 → `ValueError`. dict
     comprehension으로 조용히 덮어쓰거나 "anchor 없음 = 노출 아님"으로 기본값을 주면 **safety gate가
     fail-open**하므로, 파이프라인의 보장을 빌리지 않고 여기서 거부합니다.
   - ⚠️ 이 지표의 edge-level 갈래는 **현 코퍼스에서 도달 불가**입니다 — `edges.json`에
@@ -173,7 +174,12 @@ byte-identical. JSON 리포트는 `eval-report` artifact. 전체 파이프라인
   **확정된 anchor 하나의 direct edge 5개**만 담습니다(확장이 안 도니 다른 anchor의 edge는 들어올 길이 없음).
 
 → 후속 = **neighbor-expansion stratum 신설**([11. 로드맵](11-forward-roadmap.md) Phase 9 "변별력의 현재
-한계"). 그 stratum 없이는 확장·대표 선택·`duplicate_agent_edge` 전체가 유닛 테스트로만 커버됩니다.
+한계"). 보호 수준을 정확히 말하면 — 확장·대표 선택·`duplicate_agent_edge`는 **retrieval/ranker 유닛
+테스트와 `tests/test_pipeline.py` 통합 회귀**(`test_depth_serves_the_agents_stronger_neighbor_edge_instead_of_falling_silent`
+= 낮은 neighbor 먼저·높은 neighbor 나중인 원 결함 반례 · `test_shortlist_hands_the_evaluator_each_agent_once`
+= 중복 edge가 stance K 슬롯을 이중 소비하지 않음 · `test_coverage_keeps_both_facets_within_the_served_limit`)
+로 **보호되지만**, **committed corpus와 eval gate는 이 경로에 도달하지 않습니다.** 즉 없는 것은 회귀
+가드가 아니라 **eval 관측 증거**입니다.
 
 ---
 

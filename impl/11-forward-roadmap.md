@@ -164,9 +164,11 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
 - **★ 후속 티켓 — neighbor-expansion stratum (2026-08-04 감사에서 신설):** 현 코퍼스는 anchor마다
   **5명의 distinct agent**를 direct로 갖고 있어 sparsity(<3)가 트리거되지 않는다 → **one-hop 확장이 한
   번도 돌지 않고**(pool 555/555가 `via=direct`), 한 pool에 같은 agent가 두 번 나오지도 않는다. 그래서
-  ② 확장 · ④b 대표 edge 선택 · `duplicate_agent_edge`가 **전부 유닛 테스트로만** 커버되며, `24ebc2d`가
-  고친 real-run 결함을 eval은 구조적으로 볼 수 없었다(baseline byte-identical이 안전 신호가 아니었던
-  이유 — [10](10-eval-metrics-and-gates.md)). **필요한 fixture 속성**: direct agent ≤2인 sparse anchor +
+  ② 확장 · ④b 대표 edge 선택 · `duplicate_agent_edge`는 **유닛 + pipeline 통합 테스트로는 보호되지만
+  committed corpus/eval gate에서는 도달하지 않는다** — `24ebc2d`가 고친 real-run 결함을 eval이 구조적으로
+  볼 수 없었던 이유이자, baseline byte-identical이 안전 신호가 아니었던 이유
+  ([10](10-eval-metrics-and-gates.md)). 없는 것은 회귀 가드가 아니라 **eval 관측 증거**다.
+  **필요한 fixture 속성**: direct agent ≤2인 sparse anchor +
   이웃 QID에 edge를 가진 agent + **한 agent가 두 이웃 facet에 걸치되 maturity/experience가 갈리는** 케이스
   (게이트 통과 edge가 탈락 edge에 가려지지 않는지, need별 대표가 그 need의 키로 뽑히는지). 이 stratum은
   코퍼스 확장이라 **ratchet 재freeze를 동반**한다 → real-anchor 층(Phase 10)과 같은 배치에서 처리.

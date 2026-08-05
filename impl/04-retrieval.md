@@ -63,9 +63,11 @@ async def _expand_neighbors(self, anchor_qid):
     # 각 edge에 via=NEIGHBOR, via_qid=anchor_qid (원 앵커) 태그
 ```
 
-- **이웃 QID 수집** (`_neighbor_qids`): `broader/narrower/links_out/links_in` 전부를 균일하게
-  다룸 (relationship-type weighting은 후속 튜닝). 앵커 자신은 제외. `dict.fromkeys`로 dedupe +
-  결정적 순서, `RETRIEVAL_MAX_NEIGHBORS=50`으로 cap (concurrent fan-out 제한).
+- **이웃 QID 수집** (`_neighbor_qids`): `broader/narrower/links_out/links_in`에 **가중치를 주지 않음**
+  (relationship-type weighting은 후속 튜닝). 앵커 자신은 제외. `dict.fromkeys`로 dedupe + 결정적 순서,
+  `RETRIEVAL_MAX_NEIGHBORS=50`으로 cap (concurrent fan-out 제한).
+  > ⚠️ **"가중치 없음"이 "균일하게 다룬다"는 아닙니다** — 그룹을 고정 순서로 이어붙인 뒤 자르므로 cap에
+  > 걸리면 **뒤 그룹이 통째로 굶습니다**(실측: `links_in` 0개). 아래 설정 절 참조.
 - `asyncio.gather`(never `as_completed`)라 이웃 순서 보존 → 다운스트림 선점·대표 선택이 결정적.
 
 ### (3) direct-wins = **선점**(dedupe 아님) — `_preempted_by_direct` (`retrieval.py:88`)
@@ -93,8 +95,25 @@ neighbor edge뿐**입니다 — direct edge가 없는 agent는 자기 neighbor e
 | `RETRIEVAL_MIN_DIRECT_EDGES` | 3 | distinct direct agent가 이 미만이면 확장 |
 | `RETRIEVAL_MAX_NEIGHBORS` | 50 | 확장 시 이웃 QID cap (fan-out 제한) |
 
-`RETRIEVAL_MAX_NEIGHBORS`는 Alpha mock 코퍼스보다 넉넉한 headroom이라 실제 Alpha 동작을 안 자름.
-memory-api taxonomy cap이 100이라 real provider도 안전.
+**★ `RETRIEVAL_MAX_NEIGHBORS`(50)는 fan-out 비용 상한이고 recall-neutral하지 않습니다.** 실제 배포에서
+**두 층의 cap이 모두 후보를 잘랐습니다** — real run `run-72ecb8940fb5`의 앵커 Q8486에서(진단 목적 `curl`
+재호출 실측):
+
+```
+upstream(memory-api) limit=30 : broader 6/6 · narrower 30/68 · links_out 30/30 · links_in 30/3836(truncated)
+retrieval cap 50              : deduped 96개 이웃 → 50개만 탐색
+실제 배분                      : broader 6 · narrower 30 · links_out 14 · links_in 0
+```
+
+- `links_in`은 **구조적으로 0**이 됐습니다. `_neighbor_qids`가 그룹을 고정 순서로 이어붙인 뒤 자르므로,
+  "모든 관계를 균일하게 취급한다"는 서술과 달리 **관계별 우선순위가 사실상 존재**합니다(가중치는 없지만
+  순서가 있음).
+- 이 run에서는 결과가 안 바뀌었습니다 — 버려진 46개 중 owner를 가진 `Q1362405`(gelato)의 두 owner가 모두
+  maturity 0.05였기 때문. **"이번엔 같았다"이지 "cap이 일반적으로 안전하다"가 아닙니다.**
+- 위 수치는 다른 시점의 `curl` 재호출이라 **진단으로는 유효하나 리포트 근거로는 부적격**입니다. 그룹별
+  truncation과 cap 전후 분포는 **request-scoped observer 트랙**(기본 no-op collector)에서 관측한 뒤,
+  group round-robin / quota / 관계 우선순위 중 하나를 명시적으로 고릅니다. cap을 무작정 키우지 않습니다 —
+  concurrent fan-out 비용만 늘어납니다.
 
 ---
 

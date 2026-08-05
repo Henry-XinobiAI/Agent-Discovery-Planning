@@ -40,8 +40,9 @@ flat 디렉터리. 러너가 한 곳에서 읽음:
 - **★ `edges.json`의 분포가 밟지 않는 경로 (2026-08-04 감사):** 20 anchor × **정확히 5개 edge = 5명의
   distinct agent**입니다. 전부 `RETRIEVAL_MIN_DIRECT_EDGES`(3) 이상이라 **one-hop 확장이 한 번도 돌지
   않고**(pool 전량 `via=direct`), 한 pool에 같은 agent가 두 번 등장하지도 않습니다 → ② 확장과 ④b 대표
-  edge 선택(`duplicate_agent_edge`)은 **이 코퍼스로 검증되지 않습니다**. `discoverable=False` **edge**도
-  0개(agent-level fixture만 존재). 후속 stratum =
+  edge 선택(`duplicate_agent_edge`)은 **이 코퍼스로 검증되지 않습니다** — 일반 테스트(retrieval·ranker
+  유닛 + `tests/test_pipeline.py` 통합 회귀)에서는 보호되지만 **committed corpus와 eval gate에서는 도달
+  하지 않습니다**. `discoverable=False` **edge**도 0개(agent-level fixture만 존재). 후속 stratum =
   [11. 로드맵](11-forward-roadmap.md) Phase 9, 함의 = [10. metrics](10-eval-metrics-and-gates.md).
 
 ### scenario 필드

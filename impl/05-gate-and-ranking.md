@@ -133,7 +133,8 @@ EXPERIENCE: [experience_source_rank, experience_specificity_rank, evidence, fres
 FOR/AGAINST:[maturity_band, evidence, freshness, stance_confidence, agent_id]
 COVERAGE:   [coverage_group, maturity_band, evidence, freshness, agent_id]
 ```
-모든 순서는 `agent_id asc`로 종료 (완전한 total order → 결정적).
+모든 순서는 `agent_id asc`로 종료 — **서로 다른 agent 사이에서는 total order**이고 결정적입니다. 같은
+agent의 형제 edge끼리는 `agent_id`가 같으므로 이 키가 tie를 못 깹니다(아래 "대표 edge" 절의 완전 동점 항).
 
 ### ★ 대표 edge — "한 agent를 대표하는 edge"는 ranking 결정
 한 agent는 ranked slot을 **최대 1개**만 가집니다. 그런데 pool은 한 agent의 edge를 여러 개 담을 수
@@ -159,6 +160,14 @@ firsthand edge가 아닌 쪽이 대표가 되거나, 심하면 **게이트를 �
   agent를 **건너뛰고 그 그룹의 다음 후보로 backfill**합니다 — 대표 하나를 잃은 게 facet 하나를 잃는
   일이 되지 않게.
 - **for/against는 judge 앞**이라 K의 단위가 걸립니다 → 위 ④a 절의 `stance_shortlist`.
+- **★ 형제 edge가 need 키에서 완전 동점이면 입력 순서가 대표를 정합니다.** ordering key는 `agent_id`로
+  끝나는데 형제끼리는 그 값이 같으므로, need-specific feature까지 전부 같으면 **키가 tie를 깨지 못하고**
+  Python stable sort가 **retrieval traversal 순서**(provider 응답 순 → `gather` 이웃 순, 결정적)를 그대로
+  둡니다. 이건 결함이 아니라 **정책**입니다 — 그 need의 기준으로 두 edge가 정확히 동등하다면 어느 쪽을
+  골라도 랭킹은 같고, tie를 깨려고 `anchor_id` 같은 **새 key를 추가하지 않는다**는 것이 이 설계의 규칙이기
+  때문입니다(그 key는 need와 무관한 선호를 몰래 들여옵니다). 대신 **결과로 남는 것**은 봐야 합니다:
+  `RankedEntry.anchor_id`와 edge-level 지표가 보는 anchor가 이 경우 입력 순서에서 나옵니다. 키로 결정되길
+  원하게 되면 그때 `anchor_id` 최종 tiebreak를 **계약과 코드에 동시에** 넣습니다(현재는 미도입).
 - 산출: `rank()`는 `(ranked, ranking_dropped)`를 반환하고, `ranking_dropped`에는 **모든 need의**
   `duplicate_agent_edge`와 for/against의 stance 필터 drop이 함께 들어갑니다. 즉 비-stance need에서도
   non-empty일 수 있습니다.
