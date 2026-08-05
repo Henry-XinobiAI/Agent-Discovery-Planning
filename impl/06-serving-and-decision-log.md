@@ -124,7 +124,7 @@ row = DecisionLogRecord(
     query=_logged_query(normalized),                 # topic/need/lang/limit + proposition (audit only)
     grounding=_logged_grounding(grounding),          # considered trace, fallback_used, trajectory(agentic)
     candidate_pool=[_pool_entry(c) for c in candidate_pool],  # survivors + gate.dropped
-    dropped=[_drop_entry(c) for c in dropped],       # gate.dropped + filter_dropped 병합
+    dropped=[_drop_entry(c) for c in dropped],       # gate.dropped + shortlist_dropped + ranking_dropped
     ranked=[_ranked_entry(c, rank, need) ...],       # 전체 ranking (top-limit 아님)
     reasons=_logged_reasons(recommendation),
     serving=_logged_serving(recommendation),         # silent/reason/returned
@@ -147,8 +147,9 @@ sink.write(row)
   experience면 source_type/rank도. 타입 `dict[str, float|int|str|None]`.
 - **`_drop_entry`/`_stance_log` loud fail** — dropped인데 reason 없거나, ranked stance인데 stance
   없으면 파이프라인 불변식 위반 → `ValueError`. 모순된 row를 조용히 로그하지 않음.
-- **dropped 병합** = `gate.dropped + filter_dropped` (P1, 파이프라인 책임). pool = survivors +
-  gate.dropped.
+- **dropped 병합** = `gate.dropped + shortlist_dropped + ranking_dropped`
+  (`pipeline.py:152`, 파이프라인 책임). pool = survivors + gate.dropped. 세 갈래는 각각 need-무관 게이트 ·
+  ④a hard-K · ④b(대표 edge + stance 필터) 처분입니다.
 
 ---
 
@@ -161,8 +162,9 @@ log_id, ts, contract_version
 query (LoggedQuery)          — topic, need, lang, limit, proposition (for/against canonical proposition)
 grounding (LoggedGrounding)  — resolved_qid, method, fallback_used, considered[], trajectory (agentic 채택 시)
 candidate_pool [PoolEntry]   — agent_id, anchor_id, via, via_qid
-dropped [DropEntry]          — agent_id, reason
-ranked [RankedEntry]         — rank, feature_breakdown, ordering_keys, stance (StanceLog{proposition, position}; no score!)
+dropped [DropEntry]          — agent_id, anchor_id, reason   (단위 = candidate edge)
+ranked [RankedEntry]         — agent_id, anchor_id(대표 edge), rank, feature_breakdown, ordering_keys,
+                               stance (StanceLog{proposition, position}; no score!)
 reasons [LoggedReason]
 serving (LoggedServing)      — silent, reason, returned
 provider_versions            — mock↔real 비교용 provenance
@@ -172,6 +174,29 @@ ope (OpeBlock)               — Alpha 빈 채, 형태만 존재 → Open Beta�
 - ranked entry에 scalar score 없음, `ordering_keys` + raw `feature_breakdown`으로 대체 → Post-OB
   LTR/threshold 튜닝이 사후에 cutoff를 fit 가능.
 - `ope`는 Alpha에서 비었지만 형태가 존재 → Open Beta가 schema 변경 없이 채움.
+
+### ★ `anchor_id`는 세 줄 전부에 있고, 단위가 서로 다릅니다 (2026-08-04 `24ebc2d`)
+
+| row | 단위 | `anchor_id`의 뜻 |
+|---|---|---|
+| `PoolEntry` | candidate edge | 그 edge가 사는 QID (neighbor면 이웃 QID, 원 앵커는 `via_qid`) |
+| `DropEntry` | candidate **edge** | 처분된 그 edge의 QID |
+| `RankedEntry` | agent | 그 agent를 **대표하게 된** edge의 QID |
+
+- **`(agent_id, anchor_id)`가 pool ↔ drop ↔ ranked를 잇는 join 키**입니다. 한 agent가 여러 anchor로
+  pool에 들어오면 row도 edge당 하나씩 생기므로, **agent 수를 세려면 distinct `agent_id`로 세야**
+  합니다. row 수를 agent 수로 읽으면 안 됩니다.
+- **drop은 agent 이벤트가 아니라 edge 처분**입니다. agent-level 판정(eligibility) 하나로도 그 agent의
+  edge 수만큼 row가 나옵니다 — 판정은 agent당 1회지만 처분은 edge마다 기록되니까.
+- **ranked는 agent당 최대 1행**입니다(`duplicate_agent_edge`가 나머지를 drop으로 보냄). 그래서
+  `RankedEntry.anchor_id`는 "이 agent가 어느 facet으로 추천됐나"를 유일하게 답하는 필드이고,
+  eval의 edge-level 게이트가 **정확히 그 edge**를 채점하는 근거입니다
+  ([10. metrics](10-eval-metrics-and-gates.md)의 `discoverability_off_exposure`).
+- **`via`/`via_qid`는 복제하지 않습니다** — `PoolEntry`에 이미 있고 같은 키로 join되므로. 중복 필드는
+  두 곳이 어긋날 여지만 만듭니다.
+- **`contract_version`은 올리지 않았습니다.** 두 필드는 기존 row에 required로 추가된 것이고, Alpha는
+  로그를 되읽는 소비자가 없습니다(write-only, 커밋된 artifact 없음). 되읽는 소비자가 생기는 시점
+  (OPE replay)이 버전 규율의 시작점입니다.
 
 ---
 

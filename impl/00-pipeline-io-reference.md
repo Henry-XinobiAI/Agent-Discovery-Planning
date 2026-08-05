@@ -27,7 +27,7 @@ rung별로 쪼갭니다. "왜 이렇게 설계했나"의 서술형 deep-dive는 
 | ② | retrieval | `retrieval.py` | `grounding.qid: str` | `list[EdgeHit]` |
 | ③ | gate | `gate.py` | `list[EdgeHit]` + `eligibility_context` | `GateResult(survivors, dropped)` |
 | ④a | stance *(for/against만)* | `stance.py` | `survivors`, `NormalizedQuery`, `subject_qid` | `StanceEvaluation(candidates, silence_reason)` |
-| ④b | ranking | `ranking.py` | `survivors`, `NormalizedQuery` | `(ranked, filter_dropped)` |
+| ④b | ranking | `ranking.py` | `survivors`, `NormalizedQuery` | `(ranked, ranking_dropped)` |
 | ⑤ | serving | `serving.py` | `ranked`, `grounding`, `reasons` | `Recommendation` |
 | ⑥ | decision log | `decision_log.py` | 전 단계 중간물 | `DecisionLogRecord` + `decision_log_id` stamp |
 
@@ -198,20 +198,24 @@ rerank·expansion의 **모든 비채택 경로**는 침묵 전에 `_substitute_o
 ### INPUT
 `anchor_qid: str` (= `grounding.qid`).
 
-### 처리 (`Retriever.retrieve()` `retrieval.py:91`)
+### 처리 (`Retriever.retrieve()` `retrieval.py:113`)
 1. `edges.get_edges(anchor_qid)` → direct edge 수집, `EdgeHit(via=DIRECT)`로 래핑.
-2. **sparsity 판정 전 dedupe**: `_dedupe_direct_wins`로 agent별 1개(threshold는 **distinct agent** 수를
-   세므로 중복 edge가 확장을 억누르면 안 됨).
+2. **sparsity 판정 전 축소**: `_one_hit_per_direct_agent`(`retrieval.py:72`)로 agent별 1개. direct는 전부
+   같은 확정 앵커 위라 중복 = 같은 `(agent_id, anchor_id)`이고, 이 축소가 `len()`을 **distinct direct
+   agent** 수로 만들어 threshold의 의미를 정한다(중복 edge가 확장을 억눌러선 안 됨).
 3. distinct direct agent < `RETRIEVAL_MIN_DIRECT_EDGES`(3) → **one-hop 이웃 확장**
    (`_expand_neighbors`): `expand_connections`로 이웃 QID 수집(`_neighbor_qids`: broader/narrower/links_out/
    links_in 균일 취급, 앵커 자기 제외, dedupe, `RETRIEVAL_MAX_NEIGHBORS=50` cap) → 각 이웃 `get_edges`
    concurrent(`gather` 이웃 순서 보존) → `EdgeHit(via=NEIGHBOR, via_qid=원앵커)`.
-4. 최종 `_dedupe_direct_wins` → **direct-wins**(같은 agent가 양쪽이면 direct).
+4. `_preempted_by_direct`(`retrieval.py:88`) → **direct-wins**(R3). 같은 agent가 양쪽이면 그 agent의
+   neighbor edge만 밀어내는 **선점**이지 pool 전역 dedupe가 아니다 — direct edge가 없는 agent는 자기
+   neighbor edge를 **전부** 유지한다.
 
 ### OUTPUT
-`list[EdgeHit]` (`retrieval.py:33`) — `edge` + `via`(DIRECT/NEIGHBOR) + `via_qid`. **불변식:
+`list[EdgeHit]` (`retrieval.py:39`) — `edge` + `via`(DIRECT/NEIGHBOR) + `via_qid`. **불변식:
 `via==NEIGHBOR ⟺ via_qid 설정`**(R3; neighbor hit의 `edge.anchor_id`는 이웃 QID, `via_qid`는 원 앵커).
-아직 `Candidate` 아님 — eligibility 미바인딩.
+아직 `Candidate` 아님 — eligibility 미바인딩. **한 agent가 여러 edge로 나올 수 있다**(여러 이웃 facet) —
+누가 그 agent를 대표하는지는 need를 아는 ④b가 정한다.
 
 ---
 
@@ -220,18 +224,24 @@ rerank·expansion의 **모든 비채택 경로**는 침묵 전에 `_substitute_o
 ### INPUT
 `list[EdgeHit]` + `context`(= `normalized.eligibility_context`, eligibility용).
 
-### 처리 (`Gate.screen()` `gate.py:82`)
-1. **eligibility (hard-required)**: 모든 hit에 `eligibility.check(agent_id, context=...)` concurrent
-   (`gather`, `return_exceptions` 미설정 → 첫 실패가 전체 gate 실패시킴, 조용한 drop 금지).
+### 처리 (`Gate.screen()` `gate.py:100`)
+1. **eligibility (hard-required)**: `_fetch_once_per_agent`(`gate.py:73`)로 **unique agent당 1회**
+   `eligibility.check(agent_id, context=...)` concurrent (`gather`, `return_exceptions` 미설정 → 첫 실패가
+   전체 gate 실패시킴, 조용한 drop 금지). **agent-level 판정을 edge마다 묻지 않는다** — real provider가 한
+   요청 안에서 다르게 답하면 같은 agent의 edge들이 모순된 verdict를 갖게 되므로.
 2. **need-agnostic drop** (`_need_agnostic_drop`, precedence = 가장 강한 노출 gate 먼저):
-   `eligibility.discoverable` → `edge.discoverable` → `edge.maturity < MATURITY_MIN`(0.45). drop된 것은
-   `drop_reason` 달아 `dropped`로(로그용), **persona 미fetch**.
-3. **persona (optional 신호)**: survivor에만 `persona.get_prior` concurrent 바인딩.
+   `eligibility.discoverable` → `edge.discoverable` → `edge.maturity < MATURITY_MIN`(0.45). 이 검사는
+   **edge별**(maturity·`edge.discoverable`이 edge 필드) — 같은 agent의 한 edge가 탈락해도 형제 edge는 살 수
+   있다. drop된 것은 `drop_reason` 달아 `dropped`로(로그용), **persona 미fetch**.
+3. **persona (optional 신호)**: survivor를 가진 **agent당 1회** `persona.get_prior`(같은 `_fetch_once_per_agent`).
+   survivor-only 규칙은 **agent 기준** — 한 edge가 drop돼도 형제 edge가 필요한 prior를 억누르지 않고,
+   두 edge가 다 살아도 재fetch하지 않는다. 공유된 prior가 후보를 결합시키지 않는 근거는
+   `StrictBaseModel`의 `revalidate_instances="always"`(후보별 별 인스턴스, 테스트로 고정).
 4. need-specific 필터(`stance_unevaluated`/`wrong_stance`/`low_stance_confidence`)는 **여기 아님** —
    ④b Ranker 몫(R2).
 
 ### OUTPUT
-`GateResult(survivors, dropped)` (`gate.py:32`) — 둘 다 `list[Candidate]`. survivor는 `drop_reason=None` +
+`GateResult(survivors, dropped)` (`gate.py:37`) — 둘 다 `list[Candidate]`. survivor는 `drop_reason=None` +
 persona 바인딩(랭킹 준비 완료), dropped는 `drop_reason` 설정(랭킹 안 됨, 로그만). **`Candidate`는 여기서
 태어남**(EdgeHit + Eligibility, R1).
 
@@ -247,12 +257,20 @@ edge에 관측된 stance를 미러링하는 게 아니라 **요청 시점에** �
 
 ### 처리 (`pipeline.py:107` → `StanceEvaluator.evaluate()`)
 
-0. **hard-K 선별** — evaluator가 붙어 있을 때만 `Ranker.stance_shortlist(limit=STANCE_SHORTLIST_LIMIT=20)`.
-   stance-무관 competence 키(`_depth_key`)로 상위 K만 남기고 나머지는 `stance_shortlist_limit`으로 drop
-   로그. **검색·judge 비용을 evidence 검색 이전에 묶는 유일한 지점.** 결정적 hard-K 근사이지 최종 stance
-   랭킹의 무손실 prefix가 아니다(`_stance_key`는 competence 3키 *뒤에* `stance_confidence`를 넣으므로,
-   경계 동점에서 잘린 후보가 나중에 더 높은 confidence를 받을 수 있다 — 알려진 trade-off).
-   dormant면 이 단계를 **건너뛴다**(judge가 없는데 K drop을 로그하면 거짓말).
+0. **hard-K 선별** — evaluator가 붙어 있을 때만 `Ranker.stance_shortlist(limit=STANCE_SHORTLIST_LIMIT=20)`
+   (`ranking.py:106`). stance-무관 competence 키(`_depth_key`)로 정렬해 상위 **agent** K명의 대표 edge만
+   남긴다. **검색·judge 비용을 evidence 검색 이전에 묶는 유일한 지점.**
+   - **★ K는 distinct agent를 센다, edge가 아니라** (spec §D2): K가 묶는 두 비용(검색 fan-out `ceil(K/20)`,
+     후보별 judge 콜)이 **agent당** 발생하는데, 이 단계의 입력은 edge다(한 agent가 여러 facet). edge를 세면
+     형제 edge 둘이 슬롯 둘을 먹고 judge는 한 번만 나가 recall이 조용히 줄어든다.
+   - **후보의 3-상태**: ① 대표 없는 agent의 첫 edge + K 여유 → **kept** · ② 이미 kept된 agent의 이후 edge →
+     `duplicate_agent_edge`(형제가 judge됨) · ③ K 소진 후 처음 본 agent와 **그 agent의 모든 edge** →
+     `stance_shortlist_limit`(그 agent는 아무것도 judge 안 됨). K는 한 번 소진되면 계속 소진 상태라 ③의
+     후속 edge도 같은 branch·같은 사유로 떨어진다. ②와 ③을 한 사유로 합치지 않는다 — 말하는 사실이 다르다.
+   - 결정적 hard-K 근사이지 최종 stance 랭킹의 무손실 prefix가 아니다(`_stance_key`는 competence 3키 *뒤에*
+     `stance_confidence`를 넣으므로, 경계 동점에서 잘린 agent가 나중에 더 높은 confidence를 받을 수 있다 —
+     알려진 agent-level trade-off).
+   - dormant면 이 단계를 **건너뛴다**(judge가 없는데 K drop을 로그하면 거짓말).
 1. **symmetric query 생성** (LLM 1콜) — `StanceQueryGenerator.generate(topic, proposition)` →
    `StanceQueries{neutral, support, oppose}`. 요청한 쪽만 검색하면 그 owner의 **반대 주장을 놓쳐**
    오추천하므로 세 방향을 항상 함께 만든다. 한 방향이라도 비면 편향된 확장이라 `None` 강등 →
@@ -314,10 +332,10 @@ Alpha 랭킹은 **ordering contract**: need별 사전식 정렬 키를 **정수 
 ### INPUT
 `survivors: list[Candidate]`, `query: NormalizedQuery`.
 
-### 처리 (`Ranker.rank()` `ranking.py:57`)
+### 처리 (`Ranker.rank()` `ranking.py:84`)
 1. **annotate**: 각 candidate에 raw features(maturity/evidence/freshness, need별 experience_specificity·
    stance_confidence 추가) + `ordering_keys`(이 need의 키 이름) 기록(로그용).
-2. **need별 순서**:
+2. **need별 순서** (각 need는 순서를 정하는 김에 **대표 edge**도 고른다 — 아래 별 절):
    - **depth**: `_depth_key` = (maturity_band↓, evidence↓, freshness↓, agent_id↑).
    - **experience**: `_experience_key` = (source_rank↓, specificity↓, evidence↓, freshness↓, band↓, agent_id↑).
      `EXPERIENCE_SOURCE_RANK` = firsthand 2 / secondhand 1 / **None 0**(abstract는 뒤로).
@@ -331,12 +349,34 @@ Alpha 랭킹은 **ordering contract**: need별 사전식 정렬 키를 **정수 
      frozen edge 계약과 결정적 eval mirror에 남아 있다), 그 자리를 `stance_unevaluated`가 흡수한다.
      통과분만 `_stance_key`로 정렬(band↓, evidence↓, freshness↓, stance_confidence↓[late tiebreak],
      agent_id↑).
-   - **coverage**: `_coverage_round_robin` — `edge.anchor_id`로 그룹핑, core 그룹(direct hit의 anchor_id)
-     먼저, 그다음 anchor_id asc, 그룹 간 **round-robin**으로 한 facet 독점 방지.
+   - **coverage**: `_coverage_round_robin`(`ranking.py:187`) — `edge.anchor_id`로 그룹핑, core 그룹(direct hit의
+     anchor_id) 먼저, 그다음 anchor_id asc, 그룹 간 **round-robin**으로 한 facet 독점 방지.
+
+### ★ 대표 edge = ranking 단계 연산 (`duplicate_agent_edge`)
+한 agent는 ranked slot을 **최대 1개** 가진다. pool에 그 agent의 edge가 여러 개면(②의 여러 이웃 facet)
+**Ranker가 하나를 고르고 나머지를 `duplicate_agent_edge`로 drop**한다. 규칙 세 가지:
+
+- 선택은 **그 need의 기존 ordering key**로 한다. 새 key를 만들지 않고, depth 중심 규칙을 다른 need에
+  강요하지도 않는다.
+- **retrieval에서 하지 않는다** — ②는 need를 모르므로 어느 facet이 이 요청에 더 나은지 알 수 없다.
+- 적용 지점은 need별로 **key가 확정되는 가장 이른 곳**:
+  | need | 지점 | 함수 |
+  |---|---|---|
+  | depth / experience | 정렬 **후** 1회 스캔 | `_keep_one_edge_per_agent` (`ranking.py:57`) |
+  | coverage | round-robin **안**(skip-and-backfill) | `_coverage_round_robin` (`ranking.py:187`) |
+  | for / against | `stance_shortlist` **안**(judge 앞) | `Ranker.stance_shortlist` (`ranking.py:106`) |
+
+  coverage는 사후 dedupe가 불가하다: 중복을 뒤에서 지우면 그 facet이 **슬롯을 통째로 잃는다**. 그래서
+  그룹별 커서로 이미 대표된 agent를 **건너뛰고 그 그룹의 다음 후보로 backfill**한다.
+- **완전 동점의 tie-break = 입력 순서**(정책): ordering key가 `agent_id`로 끝나는데 형제 edge는 그 값이
+  같으므로, need feature까지 전부 같으면 키가 tie를 못 깨고 stable sort가 **retrieval traversal 순서**를
+  남긴다(결정적). tie를 깨자고 `anchor_id` 같은 새 key를 넣지 않는다 — need와 무관한 선호가 된다.
+  단 이때 `RankedEntry.anchor_id`가 입력 순서에서 나온다는 점은 명시해 둔다.
 
 ### OUTPUT
-`(ranked, need_filter_dropped)` (`ranking.py:57`). `need_filter_dropped`는 for/against에서만 non-empty(stance
-필터 drop), 나머지 need는 `[]`. Gate의 need-agnostic drop과는 파이프라인에서 병합(⑥).
+`(ranked, ranking_dropped)` (`ranking.py:84`). `ranking_dropped`에 들어가는 것은 (a) 모든 need의
+`duplicate_agent_edge`, (b) for/against의 stance 필터 drop. 비-stance need에서도 **non-empty일 수 있다**.
+Gate의 need-agnostic drop, ④a의 shortlist drop과는 파이프라인에서 병합(`pipeline.py:152`, ⑥).
 
 ---
 
@@ -374,7 +414,7 @@ provider_versions/contract_version/sink 전부 composition root 주입(결정성
 
 ### INPUT (`DecisionLog.record()` `decision_log.py:69`)
 `normalized` + `grounding` + `candidate_pool`(= survivors + gate.dropped) +
-`dropped`(= gate.dropped + filter_dropped, 병합) + `ranked` + `recommendation`. **raw `Query`는 받지
+`dropped`(= gate.dropped + shortlist_dropped + ranking_dropped, 병합) + `ranked` + `recommendation`. **raw `Query`는 받지
 않는다** — 정규화가 순수 검증뿐이라 raw/normalized를 나란히 남길 이유가 사라졌다.
 
 ### 처리
@@ -408,7 +448,7 @@ provider_versions/contract_version/sink 전부 composition root 주입(결정성
 | `RETRIEVAL_MIN_DIRECT_EDGES` | 3 | ② 이보다 적으면 이웃 확장 |
 | `RETRIEVAL_MAX_NEIGHBORS` | 50 | ② 이웃 fan-out cap |
 | `MATURITY_MIN` | 0.45 | ③ rankable-eligibility floor (medium cutoff 0.50 **아래** — gate와 ordering 분리) |
-| `STANCE_SHORTLIST_LIMIT` (K) | 20 | ④a 검색·judge 이전 hard-K |
+| `STANCE_SHORTLIST_LIMIT` (K) | 20 | ④a 검색·judge 이전 hard-K — **distinct agent** 수 |
 | `STANCE_SEARCH_PER_OWNER_LIMIT` | 10 | ④a owner별 statement 상한 (cost cap) |
 | `STANCE_CONFIDENCE_MIN` (τ) | 0.60 | ④b for/against 신뢰 guard |
 | `MATURITY_HIGH/MEDIUM_CUTOFF` | 0.75 / 0.50 | ④b maturity band 절단 |

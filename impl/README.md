@@ -70,7 +70,7 @@ flowchart TD
     G -->|"survivors: list&#91;Candidate&#93;"| ST["④a stance<br/>(for/against만)"]
     ST -->|"stance 주입된 candidates"| RK["④b ranking"]
     ST -->|"silence_reason → payload 강제 비움"| SV
-    RK -->|"ranked (+ filter_dropped)"| SV["⑤ serving"]
+    RK -->|"ranked (+ ranking_dropped)"| SV["⑤ serving"]
     SV -->|"top-limit items<br/>또는 pool 0 / stance 침묵 → silent 200"| REC(["Recommendation"])
 
     G -. dropped .-> DL["⑥ decision log"]

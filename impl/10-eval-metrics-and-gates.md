@@ -15,8 +15,8 @@ code를 냅니다. **전부 결정적 gold — LLM judge 없음** (safety 게이
 
 지표는 두 입력면을 `log_id == decision_log_id`로 join해서 계산:
 - **summary** (`execution.run.scenarios`) — 각 시나리오가 무엇을 서빙했나 `(agent_id, rank)`.
-- **decision logs** (`execution.decision_logs`) — pre-gate `candidate_pool`, grounding
-  `considered` trace, `fallback_used`.
+- **decision logs** (`execution.decision_logs`) — pre-gate `candidate_pool`, `ranked`(agent별 대표
+  `anchor_id`), grounding `considered` trace, `fallback_used`.
 
 ```python
 record_by_id = {r.log_id: r for r in execution.decision_logs}
@@ -38,9 +38,19 @@ completed만 join. stamped인데 record 없으면 **loud KeyError** (계약 위�
 | `retrieval_recall_easy_needle` | Ratio | 100% | target이 pre-gate pool에 존재 |
 
 - `must_not_show`: 서빙된 (scenario, agent) 중 gold=must_not_show 개수.
-- `discoverability_off_exposure`: agent-level(eligibility.discoverable=False) OR edge-level(pool에
-  기여한 edge의 discoverable=False). pool entry를 `(agent_id, anchor_id)`로 edges에 join — 파이프
-  라인이 쓴 것과 같은 QID join 키.
+- `discoverability_off_exposure`: agent-level(eligibility.discoverable=False) OR edge-level(**그 agent를
+  대표한 edge**의 discoverable=False). 결합 키 = `RankedEntry.anchor_id`(agent당 1행) → `(agent_id,
+  anchor_id)`로 edges에 join — 파이프라인이 쓴 것과 같은 QID join 키.
+  - **pool 전체 anchor에 `any()`를 걸면 안 됩니다** (2026-08-04 `24ebc2d`에서 교정): 한 agent가 private
+    edge와 public edge를 함께 갖고 있으면, private쪽은 gate가 떨어뜨리고 public쪽이 대표로 서빙되는
+    **정상 실행**인데 그걸 노출 위반으로 셉니다 — hard gate false positive.
+  - 지표가 **자기 입력 불변식을 스스로 강제**합니다(`metrics.py:198`, `metrics.py:214`): 같은 agent가
+    ranked에 두 번(대표 edge를 **하나로 결정할 수 없음** — 코드의 `no single representative edge`) →
+    `ValueError`, 서빙됐는데 ranked에 없음 → `ValueError`. dict
+    comprehension으로 조용히 덮어쓰거나 "anchor 없음 = 노출 아님"으로 기본값을 주면 **safety gate가
+    fail-open**하므로, 파이프라인의 보장을 빌리지 않고 여기서 거부합니다.
+  - ⚠️ 이 지표의 edge-level 갈래는 **현 코퍼스에서 도달 불가**입니다 — `edges.json`에
+    `discoverable=False` edge가 0개(agent-level만 fixture 있음). 유닛 테스트로만 커버됩니다.
 - `needle_top1`: needle당 정확히 1개 ideal이어야. 0/≥2면 **precondition violation**(분모에서 제외,
   silent skip 아님).
 - `retrieval_recall`: easy ∨ needle 범위, target ∈ {ideal, acceptable}, per-target micro-avg,
@@ -146,6 +156,30 @@ byte-identical. JSON 리포트는 `eval-report` artifact. 전체 파이프라인
 - **metric 계산 정합성** = `test`(pytest) job 소관(유닛 테스트), `eval-gate` 아님.
 
 즉 green CI = "회귀 없음"이지 "품질 증명"이 아니다.
+
+### ★ baseline byte-identical ≠ 안전 — 코퍼스가 **안 밟는 경로**가 있다 (2026-08-04 감사)
+
+`24ebc2d`(대표 edge 재설계)는 baseline을 byte 단위로 그대로 통과시켰습니다. 그게 "행동이 안 변했다"는
+뜻이 **아닙니다** — 이 코퍼스는 그 경로를 **한 번도 밟지 않습니다**:
+
+- `edges.json`의 20개 anchor는 **각각 정확히 5개 edge = 5명의 distinct agent**를 갖습니다. 전부
+  `RETRIEVAL_MIN_DIRECT_EDGES`(3) **이상**이므로 sparsity가 트리거되지 않고 **one-hop 확장이 발생하지
+  않습니다**. 111 시나리오의 pool 555개 항목이 **전부 `via=direct`**(실측).
+- 한 anchor의 5 edge가 서로 다른 agent이므로 **한 pool에 같은 agent가 두 번 나오는 일도 없습니다** →
+  `duplicate_agent_edge` 경로도 코퍼스에서 도달 불가.
+- 그래서 real run이 찾은 결함(neighbor facet 중복 → 게이트 통과 edge가 가려짐)을 eval이 못 찾았습니다.
+  **structural diff 0은 "eval이 이 경로를 보지 않는다"의 동의어**였습니다.
+- ⚠️ 흔한 오추론: "코퍼스 12 agent가 전부 multi-anchor이므로 pool이 커진다" — **틀립니다**. 12명이 각각
+  8~9개 anchor에 걸쳐 있는 건 사실이지만 그건 **코퍼스 전체 기준 속성**이고, 한 시나리오의 pool은
+  **확정된 anchor 하나의 direct edge 5개**만 담습니다(확장이 안 도니 다른 anchor의 edge는 들어올 길이 없음).
+
+→ 후속 = **neighbor-expansion stratum 신설**([11. 로드맵](11-forward-roadmap.md) Phase 9 "변별력의 현재
+한계"). 보호 수준을 정확히 말하면 — 확장·대표 선택·`duplicate_agent_edge`는 **retrieval/ranker 유닛
+테스트와 `tests/test_pipeline.py` 통합 회귀**(`test_depth_serves_the_agents_stronger_neighbor_edge_instead_of_falling_silent`
+= 낮은 neighbor 먼저·높은 neighbor 나중인 원 결함 반례 · `test_shortlist_hands_the_evaluator_each_agent_once`
+= 중복 edge가 stance K 슬롯을 이중 소비하지 않음 · `test_coverage_keeps_both_facets_within_the_served_limit`)
+로 **보호되지만**, **committed corpus와 eval gate는 이 경로에 도달하지 않습니다.** 즉 없는 것은 회귀
+가드가 아니라 **eval 관측 증거**입니다.
 
 ---
 
