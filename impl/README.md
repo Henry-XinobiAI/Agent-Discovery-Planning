@@ -1,6 +1,6 @@
 # 구현 이해 가이드 — bourbon-agent-recommendation-api (Alpha)
 
-이 문서는 지금까지(Phase 0–8A + 재설계된 8B 폴백 사다리 Track 1–4 + 8-5/8-7·stance ④a·Phase 10 real edge dormant slice) 구현한 것을 **개념이 쌓이는 순서**로 정리한 것입니다.
+이 문서는 지금까지(Phase 0–8A + 재설계된 8B 폴백 사다리 Track 1–4 + 8-5/8-7·stance ④a·Phase 10 real edge slice) 구현한 것을 **개념이 쌓이는 순서**로 정리한 것입니다.
 빌드 순서(Phase 0→7)는 "계약을 먼저 얼리고 의존성 역순으로 짓는" 순서라서 처음 이해하기엔
 거꾸로입니다. 아래는 "무엇을 왜 만드는가 → 무엇이 흐르는가 → 어떻게 처리하는가 →
 어떻게 서빙/평가하는가" 순입니다.
@@ -194,8 +194,9 @@ B2 judge(8-4)·Open-Beta gate 필드(8-6)뿐.
 reason(8-5)·**agentic grounder 재설계(8-7, 기본 OFF)**·**query-time stance 판정(④a, 기본 OFF)**는 이제
 구현됨(구 자유형 stance 정규화 8-3은 구현됐다가 요청 모델 재설계와 함께 **제거**). 남은
 미구현은 LLM 품질 슬라이스(8-4 B2 silver judge / 8-6 Open-Beta gate fields)와 **Phase 10의 production
-turn-on**입니다. Phase 10의 **edge projection·composition 배선은 완료**돼 `REAL_EDGE_ENABLED` 뒤에 dormant로
-실려 있고 — ON이면 dev/진단 stage에서 실제로 부팅, production stage는 startup에서 거부 — 남은 것은
+turn-on**입니다. Phase 10의 **edge projection·composition 배선은 완료**돼 `REAL_EDGE_ENABLED` 뒤에
+실려 있고 — 코드 기본은 OFF지만 **dev overlay가 ON으로 설정**(measurement activation), production stage는
+startup에서 거부 — 남은 것은
 **추가 배선이 아니라 promotion 게이트 4개를 닫는 구현·계약 작업**입니다(requester self-exclusion 구현 ·
 producer-side derivation pin + 테스트 · phantom agent 검증·정책 · memory-api R1–R6 구현·검증).
 합의된 다음 순서는 **Phase 10 turn-on → 8B 잔여 튜닝**(expansion threshold/stratum). **8-7의 online 활성화 게이트는 8-4 judge**(context grounding 품질은 결정적 gold로 보증 불가).

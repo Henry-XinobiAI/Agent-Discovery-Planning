@@ -193,8 +193,9 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
 > **상태 (2026-07-28): real-edge projection과 composition wiring은 완료. 남은 것은 *추가 배선*이 아니라
 > production promotion gate를 닫는 구현·계약 작업입니다.**
 >
-> contract slice와 turn-on Step 1이 머지돼(`REAL_EDGE_ENABLED`, 기본 OFF) **ON이면 dev/진단 stage에서
-> 실제로 부팅**합니다. 다만 아래 게이트는 **넷 다 구현·테스트 또는 upstream 계약 착지를 요구**합니다
+> contract slice와 turn-on Step 1이 머지돼(`REAL_EDGE_ENABLED`, 코드 기본 OFF) **ON이면 dev/진단 stage에서
+> 실제로 부팅**하고, **dev overlay는 2026-08-06부터 ON**입니다(measurement activation — 07 composition
+> "켜짐은 세 단계다" 참조; 매니페스트 상태이고 `deploy.sh dev`는 수동). 다만 아래 게이트는 **넷 다 구현·테스트 또는 upstream 계약 착지를 요구**합니다
 > (self-exclusion 구현 · phantom-agent 검증·정책 구현 · R1–R6 구현·검증 · B1도 bourbon-api에
 > namespace/vector pin 테스트와 immutable 선언을 착지시키는 작업) — "코드가 끝났다"는 건
 > **edge projection·배선에 한정**된 이야기입니다. 구현 결과는 [02 provider 경계](02-provider-boundary.md)(세 겹 구조)와

@@ -91,6 +91,29 @@ flag가 배선에 닿는 방식이 셋으로 갈립니다. 헷갈리기 쉬운 �
 두 번째가 client 소유 원칙의 직접적 결과입니다 — pool을 가진 건 lifespan만 만들 수 있으니, assembler는
 "받았는가"로 켜짐 여부를 압니다. 세 번째는 **hard-required substrate**라 한 단계 더 엄격합니다.
 
+### 켜짐은 세 단계다 — "dormant"는 더 이상 충분한 서술이 아니다
+
+기본 OFF 플래그를 "dormant"로만 부르면 **모순이 생깁니다**: 여러 게이트가 *"측정한 뒤에 켠다"*인데,
+측정하려면 먼저 켜야 하기 때문입니다. 그래서 켜짐을 세 단계로 나눕니다(코드 `4ecec3e`가 `discovery/
+config.py` 모듈 docstring에 같은 어휘를 심었습니다):
+
+| 단계 | 뜻 | 어디서 |
+|---|---|---|
+| **measurement activation** | 증거를 만들려고 비프로덕션에서 켠다 | dev overlay |
+| **serving activation** | 그 증거로 게이트를 닫고 사용자 트래픽에 쓴다 | 게이트별 |
+| **base promotion** | overlay를 떠나 모든 stage의 기본값이 된다 | `k8s/base`, 기능당 전용 커밋 |
+
+**게이트 문구의 *"<gate> 전엔 안 켠다"*는 언제나 serving + promotion을 뜻하지 measurement를 막지 않습니다.**
+플래그는 `k8s/base`에 넣지 않습니다 — 기능별로 dev overlay에서 측정 → 게이트 종료 → 개별 promotion
+커밋으로 이동합니다. (`REAL_EDGE_ENABLED`를 base나 prod overlay에 넣으면 `_reject_real_edge_in_production`
+이 `ValueError`를 던져 **CrashLoopBackOff**입니다.)
+
+**현재 overlay 상태**(코드 `c1ba21e`): dev = `STAGE=dev` · `MEMORY_API_PREFIX=demo` ·
+`REAL_EDGE_ENABLED=true`, prod = `STAGE=prod` · `MEMORY_API_PREFIX=bourbon` · 플래그 없음.
+`k8s/base`의 env 블록은 여전히 비어 있습니다. ⚠️ **머지는 배포가 아닙니다** — CI에 deploy job이 없어
+`k8s/scripts/deploy.sh dev`는 수동이고, 아래 문서들이 "dev에서 켜져 있다"고 할 때는 **매니페스트 상태**를
+뜻합니다.
+
 ### Phase 10 real edge — Guard 0 / Guard 1
 
 `REAL_EDGE_ENABLED`(기본 **OFF**)가 **단일 권위**입니다. 두 가드가 flag와 배선이 어긋나는 걸 막습니다.

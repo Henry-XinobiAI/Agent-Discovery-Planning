@@ -44,7 +44,7 @@ topic + need
 | 축 | 현재 상태 | 의미 |
 |---|---|---|
 | topic grounding | **agentic LLM-primary grounding shipped (기본 OFF, dormant)** | `topic_text` + 최근 대화 context로 하나의 QID를 확정하거나 abstain |
-| candidate retrieval | **real edge 배선됨 (`REAL_EDGE_ENABLED` 기본 OFF, dormant)** | QID에 연결된 agent-topic edge 수집 (memory-api competence → 투영) |
+| candidate retrieval | **real edge 배선됨 (코드 기본 OFF, dev overlay는 ON — measurement activation)** | QID에 연결된 agent-topic edge 수집 (memory-api competence → 투영) |
 | eligibility | 잠정 allow-all 정책 배선됨, Open Beta에서 real 신호 | 노출 가능 여부, discoverable/privacy/safety |
 | maturity | 구현된 rank/gate 신호 | 해당 topic에 대한 agent 지식 성숙도 |
 | evidence_strength | 구현된 rank 신호 | 답변 근거의 강도 |
@@ -76,8 +76,9 @@ decision log의 `feature_breakdown`이 같은 원 신호 계열을 공유하므�
 
 Phase 10의 핵심이었고 **projection과 composition wiring은 끝났다**. memory-api의 per-owner competence를
 `AgentTopicEdge`로 투영하는 세 겹(HTTP projection → 순수 `translate` → identity 데코레이터)이
-`REAL_EDGE_ENABLED` 뒤에 dormant로 실려 있다. 상세 = [02 provider 경계](02-provider-boundary.md) ·
-[07 composition](07-composition-api-cli.md).
+`REAL_EDGE_ENABLED` 뒤에 실려 있다 — 코드 기본은 OFF지만 **dev overlay는 ON**이고 prod은 startup에서
+거부된다(단계 구분 = [07 composition](07-composition-api-cli.md) "켜짐은 세 단계다").
+상세 = [02 provider 경계](02-provider-boundary.md) · [07 composition](07-composition-api-cli.md).
 
 당초 나열했던 작업의 결말:
 
