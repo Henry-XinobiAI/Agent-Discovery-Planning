@@ -44,7 +44,7 @@ topic + need
 | 축 | 현재 상태 | 의미 |
 |---|---|---|
 | topic grounding | **agentic LLM-primary grounding shipped (기본 OFF, dormant)** | `topic_text` + 최근 대화 context로 하나의 QID를 확정하거나 abstain |
-| candidate retrieval | **real edge 배선됨 (`REAL_EDGE_ENABLED` 기본 OFF, dormant)** | QID에 연결된 agent-topic edge 수집 (memory-api competence → 투영) |
+| candidate retrieval | **real edge 배선됨 (코드 기본 OFF, dev overlay는 ON — measurement activation)** | QID에 연결된 agent-topic edge 수집 (memory-api competence → 투영) |
 | eligibility | 잠정 allow-all 정책 배선됨, Open Beta에서 real 신호 | 노출 가능 여부, discoverable/privacy/safety |
 | maturity | 구현된 rank/gate 신호 | 해당 topic에 대한 agent 지식 성숙도 |
 | evidence_strength | 구현된 rank 신호 | 답변 근거의 강도 |
@@ -76,8 +76,9 @@ decision log의 `feature_breakdown`이 같은 원 신호 계열을 공유하므�
 
 Phase 10의 핵심이었고 **projection과 composition wiring은 끝났다**. memory-api의 per-owner competence를
 `AgentTopicEdge`로 투영하는 세 겹(HTTP projection → 순수 `translate` → identity 데코레이터)이
-`REAL_EDGE_ENABLED` 뒤에 dormant로 실려 있다. 상세 = [02 provider 경계](02-provider-boundary.md) ·
-[07 composition](07-composition-api-cli.md).
+`REAL_EDGE_ENABLED` 뒤에 실려 있다 — 코드 기본은 OFF지만 **dev overlay는 ON**이고 prod은 startup에서
+거부된다(단계 구분 = [07 composition](07-composition-api-cli.md) "켜짐은 세 단계다").
+상세 = [02 provider 경계](02-provider-boundary.md) · [07 composition](07-composition-api-cli.md).
 
 당초 나열했던 작업의 결말:
 
@@ -89,9 +90,9 @@ Phase 10의 핵심이었고 **projection과 composition wiring은 끝났다**. m
 | eligibility/privacy/safety/discoverable 계약 확정 | **부분** — 잠정 allow-all이 배선됐고 real 신호는 Open Beta |
 | ~~stance axis/dir/confidence를 어디서 만들지 확정~~ | **질문 자체가 폐기** — 폐기된 것은 *production 추천이 edge stance를 sourcing/ranking하는 모델*이고, stance는 **query-time judge 산출**이 됨(④a). `observed_stance`/`stance_axis`/`stance_confidence` 필드 자체는 frozen edge에 남아 결정적 eval mirror가 사용 |
 
-남은 것은 **추가 배선이 아니라 production promotion 게이트 4개를 닫는 작업**이다(self-exclusion ·
-producer-side derivation pin · phantom agent 정책 · memory-api R1–R6). **넷 다 구현·테스트 또는 upstream
-계약 착지를 요구한다** — B1도 bourbon-api에 pin 테스트와 immutable 선언을 착지시키는 작업이지 문서 작업이
+남은 것은 **추가 배선이 아니라 production promotion 게이트 4개를 닫는 작업**이다(self-exclusion —
+**구현 완료**, 남은 건 호출자 적용 + 비프로덕션 acceptance · producer-side derivation pin · phantom agent
+정책 · memory-api R1–R6). **나머지 셋은 구현·테스트 또는 upstream 계약 착지를 요구한다** — B1도 bourbon-api에 pin 테스트와 immutable 선언을 착지시키는 작업이지 문서 작업이
 아니다. [11 로드맵 Phase 10](11-forward-roadmap.md) 상태 박스 참조.
 
 ### 3.2 agentic context-aware grounding

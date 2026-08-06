@@ -91,6 +91,29 @@ flag가 배선에 닿는 방식이 셋으로 갈립니다. 헷갈리기 쉬운 �
 두 번째가 client 소유 원칙의 직접적 결과입니다 — pool을 가진 건 lifespan만 만들 수 있으니, assembler는
 "받았는가"로 켜짐 여부를 압니다. 세 번째는 **hard-required substrate**라 한 단계 더 엄격합니다.
 
+### 켜짐은 세 단계다 — "dormant"는 더 이상 충분한 서술이 아니다
+
+기본 OFF 플래그를 "dormant"로만 부르면 **모순이 생깁니다**: 여러 게이트가 *"측정한 뒤에 켠다"*인데,
+측정하려면 먼저 켜야 하기 때문입니다. 그래서 켜짐을 세 단계로 나눕니다(코드 `4ecec3e`가 `discovery/
+config.py` 모듈 docstring에 같은 어휘를 심었습니다):
+
+| 단계 | 뜻 | 어디서 |
+|---|---|---|
+| **measurement activation** | 증거를 만들려고 비프로덕션에서 켠다 | dev overlay |
+| **serving activation** | 그 증거로 게이트를 닫고 사용자 트래픽에 쓴다 | 게이트별 |
+| **base promotion** | overlay를 떠나 `k8s/base`를 상속하는 **모든 overlay의 공통 설정**이 된다 (코드 기본값은 계속 OFF) | `k8s/base`, 기능당 전용 커밋 |
+
+**게이트 문구의 *"<gate> 전엔 안 켠다"*는 언제나 serving + promotion을 뜻하지 measurement를 막지 않습니다.**
+플래그는 `k8s/base`에 넣지 않습니다 — 기능별로 dev overlay에서 측정 → 게이트 종료 → 개별 promotion
+커밋으로 이동합니다. (`REAL_EDGE_ENABLED`를 base나 prod overlay에 넣으면 `_reject_real_edge_in_production`
+이 `ValueError`를 던져 **CrashLoopBackOff**입니다.)
+
+**현재 overlay 상태**(코드 `c1ba21e`): dev = `STAGE=dev` · `MEMORY_API_PREFIX=demo` ·
+`REAL_EDGE_ENABLED=true`, prod = `STAGE=prod` · `MEMORY_API_PREFIX=bourbon` · 플래그 없음.
+`k8s/base`의 env 블록은 여전히 비어 있습니다. ⚠️ **머지는 배포가 아닙니다** — CI에 deploy job이 없어
+`k8s/scripts/deploy.sh dev`는 수동이고, 아래 문서들이 "dev에서 켜져 있다"고 할 때는 **매니페스트 상태**를
+뜻합니다.
+
 ### Phase 10 real edge — Guard 0 / Guard 1
 
 `REAL_EDGE_ENABLED`(기본 **OFF**)가 **단일 권위**입니다. 두 가드가 flag와 배선이 어긋나는 걸 막습니다.
@@ -145,21 +168,37 @@ finally:
 ### production 거부 가드 (`_reject_real_edge_in_production`)
 
 **이 가드가 없었다면** env var 두 개(`STAGE=prod` + `REAL_EDGE_ENABLED=1`)만으로 프로덕션이 real edge로
-부팅될 수 있습니다. 그런데 turn-on 게이트가 아직 열려 있습니다:
+부팅될 수 있습니다. 그런데 turn-on 게이트가 아직 열려 있습니다.
 
-- **requester self-exclusion 미구현** — 요청자가 자기 자신의 에이전트를 추천받을 수 있음
-- **identity-contract / catalog-existence** — bourbon-api가 파생 규칙을 producer-side로 고정하지 않았고
-  (요청 B1), 파생된 agent ID가 실제 agent 카탈로그에 있는지 확인하지 않으며, phantom agent 처리 정책
-  (fail loud vs 후보 drop)이 미정
-- **memory-api turn-on 요청 R1–R6** — 비활성 owner가 후보로 남는 문제, join 완전성, stale competence 등
+**가드는 `STAGE=prod`만 막습니다.** 그래서 게이트는 "전부 닫혀야 무엇이든 켠다"가 아니라 "전부 닫혀야
+**prod**를 켠다"이고, 아래 둘은 성격이 다릅니다(2026-08-06 재분류, 코드 `4ecec3e`):
+
+**① 비프로덕션에서 증거를 만드는 것** — dev 활성화의 blocker가 아니라 제거 판단의 입력입니다.
+
+- **requester self-exclusion** — **구현·시행됩니다**(코드 PR #34). pre-gate 단계가 요청자 본인 agent를
+  제거하고, `requester_owner_id` 누락은 **422 `requester_identity_required`로 거부**합니다. 남은 건
+  호출자 적용과 비프로덕션 acceptance인데, **실배포 호출자가 아직 0개**라 마이그레이션할 대상이 없습니다.
+- **catalog existence** — 파생된 agent ID가 실제 카탈로그 row와 맞는지 확인하지 않습니다. **우리 진단으로는
+  닫을 수 없습니다**: bourbon-api에 lookup 엔드포인트가 없어 CLI preflight가 `unverified`로 **명시 보고**
+  합니다. 답은 소비 컴포넌트가 반환된 ID를 end-to-end로 해석할 때 나옵니다.
+
+**② 프로덕션 서빙 전에 해소돼야 하는 것** — 전부 정책 결정인 것은 아닙니다.
+
+- **phantom agent 처리 정책** — fail loud vs 후보 drop, 미정.
+- **memory-api R1–R6** — 비활성 owner가 후보로 남는 문제, join 완전성, stale competence. R1은 "비프로덕션
+  tenant는 seed 데이터뿐"이라는 전제로 연기됐고, **그 전제는 프로덕션으로 확장되지 않습니다.**
+- **producer-side derivation pin (B1)** — 값 일치는 bourbon-api 소스 복사로 확인됐고 규칙도 불변으로
+  확정돼, correctness unknown이 아니라 **drift 보험**입니다. 보상 탐지기가 없어서 목록에 남습니다.
 
 **문서 경고는 config 한 줄을 못 막으므로** 현재 코드는 client가 하나라도 만들어지기 **전에**
 `ValueError`로 부팅을 차단합니다(그래서 막힌 부팅은 치울 자원이 없습니다). 예외 타입은 Guard 0/1과 같은
 `ValueError` — 셋 다 "이 배포는 잘못 설정됐다"는 같은 뜻입니다.
 
 > **제거 조건:** 위에 나열한 것만이 아니라 **스펙 §9의 게이트 전부**가 닫힐 때, **전용 커밋**으로 함수·
-> 호출부·테스트를 삭제합니다. 그 커밋이 "프로덕션 turn-on 승인"의 기록입니다. (그래서 예외 메시지는
-> 게이트를 열거하지 않고 스펙을 가리킵니다 — 열거하면 그 목록이 또 stale해집니다.)
+> 호출부·테스트를 삭제하고 **`REAL_EDGE_ENABLED`를 dev overlay에서 `k8s/base`로 옮깁니다**. 그 커밋이
+> "프로덕션 turn-on 승인"의 기록입니다. (그래서 예외 메시지는 게이트를 열거하지 않고 스펙을 가리킵니다 —
+> 열거하면 그 목록이 또 stale해집니다. **이 절이 실제로 그렇게 stale해졌습니다**: self-exclusion이 구현된
+> 뒤에도 "미구현"으로 남아 있었고, 그건 코드 docstring에서 먼저 발견돼 고쳐졌습니다.)
 
 ### 나머지 비자명한 점
 - **LLM leg는 전부 flag로 배선** — rerank(8A)는 상시, 나머지는 각 `*_ENABLED`(기본 OFF)일 때만.
@@ -196,12 +235,17 @@ class RecommendRouter:
 _STATUS_BY_CODE = {
     GroundingFailedError.code:      422,  # grounding_failed  — 요청을 물어본 대로 서빙할 수 없음
     InvalidNeedError.code:          422,  # invalid_need
+    RequesterIdentityRequiredError.code: 422,  # requester_identity_required — enforcing self-exclusion인데 필드 없음
     UpstreamUnavailableError.code:  503,  # upstream_unavailable      — hard-required substrate 부재/장애
     EdgeProjectionError.code:       503,  # edge_projection_failed    — 배선된 real-edge projection이 계약 위반 응답
     UnresolvedOwnerIdentityError.code: 503,  # unresolved_owner_identity — resolver가 불일치 매핑 반환
 }
 ```
 - 각 타입을 명시적으로 등록 (Starlette MRO가 catch-all `Exception`(500 fallback)보다 우선).
+- **`requester_identity_required`(422)만 배포 조건부**입니다 — pre-gate exclusion이 enforcing일 때(=real
+  edge ON)만 납니다. 스키마에서 `requester_owner_id`는 여전히 optional인데, "어떤 배포에서만 필수"는
+  스키마로 표현할 수 없기 때문입니다(그래서 `/docs`에는 optional로 보이고, 필드 description이 그 대가를
+  말합니다). 계약 전문 = spec `2026-08-05-requester-self-exclusion-design.md`.
 - **세 503의 공통점은 "필수 substrate 상태를 추측하거나 날조하지 않는다"** 입니다. 다만 적용 범위는
   다릅니다:
   - `UpstreamUnavailableError` — **가장 넓음**. knowledge substrate 장애, 미배선 의존성 등 hard-required
@@ -314,11 +358,30 @@ translation에만 존재), preflight QID는 symbolic 규칙 기반
 **heuristic**(agentic grounder는 그 규칙을 안 씀 → `probe_qid`라 부르고 불일치 시 명시), agent catalog 존재는
 `unverified`(bourbon-api에 조회 수단 없음 = turn-on 게이트 3).
 
-**안전 봉투:** `STAGE=prod` 거부(앱 startup 가드와 같은 규칙) · **requester self-exclusion 미구현** —
-리포트가 매번 `self_exclusion_enforced: false`라는 **정책 상태**를 싣지만, 실제 self-recommendation
-**검출은 `--requester-owner-id`를 준 run에서만** 되고 생략하면 "could not be checked at all"이라고 씁니다
-(막지는 못하고 말하기만 합니다 = turn-on 게이트 1) · artifacts는 로컬 전용(gitignore) · 실제 statement
+**안전 봉투:** `STAGE=prod` 거부 — **앱 startup 가드와 같은 규칙이 아닙니다.** 이 도구는 real 코퍼스를
+읽으므로 **플래그와 무관하게** prod stage를 거부하고, 앱 가드는 **prod + real-edge 조합만** 거부합니다
+(`preflight.py:124`가 그 차이를 detail 문구에 직접 씁니다) · artifacts는 로컬 전용(gitignore) · 실제 statement
 본문은 120자 절단이 기본.
+
+**self-exclusion 보고는 3상태입니다** — 구현·시행되므로(코드 PR #34) 리포트는 상태를 **하드코딩하지 않고
+decision log에서 읽습니다**(`report.py:218`). "drop row가 없다"만으로는 *돌았지만 일치가 없었다*와
+*애초에 배선되지 않았다*를 구분할 수 없고, 전자를 "검증됨"으로 렌더링하는 것이 이 리포트가 절대 유도하면
+안 되는 독해이기 때문입니다.
+
+| run 상태 | 리포트가 말하는 것 |
+|---|---|
+| `--requester-owner-id` 없음 | self-exclusion이 이 요청에서 **돌 수 없었다**. **real-edge CLI run의 정상 도달 상태가 아닙니다** — `_check_options`(`run.py:590`)가 실행 **전에** usage 단계에서 거부해 **exit 2**이고 리포트 자체가 없습니다. 이 분기는 비강제 구성·실패 리포트·테스트 shape을 정직하게 렌더링하기 위한 것입니다 |
+| 줬으나 파생 미완료 | owner id는 받았지만 preflight identity resolution 전/중에 끝나 **이 run이 실증하지 못했다** |
+| 파생 완료 | 파생 agent id를 싣고, 정책별로 `applied` / `registered but inactive` + 제거한 edge 수 |
+
+owner id와 파생 agent id는 **다른 사실**이라 2상태로 접으면 운영자 자신의 입력을 거짓으로 서술하게 됩니다 —
+실패를 설명하는 것이 임무인 리포트에서.
+
+> **누락 처리는 두 진입점에서 다릅니다 — 섞지 마세요.** CLI real-edge run은 **exit 2**(운영자가 고칠
+> 로컬 전제, I/O 전에 판정), 배포된 `POST /recommend`는 enforcing 정책이 **422
+> `requester_identity_required`**. 우회 플래그는 **일부러 없습니다** — safety 정책을 끄는 스위치는 영구
+> 운영 API가 되고, acceptance run이 실제 후보 경로와 갈라지며, 깨끗한 진단처럼 읽히는 리포트를 남깁니다.
+> CLI 체크는 친절한 조기 오류이고 **실제 불변식은 정책 자신의 체크**입니다 — 둘 다 남습니다.
 
 **재현성**은 seed가 아니라 **fixture 재사용**입니다(proxy가 seed-결정적이지 않음). fixture는 대화 본문의
 `content_hash`를 들고 다니고 `run`이 재계산해 불일치를 거부합니다 — 턴을 고치고 해시를 그대로 두면 조용히
