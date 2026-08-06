@@ -95,6 +95,11 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
   타 팀 위임, privacy는 deferred였음. (실제 gate 배선은 Open Beta stage 8 — 아래 참조.)
 
 ### 8-7. grounding 맥락 disambiguation — agentic grounder ✅ **구현 완료 · 기본 OFF** (동작 설명은 [03. linker](03-normalize-and-linker.md)의 "agentic grounder" 절)
+- ⛔ **turn-on 선행 결함(2026-08-06 dev 실측):** 한국어 토픽 36 run 중 abstain 13건(36%)이 대부분 모델 판단이
+  아니라 `submit_grounding`의 **`qid` 누락**이고, 스키마 위반이 조용히 abstain으로 세탁된다. 채택된 53 run에서
+  QID drift는 0건이라 실패 양상은 오답이 아니라 침묵이다. 수치·추적·4단계 수정 계획 =
+  [findings](findings-agentic-grounder-submit-omission.md). **배포 영향 없음** — dev overlay가
+  `GROUNDING_AGENT_ENABLED`를 설정하지 않아 dev·prod 모두 OFF다.
 - **문제:** recall(MISS)은 memory-api 다국어 인덱스 fix로 대체로 해소됐고, 남은 지배적 실패는 **identical-label
   homonym TIE** — 같은 label(`Python`)을 언어·뱀이 공유(재측정 GROUND 7 / **TIE 10** / MISS 3). symbolic은 둘 다
   confidence 1.0 → margin 0 → tie를 **원리적으로** 못 깬다. tie를 가르는 유일한 새 정보는 **최근 대화 맥락**이다.
