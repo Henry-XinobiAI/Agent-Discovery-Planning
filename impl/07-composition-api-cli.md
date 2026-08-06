@@ -101,7 +101,7 @@ config.py` 모듈 docstring에 같은 어휘를 심었습니다):
 |---|---|---|
 | **measurement activation** | 증거를 만들려고 비프로덕션에서 켠다 | dev overlay |
 | **serving activation** | 그 증거로 게이트를 닫고 사용자 트래픽에 쓴다 | 게이트별 |
-| **base promotion** | overlay를 떠나 모든 stage의 기본값이 된다 | `k8s/base`, 기능당 전용 커밋 |
+| **base promotion** | overlay를 떠나 `k8s/base`를 상속하는 **모든 overlay의 공통 설정**이 된다 (코드 기본값은 계속 OFF) | `k8s/base`, 기능당 전용 커밋 |
 
 **게이트 문구의 *"<gate> 전엔 안 켠다"*는 언제나 serving + promotion을 뜻하지 measurement를 막지 않습니다.**
 플래그는 `k8s/base`에 넣지 않습니다 — 기능별로 dev overlay에서 측정 → 게이트 종료 → 개별 promotion
@@ -358,11 +358,24 @@ translation에만 존재), preflight QID는 symbolic 규칙 기반
 **heuristic**(agentic grounder는 그 규칙을 안 씀 → `probe_qid`라 부르고 불일치 시 명시), agent catalog 존재는
 `unverified`(bourbon-api에 조회 수단 없음 = turn-on 게이트 3).
 
-**안전 봉투:** `STAGE=prod` 거부(앱 startup 가드와 같은 규칙) · **requester self-exclusion 미구현** —
-리포트가 매번 `self_exclusion_enforced: false`라는 **정책 상태**를 싣지만, 실제 self-recommendation
-**검출은 `--requester-owner-id`를 준 run에서만** 되고 생략하면 "could not be checked at all"이라고 씁니다
-(막지는 못하고 말하기만 합니다 = turn-on 게이트 1) · artifacts는 로컬 전용(gitignore) · 실제 statement
+**안전 봉투:** `STAGE=prod` 거부 — **앱 startup 가드와 같은 규칙이 아닙니다.** 이 도구는 real 코퍼스를
+읽으므로 **플래그와 무관하게** prod stage를 거부하고, 앱 가드는 **prod + real-edge 조합만** 거부합니다
+(`preflight.py:119`가 그 차이를 detail에 직접 씁니다) · artifacts는 로컬 전용(gitignore) · 실제 statement
 본문은 120자 절단이 기본.
+
+**self-exclusion 보고는 3상태입니다** — 구현·시행되므로(코드 PR #34) 리포트는 상태를 **하드코딩하지 않고
+decision log에서 읽습니다**(`report.py:218`). "drop row가 없다"만으로는 *돌았지만 일치가 없었다*와
+*애초에 배선되지 않았다*를 구분할 수 없고, 전자를 "검증됨"으로 렌더링하는 것이 이 리포트가 절대 유도하면
+안 되는 독해이기 때문입니다.
+
+| run 상태 | 리포트가 말하는 것 |
+|---|---|
+| `--requester-owner-id` 없음 | self-exclusion이 이 요청에서 **돌 수 없었다** (real edge ON이면 애초에 422로 거부됨) |
+| 줬으나 파생 미완료 | owner id는 받았지만 preflight identity resolution 전/중에 끝나 **이 run이 실증하지 못했다** |
+| 파생 완료 | 파생 agent id를 싣고, 정책별로 `applied` / `registered but inactive` + 제거한 edge 수 |
+
+owner id와 파생 agent id는 **다른 사실**이라 2상태로 접으면 운영자 자신의 입력을 거짓으로 서술하게 됩니다 —
+실패를 설명하는 것이 임무인 리포트에서.
 
 **재현성**은 seed가 아니라 **fixture 재사용**입니다(proxy가 seed-결정적이지 않음). fixture는 대화 본문의
 `content_hash`를 들고 다니고 `run`이 재계산해 불일치를 거부합니다 — 턴을 고치고 해시를 그대로 두면 조용히

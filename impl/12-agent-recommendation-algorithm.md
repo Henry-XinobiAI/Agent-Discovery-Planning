@@ -90,9 +90,9 @@ Phase 10의 핵심이었고 **projection과 composition wiring은 끝났다**. m
 | eligibility/privacy/safety/discoverable 계약 확정 | **부분** — 잠정 allow-all이 배선됐고 real 신호는 Open Beta |
 | ~~stance axis/dir/confidence를 어디서 만들지 확정~~ | **질문 자체가 폐기** — 폐기된 것은 *production 추천이 edge stance를 sourcing/ranking하는 모델*이고, stance는 **query-time judge 산출**이 됨(④a). `observed_stance`/`stance_axis`/`stance_confidence` 필드 자체는 frozen edge에 남아 결정적 eval mirror가 사용 |
 
-남은 것은 **추가 배선이 아니라 production promotion 게이트 4개를 닫는 작업**이다(self-exclusion ·
-producer-side derivation pin · phantom agent 정책 · memory-api R1–R6). **넷 다 구현·테스트 또는 upstream
-계약 착지를 요구한다** — B1도 bourbon-api에 pin 테스트와 immutable 선언을 착지시키는 작업이지 문서 작업이
+남은 것은 **추가 배선이 아니라 production promotion 게이트 4개를 닫는 작업**이다(self-exclusion —
+**구현 완료**, 남은 건 호출자 적용 + 비프로덕션 acceptance · producer-side derivation pin · phantom agent
+정책 · memory-api R1–R6). **나머지 셋은 구현·테스트 또는 upstream 계약 착지를 요구한다** — B1도 bourbon-api에 pin 테스트와 immutable 선언을 착지시키는 작업이지 문서 작업이
 아니다. [11 로드맵 Phase 10](11-forward-roadmap.md) 상태 박스 참조.
 
 ### 3.2 agentic context-aware grounding

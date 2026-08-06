@@ -190,13 +190,14 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
 
 ## Phase 10 — real edge 통합 (user-facing Alpha 성립) — **2026-07-07 신설**
 
-> **상태 (2026-07-28): real-edge projection과 composition wiring은 완료. 남은 것은 *추가 배선*이 아니라
+> **상태 (2026-08-06): real-edge projection과 composition wiring은 완료. 남은 것은 *추가 배선*이 아니라
 > production promotion gate를 닫는 구현·계약 작업입니다.**
 >
 > contract slice와 turn-on Step 1이 머지돼(`REAL_EDGE_ENABLED`, 코드 기본 OFF) **ON이면 dev/진단 stage에서
 > 실제로 부팅**하고, **dev overlay는 2026-08-06부터 ON**입니다(measurement activation — 07 composition
 > "켜짐은 세 단계다" 참조; 매니페스트 상태이고 `deploy.sh dev`는 수동). 다만 아래 게이트는 **넷 다 구현·테스트 또는 upstream 계약 착지를 요구**합니다
-> (self-exclusion 구현 · phantom-agent 검증·정책 구현 · R1–R6 구현·검증 · B1도 bourbon-api에
+> (self-exclusion은 **구현 완료** — 남은 건 호출자 적용 + 비프로덕션 acceptance · phantom-agent 검증·정책
+> 구현 · R1–R6 구현·검증 · B1도 bourbon-api에
 > namespace/vector pin 테스트와 immutable 선언을 착지시키는 작업) — "코드가 끝났다"는 건
 > **edge projection·배선에 한정**된 이야기입니다. 구현 결과는 [02 provider 경계](02-provider-boundary.md)(세 겹 구조)와
 > [07 composition](07-composition-api-cli.md)(Guard 0/1 · lifespan client 3개 · production 거부 가드)에
@@ -207,7 +208,7 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
 >
 > | 게이트 | 무엇이 없나 | 소유 |
 > |---|---|---|
-> | requester self-exclusion | 요청자가 자기 에이전트를 추천받을 수 있음 | discovery + bourbon-api (요청 B2: 신뢰 가능한 requester identity 전달) |
+> | requester self-exclusion | **구현·시행됨**(코드 PR #34) — pre-gate 단계가 요청자 agent를 제거하고 `requester_owner_id` 누락은 422로 거부. 남은 건 **호출자 적용 + 비프로덕션 acceptance**이며, 실배포 호출자가 0개라 마이그레이션 대상은 없음 | discovery + bourbon-api (요청 B2: 신뢰 가능한 requester identity 전달) |
 > | producer-side derivation pin | discovery가 UUID5 파생을 **복제**했고 upstream drift를 탐지 못 함 | bourbon-api (요청 B1) |
 > | phantom agent 정책 | 파생 agent ID가 실제 카탈로그에 있는지 미확인, 없을 때 처리(loud-fail vs drop) 미정 | 미정 |
 > | memory-api R1–R6 | 비활성 owner가 후보로 남음(R1) 외 5건 | memory-api |
@@ -224,10 +225,12 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
 >
 > 게이트별로 실제 얻는 것:
 >
-> - **게이트 1(self-exclusion)** — 여전히 **미구현**입니다. 도구는 `--requester-owner-id`를 **명시한 run에
->   한해** self-recommendation 발생 여부를 검출합니다. 생략하면 리포트가 "could not be checked at all"이라고
->   씁니다(그래서 발생률 추정의 표본이 아닙니다). 매 리포트가 싣는 건 검출 결과가 아니라
->   `self_exclusion_enforced: false`라는 **정책 상태**입니다.
+> - **게이트 1(self-exclusion)** — **구현·시행됩니다**(코드 PR #34). real edge가 켜진 run에서
+>   `--requester-owner-id`는 **필수**라, 생략한 요청은 조용히 검사를 건너뛰는 게 아니라 422로 거부됩니다.
+>   도구가 기여하는 건 남은 조각인 **비프로덕션 acceptance 증거**이고, 리포트는 상태를 하드코딩하지 않고
+>   **decision log에서 읽어** 3상태로 구분합니다(07 composition의 E2E 절). ⚠️ 다만 이 도구는 **in-process**라
+>   pod env·lifespan·인증·HTTP 매핑을 타지 않으므로, acceptance는 배포된 `POST /recommend`와 **두 층**이어야
+>   닫힙니다.
 > - **게이트 2(B1 producer-side pin)** — **런타임 관측 대상이 아닙니다.** 파생 규칙의 upstream 고정 여부는
 >   실행으로 드러나지 않습니다. 도구는 여기에 기여하지 않습니다.
 > - **게이트 3(phantom agent)** — preflight의 agent-catalog 항목이 `ok`가 아니라 **항상 `unverified`**입니다.
