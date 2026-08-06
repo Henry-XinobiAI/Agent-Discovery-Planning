@@ -196,12 +196,17 @@ class RecommendRouter:
 _STATUS_BY_CODE = {
     GroundingFailedError.code:      422,  # grounding_failed  — 요청을 물어본 대로 서빙할 수 없음
     InvalidNeedError.code:          422,  # invalid_need
+    RequesterIdentityRequiredError.code: 422,  # requester_identity_required — enforcing self-exclusion인데 필드 없음
     UpstreamUnavailableError.code:  503,  # upstream_unavailable      — hard-required substrate 부재/장애
     EdgeProjectionError.code:       503,  # edge_projection_failed    — 배선된 real-edge projection이 계약 위반 응답
     UnresolvedOwnerIdentityError.code: 503,  # unresolved_owner_identity — resolver가 불일치 매핑 반환
 }
 ```
 - 각 타입을 명시적으로 등록 (Starlette MRO가 catch-all `Exception`(500 fallback)보다 우선).
+- **`requester_identity_required`(422)만 배포 조건부**입니다 — pre-gate exclusion이 enforcing일 때(=real
+  edge ON)만 납니다. 스키마에서 `requester_owner_id`는 여전히 optional인데, "어떤 배포에서만 필수"는
+  스키마로 표현할 수 없기 때문입니다(그래서 `/docs`에는 optional로 보이고, 필드 description이 그 대가를
+  말합니다). 계약 전문 = spec `2026-08-05-requester-self-exclusion-design.md`.
 - **세 503의 공통점은 "필수 substrate 상태를 추측하거나 날조하지 않는다"** 입니다. 다만 적용 범위는
   다릅니다:
   - `UpstreamUnavailableError` — **가장 넓음**. knowledge substrate 장애, 미배선 의존성 등 hard-required
