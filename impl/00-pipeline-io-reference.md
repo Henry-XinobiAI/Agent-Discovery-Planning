@@ -205,7 +205,8 @@ rerank·expansion의 **모든 비채택 경로**는 침묵 전에 `_substitute_o
    agent** 수로 만들어 threshold의 의미를 정한다(중복 edge가 확장을 억눌러선 안 됨).
 3. distinct direct agent < `RETRIEVAL_MIN_DIRECT_EDGES`(3) → **one-hop 이웃 확장**
    (`_expand_neighbors`): `expand_connections`로 이웃 QID 수집(`_neighbor_qids`: broader/narrower/links_out/
-   links_in 균일 취급, 앵커 자기 제외, dedupe, `RETRIEVAL_MAX_NEIGHBORS=50` cap) → 각 이웃 `get_edges`
+   links_in을 **고정 순서로 이어붙인 뒤 단일** `RETRIEVAL_MAX_NEIGHBORS=50` cap — 가중치는 없지만
+   **균일 취급은 아니다**, impl/04 참조. 앵커 자기 제외, dedupe) → 각 이웃 `get_edges`
    concurrent(`gather` 이웃 순서 보존) → `EdgeHit(via=NEIGHBOR, via_qid=원앵커)`.
 4. `_preempted_by_direct`(`retrieval.py:88`) → **direct-wins**(R3). 같은 agent가 양쪽이면 그 agent의
    neighbor edge만 밀어내는 **선점**이지 pool 전역 dedupe가 아니다 — direct edge가 없는 agent는 자기

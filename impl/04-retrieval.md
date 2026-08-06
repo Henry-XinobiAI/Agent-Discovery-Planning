@@ -66,8 +66,10 @@ async def _expand_neighbors(self, anchor_qid):
 - **이웃 QID 수집** (`_neighbor_qids`): `broader/narrower/links_out/links_in`에 **가중치를 주지 않음**
   (relationship-type weighting은 후속 튜닝). 앵커 자신은 제외. `dict.fromkeys`로 dedupe + 결정적 순서,
   `RETRIEVAL_MAX_NEIGHBORS=50`으로 cap (concurrent fan-out 제한).
-  > ⚠️ **"가중치 없음"이 "균일하게 다룬다"는 아닙니다** — 그룹을 고정 순서로 이어붙인 뒤 자르므로 cap에
-  > 걸리면 **뒤 그룹이 통째로 굶습니다**(실측: `links_in` 0개). 아래 설정 절 참조.
+  > ⚠️ **"가중치 없음"이 "균일하게 다룬다"는 아닙니다** — 그룹을 고정 순서로 이어붙인 뒤 **단일 global
+  > cap**을 적용하므로, cap에 걸리면 **앞 그룹이 우선되고 뒤 그룹은 부분적으로 또는 완전히 빠집니다.**
+  > (한 실측 run에서 `links_in`이 0이 됐으나 그건 사례이지 계약이 아닙니다 — 경계에 걸친 그룹은 부분
+  > 포함됩니다.) 아래 설정 절 참조. 코드 docstring도 같은 문구로 정렬돼 있습니다(`retrieval.py:58`).
 - `asyncio.gather`(never `as_completed`)라 이웃 순서 보존 → 다운스트림 선점·대표 선택이 결정적.
 
 ### (3) direct-wins = **선점**(dedupe 아님) — `_preempted_by_direct` (`retrieval.py:88`)
