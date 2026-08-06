@@ -253,6 +253,12 @@ ground되는 것은 `reranker=None`인 eval artifact이지 serving 능력이 아
 
 ## ① agentic grounder (`discovery/grounding_agent.py`, Phase 8-7 재설계) — 구현 완료 · 기본 OFF
 
+> ⛔ **2026-08-06 dev 실측 — turn-on 전 선행 결함이 있습니다.** 한국어 토픽 36 run 중 **13건(36%)이
+> abstain**으로 끝나는데, 추적해 보면 대부분 모델의 판단이 아니라 `submit_grounding`에서 **`qid` 필드만
+> 누락**된 것이고, 그 스키마 위반이 조용히 abstain으로 세탁됩니다. `GROUNDING_AGENT_CONF_MIN` 튜닝은
+> 이걸 고치기 전엔 의미가 없습니다(confidence는 늘 1.0으로 들어옵니다). 수치·추적·수정 계획 =
+> [findings](findings-agentic-grounder-submit-omission.md).
+
 동음이의 **identical-label homonym TIE**(같은 label `Python`을 언어·뱀이 공유)는 symbolic이 원리적으로 못 깹니다
 (둘 다 confidence 1.0 → margin 0). tie를 가르는 유일한 새 정보는 **최근 대화 맥락**이고, 그걸 읽고 sense를 고르는
 주체는 LLM이어야 합니다. 그래서 재설계는 **최근 대화(`context_messages`)를 받아 native tool-use ReAct 루프로 직접
