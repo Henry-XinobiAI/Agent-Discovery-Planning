@@ -145,21 +145,37 @@ finally:
 ### production 거부 가드 (`_reject_real_edge_in_production`)
 
 **이 가드가 없었다면** env var 두 개(`STAGE=prod` + `REAL_EDGE_ENABLED=1`)만으로 프로덕션이 real edge로
-부팅될 수 있습니다. 그런데 turn-on 게이트가 아직 열려 있습니다:
+부팅될 수 있습니다. 그런데 turn-on 게이트가 아직 열려 있습니다.
 
-- **requester self-exclusion 미구현** — 요청자가 자기 자신의 에이전트를 추천받을 수 있음
-- **identity-contract / catalog-existence** — bourbon-api가 파생 규칙을 producer-side로 고정하지 않았고
-  (요청 B1), 파생된 agent ID가 실제 agent 카탈로그에 있는지 확인하지 않으며, phantom agent 처리 정책
-  (fail loud vs 후보 drop)이 미정
-- **memory-api turn-on 요청 R1–R6** — 비활성 owner가 후보로 남는 문제, join 완전성, stale competence 등
+**가드는 `STAGE=prod`만 막습니다.** 그래서 게이트는 "전부 닫혀야 무엇이든 켠다"가 아니라 "전부 닫혀야
+**prod**를 켠다"이고, 아래 둘은 성격이 다릅니다(2026-08-06 재분류, 코드 `4ecec3e`):
+
+**① 비프로덕션에서 증거를 만드는 것** — dev 활성화의 blocker가 아니라 제거 판단의 입력입니다.
+
+- **requester self-exclusion** — **구현·시행됩니다**(코드 PR #34). pre-gate 단계가 요청자 본인 agent를
+  제거하고, `requester_owner_id` 누락은 **422 `requester_identity_required`로 거부**합니다. 남은 건
+  호출자 적용과 비프로덕션 acceptance인데, **실배포 호출자가 아직 0개**라 마이그레이션할 대상이 없습니다.
+- **catalog existence** — 파생된 agent ID가 실제 카탈로그 row와 맞는지 확인하지 않습니다. **우리 진단으로는
+  닫을 수 없습니다**: bourbon-api에 lookup 엔드포인트가 없어 CLI preflight가 `unverified`로 **명시 보고**
+  합니다. 답은 소비 컴포넌트가 반환된 ID를 end-to-end로 해석할 때 나옵니다.
+
+**② 프로덕션 서빙 전에 해소돼야 하는 것** — 전부 정책 결정인 것은 아닙니다.
+
+- **phantom agent 처리 정책** — fail loud vs 후보 drop, 미정.
+- **memory-api R1–R6** — 비활성 owner가 후보로 남는 문제, join 완전성, stale competence. R1은 "비프로덕션
+  tenant는 seed 데이터뿐"이라는 전제로 연기됐고, **그 전제는 프로덕션으로 확장되지 않습니다.**
+- **producer-side derivation pin (B1)** — 값 일치는 bourbon-api 소스 복사로 확인됐고 규칙도 불변으로
+  확정돼, correctness unknown이 아니라 **drift 보험**입니다. 보상 탐지기가 없어서 목록에 남습니다.
 
 **문서 경고는 config 한 줄을 못 막으므로** 현재 코드는 client가 하나라도 만들어지기 **전에**
 `ValueError`로 부팅을 차단합니다(그래서 막힌 부팅은 치울 자원이 없습니다). 예외 타입은 Guard 0/1과 같은
 `ValueError` — 셋 다 "이 배포는 잘못 설정됐다"는 같은 뜻입니다.
 
 > **제거 조건:** 위에 나열한 것만이 아니라 **스펙 §9의 게이트 전부**가 닫힐 때, **전용 커밋**으로 함수·
-> 호출부·테스트를 삭제합니다. 그 커밋이 "프로덕션 turn-on 승인"의 기록입니다. (그래서 예외 메시지는
-> 게이트를 열거하지 않고 스펙을 가리킵니다 — 열거하면 그 목록이 또 stale해집니다.)
+> 호출부·테스트를 삭제하고 **`REAL_EDGE_ENABLED`를 dev overlay에서 `k8s/base`로 옮깁니다**. 그 커밋이
+> "프로덕션 turn-on 승인"의 기록입니다. (그래서 예외 메시지는 게이트를 열거하지 않고 스펙을 가리킵니다 —
+> 열거하면 그 목록이 또 stale해집니다. **이 절이 실제로 그렇게 stale해졌습니다**: self-exclusion이 구현된
+> 뒤에도 "미구현"으로 남아 있었고, 그건 코드 docstring에서 먼저 발견돼 고쳐졌습니다.)
 
 ### 나머지 비자명한 점
 - **LLM leg는 전부 flag로 배선** — rerank(8A)는 상시, 나머지는 각 `*_ENABLED`(기본 OFF)일 때만.
