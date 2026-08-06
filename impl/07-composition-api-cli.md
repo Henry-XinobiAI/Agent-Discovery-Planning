@@ -360,7 +360,7 @@ translation에만 존재), preflight QID는 symbolic 규칙 기반
 
 **안전 봉투:** `STAGE=prod` 거부 — **앱 startup 가드와 같은 규칙이 아닙니다.** 이 도구는 real 코퍼스를
 읽으므로 **플래그와 무관하게** prod stage를 거부하고, 앱 가드는 **prod + real-edge 조합만** 거부합니다
-(`preflight.py:119`가 그 차이를 detail에 직접 씁니다) · artifacts는 로컬 전용(gitignore) · 실제 statement
+(`preflight.py:124`가 그 차이를 detail 문구에 직접 씁니다) · artifacts는 로컬 전용(gitignore) · 실제 statement
 본문은 120자 절단이 기본.
 
 **self-exclusion 보고는 3상태입니다** — 구현·시행되므로(코드 PR #34) 리포트는 상태를 **하드코딩하지 않고
@@ -370,12 +370,18 @@ decision log에서 읽습니다**(`report.py:218`). "drop row가 없다"만으�
 
 | run 상태 | 리포트가 말하는 것 |
 |---|---|
-| `--requester-owner-id` 없음 | self-exclusion이 이 요청에서 **돌 수 없었다** (real edge ON이면 애초에 422로 거부됨) |
+| `--requester-owner-id` 없음 | self-exclusion이 이 요청에서 **돌 수 없었다**. **real-edge CLI run의 정상 도달 상태가 아닙니다** — `_check_options`(`run.py:590`)가 실행 **전에** usage 단계에서 거부해 **exit 2**이고 리포트 자체가 없습니다. 이 분기는 비강제 구성·실패 리포트·테스트 shape을 정직하게 렌더링하기 위한 것입니다 |
 | 줬으나 파생 미완료 | owner id는 받았지만 preflight identity resolution 전/중에 끝나 **이 run이 실증하지 못했다** |
 | 파생 완료 | 파생 agent id를 싣고, 정책별로 `applied` / `registered but inactive` + 제거한 edge 수 |
 
 owner id와 파생 agent id는 **다른 사실**이라 2상태로 접으면 운영자 자신의 입력을 거짓으로 서술하게 됩니다 —
 실패를 설명하는 것이 임무인 리포트에서.
+
+> **누락 처리는 두 진입점에서 다릅니다 — 섞지 마세요.** CLI real-edge run은 **exit 2**(운영자가 고칠
+> 로컬 전제, I/O 전에 판정), 배포된 `POST /recommend`는 enforcing 정책이 **422
+> `requester_identity_required`**. 우회 플래그는 **일부러 없습니다** — safety 정책을 끄는 스위치는 영구
+> 운영 API가 되고, acceptance run이 실제 후보 경로와 갈라지며, 깨끗한 진단처럼 읽히는 리포트를 남깁니다.
+> CLI 체크는 친절한 조기 오류이고 **실제 불변식은 정책 자신의 체크**입니다 — 둘 다 남습니다.
 
 **재현성**은 seed가 아니라 **fixture 재사용**입니다(proxy가 seed-결정적이지 않음). fixture는 대화 본문의
 `content_hash`를 들고 다니고 `run`이 재계산해 불일치를 거부합니다 — 턴을 고치고 해시를 그대로 두면 조용히

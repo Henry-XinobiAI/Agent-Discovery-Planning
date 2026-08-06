@@ -226,7 +226,9 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
 > 게이트별로 실제 얻는 것:
 >
 > - **게이트 1(self-exclusion)** — **구현·시행됩니다**(코드 PR #34). real edge가 켜진 run에서
->   `--requester-owner-id`는 **필수**라, 생략한 요청은 조용히 검사를 건너뛰는 게 아니라 422로 거부됩니다.
+>   `--requester-owner-id`는 **필수**라, 생략하면 조용히 검사를 건너뛰는 게 아니라 거부됩니다 — 다만
+>   **거부 방식이 진입점마다 다릅니다**: CLI는 `_check_options`가 실행 전에 잡아 **exit 2**(리포트 없음),
+>   배포된 `POST /recommend`는 **422 `requester_identity_required`**.
 >   도구가 기여하는 건 남은 조각인 **비프로덕션 acceptance 증거**이고, 리포트는 상태를 하드코딩하지 않고
 >   **decision log에서 읽어** 3상태로 구분합니다(07 composition의 E2E 절). ⚠️ 다만 이 도구는 **in-process**라
 >   pod env·lifespan·인증·HTTP 매핑을 타지 않으므로, acceptance는 배포된 `POST /recommend`와 **두 층**이어야
