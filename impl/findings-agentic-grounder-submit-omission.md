@@ -3,7 +3,8 @@
 **Status:** **resolved (2026-08-10)** — cause fixed and effect confirmed by re-measurement: the abstain rate went 36.1% → 0 across 71 runs, with no QID drift and no rise in call count. See [Re-measurement result](#re-measurement-result-2026-08-10). What remains is a *different*, smaller failure (2.8% adoption-gate rejection from a malformed `qid` string) which re-scopes the planned repair turn rather than continuing this finding. No deployment is affected: the dev overlay does not set `GROUNDING_AGENT_ENABLED`, so the grounder is off in dev and prod. The measurement enabled it locally (measurement activation, `.env`).
 **Update 2026-08-07:** the root cause is narrower than first written — the wire schema lists only `confidence` and `confidence_rationale` as `required` and gives `qid` a `"default": null`, so a submission without `qid` is schema-valid and the model is complying, not malfunctioning. See [Root cause](#root-cause-the-wire-schema-marks-qid-optional-added-2026-08-07). That promotes the two-tool split from hardening to the actual fix and puts the planned step order under review. Step 1 (outcome types + gate reasons) is implemented — code `d615391`, branch `feat/grounder-outcome-types`.
 **Update 2026-08-10:** the order question is settled and the fix is implemented. Step 4 shipped before step 2: the two tools are `submit_grounding` (grounded only, all six fields `required`, `qid` a plain string) and `abstain_grounding` (`abstain_reason` only, no `qid` property) — code `3fc2551`, branch `feat/split-final-grounding-tools`. The draft name `submit_abstain` was dropped, because an abstain is not a variant of a submission and the tool name should not read as one. This line originally ended "the abstain rate itself is not yet re-measured" — it has been, later the same day, and the result is in [Re-measurement result](#re-measurement-result-2026-08-10). Step 2 (repair turn) does **not** remain as scoped: the measurement found its target state at 0/71.
-**Repo:** measured at bourbon-agent-recommendation-api `e8bb0b0` (baseline, 2026-08-06) and `91372d5` (re-measurement, 2026-08-10 — the merge of the tool split, code `3fc2551`). **memory-api:** dev, port-forwarded to `localhost:8080`, tenant prefix `demo`, both times. **Model:** `google/gemini-3.1-flash-lite` via the e3llm-api proxy, both times.
+**Update 2026-08-10 (later):** [option 1](#consequence-for-the-repair-turn) is implemented, and **half of it was withdrawn after measurement** — see [Follow-up](#follow-up-option-1-implemented-and-half-of-it-withdrawn-2026-08-10). `RepairableInvalid` now emits its own log event, which completes the four *finish* outcomes — three protocol paths in the loop are still silent and remain C4-3's work. The `qid` format constraint ships on `GroundedFinal` only: applying it to `QidArg` as well was an interleaved-A/B-measured regression (7/39 failures against 0/27 and 0/35). The surviving half buys **attribution, not accuracy** — it did not move the rate, it makes a malformed `qid` distinguishable from a fabricated one, which the adoption gate cannot do.
+**Repo:** measured at bourbon-agent-recommendation-api `e8bb0b0` (baseline, 2026-08-06), `91372d5` (re-measurement, 2026-08-10 — the merge of the tool split, code `3fc2551`), and the follow-up on branch `feat/qid-format-contract-and-repairable-logging` off `91372d5`. **memory-api:** dev, port-forwarded to `localhost:8080`, tenant prefix `demo`, every time. **Model:** `google/gemini-3.1-flash-lite` via the e3llm-api proxy, every time.
 
 ## What was tried
 
@@ -358,6 +359,12 @@ Three options, smallest first:
 None of this is settled here; the point of record is that **the measurement changed the premise the
 repair turn was planned on.**
 
+> **Settled later the same day:** option 1 was taken, in half the scope written above, and it did not
+> do what this section expected of it — it converts the residual failure into `RepairableInvalid` as
+> predicted, but the failure it converts does not reproduce on demand, so the repair turn still has
+> no reliably-occurring target. See
+> [Follow-up](#follow-up-option-1-implemented-and-half-of-it-withdrawn-2026-08-10).
+
 ### What the fixture redesign showed
 
 The earlier section ["The dominant variable is the conversation, not the
@@ -385,6 +392,72 @@ the deployed service either — same reason the instrument was chosen, the CLI r
 Harness, analyser, and the 72-row raw record live in `artifacts/measurements/` in the code repo
 (`sweep.py`, `analyze.py`, `c4-5-sweep.jsonl`). That directory is gitignored, so the numbers above
 are the durable copy.
+
+## Follow-up: option 1 implemented, and half of it withdrawn (2026-08-10)
+
+Option 1 above — constrain `qid` in the schema — was implemented the same day, measured, and **shipped in half the scope it was written in**. The measurement contradicted one of its two halves. What follows is the record of that, because the reasoning that produced the wrong half is the reusable part.
+
+It shipped as two steps, in this order, because the second is not safe without the first.
+
+### Step 1: give `RepairableInvalid` a log event
+
+`RepairableInvalid` was the only failed finish outcome with no observable signal: `Adopted` returns a `GroundingResult`, while `ExplicitAbstain` and `AdoptionGateRejected` emit `abstain` and `gate_failed`. (`proxy_error` and `cap_reached` are not finish outcomes — they are the loop ending without one — but they are events all the same, which is what made attribution-by-subtraction work in the re-measurement above.) A malformed final was therefore indistinguishable from a run that never reached the grounder at all.
+
+That matters here specifically: constraining `qid` *converts* a gate rejection (named, logged) into a `RepairableInvalid` (silent). Shipping the constraint first would have traded a named failure for an unnamed one and called it progress. So the event came first: `grounding_agent_repairable_invalid`, carrying the tool and a list of `field:error_type` labels.
+
+**This does not make every grounder failure self-naming**, and the scope matters because C4-3 depends on it. Three protocol paths in `ground` still return silently: no tool call under `tool_choice="required"` (or a malformed tool-call shape), arguments that are not JSON, and arguments that are not a JSON object. Naming those is C4-3's work, along with the `protocol_failure` taxonomy. What is complete after this step is the *finish outcomes*, nothing wider.
+
+The labels are **deliberately not the input values.** A pydantic `missing` error carries the whole parent object as its `input`, so logging `errors()` verbatim would spill every sibling field — including `reason`, which is model prose derived from the user's conversation.
+
+Note what this implies: the arguments of a malformed final are then retained **nowhere**. `_finish` appends the `GroundingStep` only after validation succeeds, and a trajectory is built only on the adopted path, so a failed run reaches no decision log either. That is a real gap and it is deliberate here — widening this operator event into a substitute for it would put unfiltered model output in the logs. Retaining a *safe* failure trajectory belongs to C4-3.
+
+This step earned itself immediately: a run in the first re-measurement sweep landed on the new event, and under the previous classifier it would have been reported as an unattributable silence.
+
+### Step 2: constrain the format — on the final submission only
+
+Stated as a named type — `SubmittedQid`, not `Qid`, because it is *not* the general QID type and the narrower name is what stops the next reader reusing it on `QidArg` or a response model — and applied to `GroundedFinal.qid` alone. It is **not** applied to `QidArg.qid` (`get_entity` / `get_connections`), and not to `evidence_qids`.
+
+`evidence_qids` was excluded by judgement: a bad evidence entry is already named precisely by `EVIDENCE_OUTSIDE_OBSERVED`, so constraining it would trade a specific reason for a generic "malformed" against a failure never observed.
+
+`QidArg` was excluded by **measurement**, having first been included by judgement. The original reasoning was that the format is a property of the identifier rather than of one tool, so declaring it on one surface and not the other hands the model two contracts for the same value — plus an apparent bonus, that a malformed qid would come back as an accurate error observation instead of `found: false`. Both arguments still read well. Both are wrong, or at least outweighed.
+
+### The regression, and how it surfaced
+
+The first full sweep of the change reported the same aggregate as the re-measurement above: 97.2% adopted. Read as a total, nothing had happened. Read per fixture, two things had:
+
+| fixture | C4-5 | with both surfaces constrained |
+| --- | --- | --- |
+| 자바스크립트 `fx-60449af146c2` | 2/4 failed (`gate_failed`) | 4/4 adopted |
+| 마이크로서비스 `fx-874530eb9e66` | 4/4 adopted | 2/4 failed (`repairable_invalid`) |
+
+An identical total concealed one fixture getting better and another getting worse. Reverting only the constraint and re-running the regressed fixture gave 8/8 adopted, which made a causal reading plausible but not established — a hosted model's behaviour is not stationary across a morning, so measuring config A and then config B confounds the comparison with time.
+
+The configurations were therefore **interleaved run by run**, with the file state rewritten immediately before each run. Cumulative on `fx-874530eb9e66`:
+
+| config | failures |
+| --- | --- |
+| both surfaces constrained | **7/39 (18%)** |
+| `GroundedFinal` only | 0/27 |
+| `QidArg` only | 0/12 |
+| neither (the C4-5 code) | 0/35 |
+
+Fisher's exact: both vs neither p≈0.014, both vs final-only p≈0.036. Only the combination fails. The plausible mechanism is that a rejected `get_entity` returns an error observation where it used to return `found: false`, and the different observation sends the loop somewhere worse — but that is a hypothesis, and the sample does not establish it. The regression is not a hypothesis, and a request-shaping constraint that costs adopted answers is not worth the tidier contract.
+
+### What the same experiment says about the other half
+
+Run on the fixture that had been failing, `fx-60449af146c2`: `GroundedFinal`-only 0/15, unconstrained 0/15. **Neither config breaks it today.** So the improvement in the table above is not attributable to the change either — it is service or model variation between the morning and the afternoon of the same day.
+
+That leaves the surviving half with a narrower claim than option 1 was written on. **The constraint buys attribution, not accuracy.** It changed nothing measurable either way (0/27 with, 0/35 without). What it does is make a malformed `qid` say "malformed": without it, `qid="Q2005,reason:"` reaches the adoption gate and produces `qid_not_observed` + `self_citation_missing` — the *same pair a fabricated QID produces*. The gate cannot distinguish a formatting slip from a fabrication attempt, and the schema can. That is worth having, and it is the state a repair turn could act on. It is not a success-rate improvement and should not be recorded as one.
+
+### The shipping configuration
+
+Full sweep, `GroundedFinal` constrained and `QidArg` not: **72/72 adopted, no failures of any kind, no drift, tool calls exactly 3.00.** No regression. The 100% is again *not* credited to the change — the unconstrained code measured 0/50 on the same fixtures the same afternoon.
+
+### Method note: an unchanged total is not an unchanged result
+
+The reusable lesson is not about `qid`. Two opposite movements of equal size cancel in an aggregate, and this pair nearly did. The re-measurement above was safe to read as a total because the effect it measured was large (36.1% → 0); an effect near the noise floor is not. Split by fixture before concluding, and when a movement appears, interleave the configurations rather than running them in sequence — a sequential A→B is confounded with model drift over the same minutes.
+
+Raw records in the code repo's gitignored `artifacts/measurements/`: `c4-6-sweep.jsonl` (the withdrawn both-surfaces configuration), `c4-6b-sweep.jsonl` (shipping), and `why_repairable.py`, which re-runs one fixture with stderr kept so the `invalid=[...]` label can be read back — the sweep classifies on the event's presence and discards its payload.
 
 ## Adjacent observations from the same runs
 
