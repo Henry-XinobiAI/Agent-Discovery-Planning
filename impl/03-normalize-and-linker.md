@@ -253,11 +253,15 @@ ground되는 것은 `reranker=None`인 eval artifact이지 serving 능력이 아
 
 ## ① agentic grounder (`discovery/grounding_agent.py`, Phase 8-7 재설계) — 구현 완료 · 기본 OFF
 
-> ⛔ **2026-08-06 dev 실측 — turn-on 전 선행 결함이 있습니다.** 한국어 토픽 36 run 중 **13건(36%)이
-> abstain**으로 끝나는데, 추적해 보면 대부분 모델의 판단이 아니라 `submit_grounding`에서 **`qid` 필드만
-> 누락**된 것이고, 그 스키마 위반이 조용히 abstain으로 세탁됩니다. `GROUNDING_AGENT_CONF_MIN` 튜닝은
-> 이걸 고치기 전엔 의미가 없습니다(confidence는 늘 1.0으로 들어옵니다). 수치·추적·수정 계획 =
-> [findings](findings-agentic-grounder-submit-omission.md).
+> ✅ **해소됨 (2026-08-10).** 2026-08-06 dev 실측에서 한국어 토픽 36 run 중 **13건(36%)이 abstain**으로
+> 끝났는데, 원인은 모델의 판단이 아니라 `submit_grounding`에서 **`qid` 필드만 누락**된 스키마 위반이
+> 조용히 abstain으로 세탁된 것이었습니다. 최종 tool을 **두 개로 분리**(아래 루프 참조)해 모델이 어느
+> 쪽인지를 *tool 선택으로* 말하게 하자 abstain율 **36.1% → 0/71**, grounded **63.9% → 97.2%**(QID drift
+> 없음·호출 수 증가 없음). 남은 것은 성질이 다른 더 작은 실패(malformed `qid` 문자열로 인한 adoption-gate
+> 거부 2.8%)입니다. 수치·추적·재측정 = [findings](findings-agentic-grounder-submit-omission.md).
+>
+> ⚠️ 이 해소는 **turn-on 게이트를 열지 않습니다** — online 활성화 게이트는 아래 "online rollout 게이트"의
+> judge이고, 그건 별개입니다.
 
 동음이의 **identical-label homonym TIE**(같은 label `Python`을 언어·뱀이 공유)는 symbolic이 원리적으로 못 깹니다
 (둘 다 confidence 1.0 → margin 0). tie를 가르는 유일한 새 정보는 **최근 대화 맥락**이고, 그걸 읽고 sense를 고르는
@@ -273,14 +277,18 @@ dormant-ships(`GroundingAgentSettings.GROUNDING_AGENT_ENABLED` 기본 OFF) — c
 
 ### native tool 루프 + 4중 adoption gate
 - **입력:** `topic_text` + `grounding_context`(ⓠ가 `context_messages`에서 투영한 lean 대화; raw wire 메시지는 drop).
-- **루프:** `complete_with_tools`(`tool_choice="required"`, ≤`GROUNDING_AGENT_MAX_CALLS`=5턴)로 4개 tool —
-  `search_entities`(multi-query 검색)·`get_entity`(상세 관측)·`get_connections`(이웃, opt-in)·`submit_grounding`
-  (최종 제출) — 을 돕니다. assistant tool_call 턴은 verbatim echo(thought_signature 등 provider 왕복 필드 보존).
-  malformed tool_call shape는 `_parse_tool_calls`가 턴 전체를 한 번에 검증해 500 누출 대신 침묵(`None`)으로 강등.
+- **루프:** `complete_with_tools`(`tool_choice="required"`, ≤`GROUNDING_AGENT_MAX_CALLS`=5턴)로 **5개 tool** —
+  knowledge tool 3개 `search_entities`(multi-query 검색)·`get_entity`(상세 관측)·`get_connections`(이웃, opt-in)와
+  **terminal tool 2개** `submit_grounding`(qid 제출)·`abstain_grounding`(`abstain_reason`만, `qid` 속성 없음) — 을
+  돕니다. terminal을 둘로 나눈 것이 위 결함의 수정입니다: **"제출인가 포기인가"를 모델이 tool 선택으로 말하므로**
+  필드 누락이 포기로 세탁될 자리가 없어집니다. assistant tool_call 턴은 verbatim echo(thought_signature 등
+  provider 왕복 필드 보존).
 - **4중 gate (submit 시):** ① **membership** = 최종 qid가 `get_entity`로 실제 관측한 집합 안 · ② confidence ≥
   `GROUNDING_AGENT_CONF_MIN`(0.70) · ③ **self-cite** = qid ∈ evidence_qids · ④ evidence ⊆ observed ∧ 관측 텍스트에
-  non-blank 최소 1개. 하나라도 실패 → abstain(`None`). LLM이 QID를 **발명**하거나 관측하지 않은 근거를 대는 것을
-  구조적으로 봉쇄.
+  non-blank 최소 1개. 하나라도 실패 → `AdoptionGateRejected`(실패한 conjunct 전부를 선언 순서로 실어서). LLM이
+  QID를 **발명**하거나 관측하지 않은 근거를 대는 것을 구조적으로 봉쇄.
+  ⚠️ **gate 거부는 abstain이 아닙니다** — 모델은 판단을 했고 우리가 거절한 것입니다. 이 문서의 옛 서술이
+  둘을 "abstain(`None`)"으로 합쳐 부르던 것이 C4-3이 없앤 혼동입니다(바로 아래).
 - **injection-safe:** 고정 system prompt + 대화/후보는 user turn의 JSON data. tool 결과만 관측 집합에 들어가고,
   채택 qid는 반드시 관측 + gate를 통과.
 
@@ -289,7 +297,7 @@ dormant-ships(`GroundingAgentSettings.GROUNDING_AGENT_ENABLED` 기본 OFF) — c
 | `context_messages` | 동작 |
 |---|---|
 | **없음** (`None`) | **symbolic `_ground_symbolic()`** — 주입된 rung대로 처리(아래 "라우팅 vs rung 은퇴" 참조) |
-| **있음** (non-empty) | **agentic primary** — abstain이면 terminal(`GroundingFailedError`, symbolic 부활 안 함) |
+| **있음** (non-empty) | **agentic primary** — 채택되지 않은 **모든** outcome이 terminal(`GroundingFailedError`, symbolic 부활 안 함) |
 | **공급됐으나 usable text 0** (`[]`, attachment/blank-only) | **terminal `GroundingFailedError`** (grounder 미호출·LLM 낭비 0) |
 
 - **라우팅은 Linker 계약, rung 은퇴는 composition-root 정책 (구분):** `Linker.ground(context=None)`은 항상
@@ -310,10 +318,53 @@ dormant-ships(`GroundingAgentSettings.GROUNDING_AGENT_ENABLED` 기본 OFF) — c
   경로도 False). context-absent unique-exact 채택과 offline 폴백은 `method="symbolic"`.
 - **trajectory:** 채택 시 `GroundingResult.trajectory`에 각 스텝(action/args/본 qid들/follow-up) + 최종 pick + 사유
   + confidence를 기록 → decision log ⑥가 **additive block**으로 저장(symbolic `considered`의 agentic 대응).
-  abstain은 결과(`GroundingResult`)가 없으니 로그에도 안 남음.
+  실패한 run은 추천이 없어서 **decision-log row 자체가 없다**(의도된 설계) — 대신 아래 실패 outcome이 구조화된
+  trace와 단일 로그 이벤트를 남긴다. 즉 채택 경로의 sink와 실패 경로의 sink는 서로 다르다.
 - **소비자 소유 Protocol / duck-type impl:** `Grounder` Protocol은 소비자 `linker.py`가 소유, concrete
   `LLMGrounder`(`grounding_agent.py`)는 Protocol을 import 없이 duck-type(Reranker/Expander/Substituter 관례) —
-  구조 매칭은 composition root `Linker(grounder=…)`에서 mypy가 검증.
+  구조 매칭은 composition root `Linker(grounder=…)`에서 mypy가 검증. **반환 타입은 `GroundingOutcome`**(아래).
+
+### 실패 outcome 계약 (C4-3, 2026-08-10 · PR #44)
+
+`ground()`는 원래 `GroundingResult | None`이었고, 그 `None`이 **성질이 다른 세 사건을 경계에서 지웠다** —
+모델이 일부러 qid를 withhold한 것 / gate가 well-formed 최종을 거절한 것 / proxy가 죽은 것. judge 품질 문제를
+쫓는 운영자가 실제로는 outage를 보고 있어도 로그에 구분이 없었다. 게다가 **cause 4종은 이벤트조차 없었다** —
+무음 `return None` 3곳에서 나오는데, 그중 한 분기가 **서로 다른 두 실패를 한 곳에 담고** 있었다
+(`no_tool_call`과 `malformed_tool_call`). `malformed_final`은 *어느 필드가 깨졌는지*만 알리고 *run이 끝났다는
+사실*은 알리지 않았다.
+
+- **반환 타입 = `GroundingOutcome`** = `Adopted` | `ExplicitAbstain` | `AdoptionGateRejected` | `GrounderFailure`.
+  이 vocabulary는 **소비자(`linker.py`)가 소유**한다 — Protocol이 거기 있으므로 그 런타임 반환 어휘도 거기 산다.
+  `structs/`는 직렬화되는 wire 어휘의 자리이고, 프로세스를 벗어나지 않는 outcome 집합은 거기 속하지 않는다.
+  `grounding_agent.py`는 이 이름들을 import하지만 Protocol은 import하지 않아 의존은 **한 방향**으로 유지된다.
+- **`GrounderFailure`의 cause 7종**(`GrounderFailureCause`, 누가 실패했는지로 묶음): 모델의 수
+  (`no_tool_call`·`arguments_not_json`·`arguments_not_object`·`malformed_final`) / wire
+  (`malformed_tool_call`·`proxy_error`) / 우리 예산(`cap_reached`).
+  - `no_tool_call` ⊥ `malformed_tool_call`: `tool_choice="required"`인데 빈 턴이 온 건 **모델 행동** 질문이고,
+    읽을 수 없는 shape는 모델 판단에 대해 **아무 말도 하지 않는다**. (이전 서술의 "malformed shape → 침묵
+    `None`"은 이제 틀렸다 — `GrounderFailure(MALFORMED_TOOL_CALL)`로 이름이 붙는다.)
+  - `cap_reached`는 abstain이 아니라 **failure**로 둔다 — spec D6은 cap-without-submit을 abstain이라 부르지만,
+    그건 모델이 withhold한 게 아니라 우리 예산이 끝난 것이다. 합치면 **모델 판단을 재는 유일한 지표를 오염**시킨다.
+  - 7종 전부가 **cause를 필드로 갖는 단일 이벤트**로 로깅된다(이름이 7개가 아니라 1개) → sink가 이름을 미리 다
+    알지 않고도 group by 할 수 있다. severity는 보존: `proxy_error`만 warning, 나머지는 info.
+- **안전하게 보관 가능한 실패 trace**(`GroundingFailureTrace`) — 스텝, 죽는 순간 호출 중이던 tool
+  (`attempted_action`), 본 context 양. sanitize 선은 **terminal 인자**에 그린다: `reason`·`confidence_rationale`·
+  `abstain_reason`은 *사용자 대화에서 파생된 모델 산문*이라 단일 변환 지점에서 제거하고, knowledge tool 인자
+  (`queries`·`qid` — 짧은 용어이자 진단 가치의 전부)는 남긴다. sanitize를 통과하는 것은 **named field로** 남긴다:
+  abstain은 `ExplicitAbstain.abstain_reason`, gate 거부는 `AdoptionGateRejected.reasons`, malformed final은
+  tool 이름 + `field:error_type`. **raw 인자를 버리는 게 규율이고, tool 이름까지 버리면 안전한 절반을 잃는다.**
+  채택 경로(`GroundingTrajectory`)는 손대지 않았다 — 거긴 여전히 raw 인자를 decision log로 싣는 audit mirror다.
+- **에러는 속성 하나로 싣는다** — `GroundingFailedError.grounding_outcome`이 outcome **객체 전체**를 싣는다.
+  cause/trace/reasons를 각각 인자로 받으면 서로 모순될 수 있다(self-exclusion 선례). `None`은 "grounder가
+  아무 말도 안 했다"가 아니라 **"grounder가 돌지 않았다"** — 다른 사실이다.
+- **`invalid_fields`는 `malformed_final` 전용**이고, 타입과 리포트 경계 **양쪽**이 biconditional
+  `(cause is MALFORMED_FINAL) == bool(invalid_fields)`을 강제한다. 두 방향 다 조용히 실패하기 때문이다 —
+  다른 cause에 라벨이 붙으면 *일어나지 않은 validation*으로 렌더되고, 라벨 없는 malformed final은 *아무것도
+  말해주지 않는 cause*로 렌더된다.
+- **외부 계약 불변**: `/recommend`의 422 `grounding_failed`는 code·message 그대로다(byte-identical). 바뀐 건
+  `Grounder`→`Linker` **내부** 계약과 관측뿐. ⚠️ 단 그 메시지는 **부정확하다** — gate 거부·proxy 오류·cap
+  도달에도 "abstained"라고 나간다. 구조화 outcome이 실제로 뭐였는지 말해주므로 이제 그 부정확성이 *보인다*.
+  **moderator/agent 연동 전에 고칠 별도 후속**(코드repo `tasks/todo.md`).
 
 ### online rollout 게이트
 context grounding의 relatedness는 model/human-judged라 **8-4 B2/human judge**([11](11-forward-roadmap.md))가
