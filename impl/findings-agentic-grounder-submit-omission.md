@@ -1,9 +1,9 @@
 # Finding: the agentic grounder's "abstain" is mostly a dropped `qid` field (2026-08-06)
 
-**Status:** open — cause fixed (2026-08-10), effect not yet re-measured; still blocks the C4 grounding-agent turn-on gate. No deployment is affected: the dev overlay does not set `GROUNDING_AGENT_ENABLED`, so the grounder is off in dev and prod. The measurement enabled it locally (measurement activation, `.env`).
+**Status:** **resolved (2026-08-10)** — cause fixed and effect confirmed by re-measurement: the abstain rate went 36.1% → 0 across 71 runs, with no QID drift and no rise in call count. See [Re-measurement result](#re-measurement-result-2026-08-10). What remains is a *different*, smaller failure (2.8% adoption-gate rejection from a malformed `qid` string) which re-scopes the planned repair turn rather than continuing this finding. No deployment is affected: the dev overlay does not set `GROUNDING_AGENT_ENABLED`, so the grounder is off in dev and prod. The measurement enabled it locally (measurement activation, `.env`).
 **Update 2026-08-07:** the root cause is narrower than first written — the wire schema lists only `confidence` and `confidence_rationale` as `required` and gives `qid` a `"default": null`, so a submission without `qid` is schema-valid and the model is complying, not malfunctioning. See [Root cause](#root-cause-the-wire-schema-marks-qid-optional-added-2026-08-07). That promotes the two-tool split from hardening to the actual fix and puts the planned step order under review. Step 1 (outcome types + gate reasons) is implemented — code `d615391`, branch `feat/grounder-outcome-types`.
-**Update 2026-08-10:** the order question is settled and the fix is implemented. Step 4 shipped before step 2: the two tools are `submit_grounding` (grounded only, all six fields `required`, `qid` a plain string) and `abstain_grounding` (`abstain_reason` only, no `qid` property) — code `3fc2551`, branch `feat/split-final-grounding-tools`. The draft name `submit_abstain` was dropped, because an abstain is not a variant of a submission and the tool name should not read as one. **The route this finding documents is closed at the source; the abstain rate itself is not yet re-measured** — the offline eval never exercises the agentic grounder, so an unchanged baseline says nothing about it. Step 2 (repair turn) remains, now scoped to genuinely malformed output.
-**Repo:** bourbon-agent-recommendation-api @ `e8bb0b0`. **memory-api:** dev, port-forwarded to `localhost:8080`, tenant prefix `demo`. **Model:** `google/gemini-3.1-flash-lite` via the e3llm-api proxy.
+**Update 2026-08-10:** the order question is settled and the fix is implemented. Step 4 shipped before step 2: the two tools are `submit_grounding` (grounded only, all six fields `required`, `qid` a plain string) and `abstain_grounding` (`abstain_reason` only, no `qid` property) — code `3fc2551`, branch `feat/split-final-grounding-tools`. The draft name `submit_abstain` was dropped, because an abstain is not a variant of a submission and the tool name should not read as one. This line originally ended "the abstain rate itself is not yet re-measured" — it has been, later the same day, and the result is in [Re-measurement result](#re-measurement-result-2026-08-10). Step 2 (repair turn) does **not** remain as scoped: the measurement found its target state at 0/71.
+**Repo:** measured at bourbon-agent-recommendation-api `e8bb0b0` (baseline, 2026-08-06) and `91372d5` (re-measurement, 2026-08-10 — the merge of the tool split, code `3fc2551`). **memory-api:** dev, port-forwarded to `localhost:8080`, tenant prefix `demo`, both times. **Model:** `google/gemini-3.1-flash-lite` via the e3llm-api proxy, both times.
 
 ## What was tried
 
@@ -280,6 +280,111 @@ Success rate alone is not enough. Record: first-submission success rate, repair 
 rate, explicit abstain rate, residual protocol-failure rate, mean call count and added latency, and
 QID drift among adopted runs. Use **at least three fixtures per topic** — see the two 커피 fixtures
 above.
+
+**Executed 2026-08-10 — see [Re-measurement result](#re-measurement-result-2026-08-10) below.** Only
+the repair columns are absent, because there is no repair turn yet to measure.
+
+## Re-measurement result (2026-08-10)
+
+**The 36% was the defect, entirely. Explicit abstains: zero in 71 runs.**
+
+| | baseline (2026-08-06) | after the tool split (2026-08-10) |
+| --- | --- | --- |
+| runs | 36 — 6 topics x 1 fixture x 6 | 72 — 6 topics x **3 fixtures** x 4 |
+| grounded | 23/36 = **63.9%** | 69/71 = **97.2%** |
+| explicit abstain | 13/36 = **36.1%** | **0** |
+| adoption-gate rejection | 0 | 2 = 2.8% |
+| silent failure (`RepairableInvalid`) | not separable | **0** |
+| proxy error / call cap | 0 / 0 | 0 / 0 |
+| QID drift among adopted | 0/53 | **0/69** |
+| tool calls per adopted run | not recorded | **3.00** (min 3, max 3) |
+| duration per adopted run | not recorded | mean 7.29s, median 6.57s |
+
+Conditions were held at the baseline's: the same six Korean topics, dev memory-api port-forwarded to
+`localhost:8080` with tenant prefix `demo`, `google/gemini-3.1-flash-lite` through the e3llm proxy,
+`GROUNDING_AGENT_ENABLED=on` and `REAL_EDGE_ENABLED=on`, runs sequential and paced 2s apart. The
+instrument is the in-process `e2e-recommend` CLI, not a deployed endpoint — the abstain rate is
+decided entirely inside the pipeline, and switching instruments would have broken the comparison.
+
+Every adopted run took exactly three tool calls — `search_entities`, one `get_entity`,
+`submit_grounding` — out of a budget of five. The budget was never close to binding, before or after.
+
+### Two corrections to the first reading of these numbers
+
+**A run can fail after the grounder, and one did.** The sweep's first pass classified a run as a
+silent grounder failure because its report carried no `resolved:` line. Opening the report showed
+`EdgeProjectionError: memory-api GET /demo/personal/entities/Q2005 failed after 3 attempts:
+ReadTimeout` — grounding had *succeeded* and handed `Q2005` downstream, where memory-api timed out
+(41.2s, against a 7.3s mean). It is excluded from the grounder's denominator rather than counted
+against it, which is why the table reads 71 and not 72. **"No anchor in the report" does not mean
+"the grounder produced no anchor."**
+
+**The two remaining failures are a new mode, and the planned repair turn does not catch them.** Both
+are the same fixture, and the gate reasons name the cause exactly:
+
+```
+grounding_agent_gate_failed  topic=자바스크립트  qid=Q2005,reason:  observed=False  confidence=1.0
+                             reasons=['qid_not_observed', 'self_citation_missing']
+```
+
+The model submitted `qid` as the string `"Q2005,reason:"`. The judgement is right — it is Q2005 —
+and the field is now always present, which is what the split was for. What arrives is a **malformed
+QID value**: a non-empty string, so it satisfies `GroundedFinal` and never becomes
+`RepairableInvalid`; it then fails the adoption gate on membership (`"Q2005,reason:"` was never
+fetched) and on self-citation (`evidence_qids` holds the clean `Q2005`). The paired reasons are
+exactly the co-occurrence the gate-reason work predicted, and without it this would have been an
+opaque "the gate refused something".
+
+### Consequence for the repair turn
+
+**The repair turn's target state is 0/71.** It was scoped to retry `RepairableInvalid` — a final that
+fails validation — and the split removed the only observed source of those. The residual recoverable
+failure now sits one layer later, in adoption-gate rejection, which the repair turn as designed does
+not touch. Building it to the original scope would produce resilience against a state that no longer
+occurs.
+
+Three options, smallest first:
+
+1. **Constrain `qid` in the schema** (`pattern` on `GroundedFinal.qid`). This is the same move that
+   worked here — put the constraint where the model can see it — and it converts the observed
+   residual failure into `RepairableInvalid`, which is a state a repair turn *can* address. Cheapest,
+   and it does not commit to a repair turn at all.
+2. **Widen the repair turn to gate rejections.** Directly targets the residual 2.8%, but handing a
+   membership failure back to the model edges toward coaching it around the membership guard, which
+   is the hard backstop against a fabricated QID. Any such design has to say why that is safe.
+3. **Defer repair, do the contract change first.** Accept 2.8% and build the structured failure
+   surface before deciding.
+
+None of this is settled here; the point of record is that **the measurement changed the premise the
+repair turn was planned on.**
+
+### What the fixture redesign showed
+
+The earlier section ["The dominant variable is the conversation, not the
+topic"](#the-dominant-variable-is-the-conversation-not-the-topic) was an inference from two 커피
+fixtures. With three fixtures per topic it is now measurable, and it holds:
+
+| topic | rate | per fixture | within-topic spread |
+| --- | --- | --- | --- |
+| 자바스크립트 | 9/11 | 3/3, **2/4**, 4/4 | **50%** |
+| the other five | 12/12 each | 4/4, 4/4, 4/4 | 0% |
+
+Spread *within* 자바스크립트 (50%) is larger than spread *between* topics (18%), and both failures sit
+on one fixture, `fx-60449af146c2`. Under the baseline's one-fixture-per-topic design this would have
+been read as "자바스크립트 is a hard topic". It is not a topic property; it is one conversation.
+
+### What this does and does not establish
+
+It establishes that the omission route is closed and that nothing was traded for it — drift stayed at
+zero, call count did not rise, and no failure moved into a different bucket.
+
+It does not establish quality. These are six topics in one tenant with newly generated fixtures, so
+per-topic rates are not comparable to the baseline's; only the aggregate is. It says nothing about
+the deployed service either — same reason the instrument was chosen, the CLI runs in-process.
+
+Harness, analyser, and the 72-row raw record live in `artifacts/measurements/` in the code repo
+(`sweep.py`, `analyze.py`, `c4-5-sweep.jsonl`). That directory is gitignored, so the numbers above
+are the durable copy.
 
 ## Adjacent observations from the same runs
 
