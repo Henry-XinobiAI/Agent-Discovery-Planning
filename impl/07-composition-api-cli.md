@@ -349,6 +349,16 @@ shape(턴 수·교대·blank)뿐이라, 조항을 무시한 대화도 그대로 
 남고, cleanup 중 `BaseException`(Ctrl-C 포함)도 기록한 뒤 남은 cleanup을 마치고 재전파합니다. 외부 리뷰
 5라운드가 전부 이 한 불변식의 서로 다른 누수 경로였습니다.
 
+**grounding 실패는 문장이 아니라 데이터로 적습니다** (C4-3, 2026-08-10 · 코드 PR #44).
+`RunReport.grounder_failure`가 grounder의 실패 outcome을 구조화해 싣고([03](03-normalize-and-linker.md)
+"실패 outcome 계약"), Markdown은 **거기서 파생**됩니다 — kind(abstain / gate 거부 / run 실패)·cause·
+실패한 gate conjunct·`field:error_type` 라벨·죽는 순간 호출 중이던 tool·본 context 양. 옆에 있는
+`failure` 문자열은 어느 예외가 run을 끝냈는지만 말할 수 있고, **모델이 withhold한 것인지 gate가 거절한
+것인지 proxy가 죽은 것인지는 말할 수 없습니다** — judge 품질 문제를 쫓는 운영자가 실제로는 outage를
+보고 있는 것이 이 블록이 막는 실패 모드입니다. §5는 그래서 예외 문자열을 **반복하지 않습니다**(그 문구가
+"abstained"인데 블록이 `adoption_gate_rejected`라고 말하면 리포트가 자기모순이 되므로 — 실제로 그랬고,
+자체 리뷰에서 잡아 테스트로 고정했습니다). 예외 문자열 자체는 마지막 섹션에 verbatim으로 남습니다(grep 가능).
+
 **이 도구가 관측 못 하는 것을 리포트가 스스로 밝힙니다** — 탈락 후보의 원 verdict(drop이
 `{agent_id, anchor_id, reason}`만 남김: `wrong_stance`는 verdict가 있었다가 이 이음매에서 사라진 것,
 `stance_unevaluated`는 애초에 없던 것, `duplicate_agent_edge`는 **같은 agent의 다른 edge가 대표로 뽑혀
