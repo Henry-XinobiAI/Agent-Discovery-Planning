@@ -1,7 +1,8 @@
 # Finding: the agentic grounder's "abstain" is mostly a dropped `qid` field (2026-08-06)
 
-**Status:** open — blocks the C4 grounding-agent turn-on gate. No deployment is affected: the dev overlay does not set `GROUNDING_AGENT_ENABLED`, so the grounder is off in dev and prod. The measurement enabled it locally (measurement activation, `.env`).
+**Status:** open — cause fixed (2026-08-10), effect not yet re-measured; still blocks the C4 grounding-agent turn-on gate. No deployment is affected: the dev overlay does not set `GROUNDING_AGENT_ENABLED`, so the grounder is off in dev and prod. The measurement enabled it locally (measurement activation, `.env`).
 **Update 2026-08-07:** the root cause is narrower than first written — the wire schema lists only `confidence` and `confidence_rationale` as `required` and gives `qid` a `"default": null`, so a submission without `qid` is schema-valid and the model is complying, not malfunctioning. See [Root cause](#root-cause-the-wire-schema-marks-qid-optional-added-2026-08-07). That promotes the two-tool split from hardening to the actual fix and puts the planned step order under review. Step 1 (outcome types + gate reasons) is implemented — code `d615391`, branch `feat/grounder-outcome-types`.
+**Update 2026-08-10:** the order question is settled and the fix is implemented. Step 4 shipped before step 2: the two tools are `submit_grounding` (grounded only, all six fields `required`, `qid` a plain string) and `abstain_grounding` (`abstain_reason` only, no `qid` property) — code `3fc2551`, branch `feat/split-final-grounding-tools`. The draft name `submit_abstain` was dropped, because an abstain is not a variant of a submission and the tool name should not read as one. **The route this finding documents is closed at the source; the abstain rate itself is not yet re-measured** — the offline eval never exercises the agentic grounder, so an unchanged baseline says nothing about it. Step 2 (repair turn) remains, now scoped to genuinely malformed output.
 **Repo:** bourbon-agent-recommendation-api @ `e8bb0b0`. **memory-api:** dev, port-forwarded to `localhost:8080`, tenant prefix `demo`. **Model:** `google/gemini-3.1-flash-lite` via the e3llm-api proxy.
 
 ## What was tried
@@ -108,7 +109,7 @@ failed more often, which is what "converge to the minimal schema-valid object" w
 fixture correlation is *consistent with* this mechanism, not proof of it.
 
 **Consequence for the plan:** the two-tool split (`submit_grounding` with `qid` required /
-`submit_abstain` with `abstain_reason` required) is the actual fix, not hardening applied after one.
+`abstain_grounding` with `abstain_reason` required) is the actual fix, not hardening applied after one.
 It makes the `required` list itself the contract, so omission becomes structurally impossible. The
 repair turn is a mitigation — and one that has to argue against a schema-valid output while the
 validator's own message points the wrong way (see the sequence note below).
@@ -217,15 +218,15 @@ yields `qid_not_observed` and `evidence_outside_observed` together.
    **successful** agentic run the trajectory is already carried in the decision log
    (`discovery/structs/decision_log.py`), and `cli/e2e/report.py` prints only `len(steps)` — the steps
    themselves are discarded by the renderer, not missing from the data.
-4. Split the final tool in two: `submit_grounding` (`qid` required) and `submit_abstain`
-   (`abstain_reason` required). **This is the real fix** — it makes omission structurally unable to
+4. Split the final tool in two: `submit_grounding` (`qid` required) and `abstain_grounding`
+   (`abstain_reason` required; shipped under that name — see the decision note below). **This is the real fix** — it makes omission structurally unable to
    impersonate an abstain. Marking a nullable field `required` in JSON Schema is weaker; models keep
    omitting it. Repair still earns its place afterwards as resilience against malformed output, but
    a 36% omission rate must not be carried into serving promotion on repair alone. Step 4 changes the
    tool surface, so it needs its own re-measurement.
 5. Re-measure.
 
-#### Sequence under review: step 4 may belong before step 2 (2026-08-07)
+#### Decided: step 4 ships before step 2 (decided 2026-08-07, implemented 2026-08-10)
 
 The root-cause section above changes the standing of steps 2 and 4. Step 4 removes the cause; step 2
 compensates for it. The current order therefore ships the mitigation first and the fix second, and
@@ -241,13 +242,25 @@ two concrete facts argue against that:
   collapses that to one measurement of the shape we intend to keep, and lets step 2 be measured
   against genuinely malformed output rather than against this defect.
 
-Not yet decided — step 2 is smaller and reversible, whereas step 4 touches the loop's terminal
-branch (two tool names to recognize instead of one), splits `GroundingAgentFinal` into two models,
-and rewrites the abstain instructions in the system prompt. Schema translation is *not* a risk
-there: `convert_schema` only flattens the Pydantic `anyOf: [T, null]` optional pattern to Gemini's
-`nullable` and rejects genuine multi-member unions, and two single-model tools introduce neither.
-What is settled: **step 1 precedes both** (done, code `d615391`), and repair survives either order as
-resilience against malformed output.
+**Both arguments were accepted and step 4 was done first** (code `3fc2551`). The reservation on
+record was cost: step 2 is smaller and reversible, whereas step 4 touches the loop's terminal branch
+(two tool names to recognize instead of one), splits `GroundingAgentFinal` into two models, and
+rewrites the abstain instructions in the system prompt. In practice that came to five files, which
+was affordable. Schema translation was never a risk: `convert_schema` only flattens the Pydantic
+`anyOf: [T, null]` optional pattern to Gemini's `nullable` and rejects genuine multi-member unions,
+and two single-model tools introduce neither. **Step 1 precedes both** (code `d615391`), and repair
+survives the reordering as resilience against malformed output.
+
+Two things the split settled that the plan had not anticipated. The adoption gate's runtime refusal
+to score an abstain is **gone** rather than kept — `GroundedFinal` cannot represent an abstain, so
+the type system enforces what the check used to, and the check and its test were deleted. In the
+other direction, the blank-abstain-reason guard that step 1 recorded as unreachable became
+**reachable**: `min_length=1` rejects `""` but admits `"   "`, so a whitespace reason is now a real
+path to a malformed outcome and is tested as one.
+
+Note on scope, since the distinction is easy to lose: step 1 *names* failures, step 4 closes the
+route by which a dropped `qid` was read as a schema-valid abstain. Neither eliminates malformed
+terminal calls, which still resolve to silence — that is step 2's job.
 
 Practical note for whichever comes first: `ValidationError.errors()` must be called with
 `include_url=False, include_input=False, include_context=False`. The default output embeds the whole
