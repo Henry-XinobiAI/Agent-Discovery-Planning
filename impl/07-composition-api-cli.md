@@ -234,20 +234,68 @@ class RecommendRouter:
 ```python
 _STATUS_BY_CODE = {
     GroundingFailedError.code:      422,  # grounding_failed  — 요청을 물어본 대로 서빙할 수 없음
+    GroundingAmbiguousError.code:   422,  # grounding_ambiguous     — 후보는 있는데 하나를 못 고름 (C4-7)
     InvalidNeedError.code:          422,  # invalid_need
     RequesterIdentityRequiredError.code: 422,  # requester_identity_required — enforcing self-exclusion인데 필드 없음
     UpstreamUnavailableError.code:  503,  # upstream_unavailable      — hard-required substrate 부재/장애
     EdgeProjectionError.code:       503,  # edge_projection_failed    — 배선된 real-edge projection이 계약 위반 응답
+    GroundingUnavailableError.code: 503,  # grounding_unavailable   — run이 판단에 도달하지 못함 (C4-7)
     UnresolvedOwnerIdentityError.code: 503,  # unresolved_owner_identity — resolver가 불일치 매핑 반환
 }
 ```
-- 각 타입을 명시적으로 등록 (Starlette MRO가 catch-all `Exception`(500 fallback)보다 우선).
+- 각 타입을 명시적으로 등록 (Starlette MRO가 catch-all `Exception`(500 fallback)보다 우선). **단 grounding
+  서브클래스 2종은 등록하지 않습니다** — MRO가 부모(`GroundingFailedError`)의 handler를 찾고, handler는
+  인스턴스에서 **서브클래스의** `code`를 읽습니다.
 - **`requester_identity_required`(422)만 배포 조건부**입니다 — pre-gate exclusion이 enforcing일 때(=real
   edge ON)만 납니다. 스키마에서 `requester_owner_id`는 여전히 optional인데, "어떤 배포에서만 필수"는
   스키마로 표현할 수 없기 때문입니다(그래서 `/docs`에는 optional로 보이고, 필드 description이 그 대가를
   말합니다). 계약 전문 = spec `2026-08-05-requester-self-exclusion-design.md`.
-- **세 503의 공통점은 "필수 substrate 상태를 추측하거나 날조하지 않는다"** 입니다. 다만 적용 범위는
-  다릅니다:
+#### grounding 실패의 wire 계약 — 3 code (C4-7, 2026-08-11 · 코드 PR #45)
+
+`grounding_failed` 하나가 **세 경로의 종단 상태 15개**를 덮고 있었고, 422는 호출자에게 **재시도해도 되는지**를
+말해주지 않았습니다. moderator/agent 연동 전에 최종 계약을 **원자적으로** 넣었습니다 — 실배포 호출자가 0개라
+compat alias 없이 직접 바꿉니다(선례 = spec `2026-07-21-stance-request-model-simplification-design.md`).
+
+| 상태 | HTTP | `error_code` | 호출자 행동 |
+|---|---|---|---|
+| 명시적 abstain · adoption gate 거부 · 모호할 것이 없는 miss | 422 | `grounding_failed` | 포기 또는 입력 재표현 |
+| **코드가 증명한** 후보 모호성 (homonym tie · margin만 미달) | 422 | `grounding_ambiguous` | 사용자에게 명확화 요청 |
+| `GrounderFailure` **cause 7종 전부** | **503** | `grounding_unavailable` | backoff 후 재시도 |
+
+**기준은 "run이 판단에 도달했는가"이고, "같은 요청이면 같은 답인가"가 아닙니다.** grounding은 LLM을 타므로
+결정성은 status의 의미가 될 수 없습니다. 그리고 abstain·gate 거부를 통과할 때까지 반복 호출하는 것은
+**안전 게이트를 확률적으로 우회하는 행동**입니다 — 재시도 금지의 근거는 재현성이 아니라 그것입니다.
+`GrounderFailure`만이 판단에 도달하지 못한 outcome이라, 503 선이 **이미 있던 타입 경계에 정확히 떨어집니다**
+(분기 = `isinstance(outcome, GrounderFailure)`; 그 enum docstring이 이미 *"the run ended without the model ever
+making a decision"* / `CAP_REACHED`는 *"Ours. The budget, not a verdict"* 라고 말하고 있었습니다).
+
+**cause는 wire에 안 나갑니다.** cause 7종과 malformed final의 `field:error_type` 라벨은 운영자 어휘이고
+`e2e-recommend` 리포트가 이미 싣습니다. code로든 **cause별 메시지로든** 내보내면 호출자가 곧 파싱하고,
+한 번 개명한 적 있는 taxonomy가 계약으로 굳습니다. 그래서 메시지도 **3수준만**입니다(abstain / gate 거부 /
+판단 없이 종료).
+
+**`grounding_ambiguous`는 결정 지점에서 타입으로 만듭니다** — 메시지나 `considered`를 **사후 해석하지
+않습니다**. 근거가 이것입니다: `linker.py`의 두 지점이 같은 기본 note를 공유하는데 하나는 미해소 tie
+(ambiguous), 다른 하나는 `n_exact==0` recall miss(failed)로 **정반대**였습니다. 문자열로 갈랐다면 동일하게
+분류했을 자리입니다. 같은 이유로 두 분기를 쪼갰습니다 — rerank 게이트의 `or`(conf 미달은 "분리는 됐는데 자기
+픽을 못 믿음"이지 모호성이 아니다 · conf 우선), expansion 최종 exit의 3상태(각각 **메시지도** 다릅니다:
+`n_exact>=2` multiple exact anchors · `==1` expanded anchor did not clear the margin gate · `==0` 기존 문구).
+
+**`not reranked`도 ambiguous입니다** — 그 rung에 들어왔다는 사실 자체가 `n_exact >= 2`를 증명하고, reranker가
+왜 `None`을 냈는지가 과부하돼 있어도 **후보 집합이 모호하다는 사실은 사라지지 않습니다**. `Reranker` 포트의
+`None` 과부하를 쪼개 proxy 절반만 503으로 승격하는 것은 **별건**(코드repo `tasks/todo.md`).
+
+**OpenAPI가 인계 지점입니다.** 라우터가 에러 응답을 **하나도** 문서화하지 않고 있었습니다(200만). 이제
+401/422/503을 호출자 행동 기준으로 묶어 싣고 봉투 스키마는 `ErrorEnvelope`입니다. 그리고 `_STATUS_BY_CODE`를
+순회해 **모든 code가 매핑된 status의 description에 등장**하는지 검사하는 테스트가 있습니다 — 문서 없는 도메인
+에러가 배포될 수 없습니다(`validation_error` 누락을 일회성으로 고치는 대신 재발을 막습니다). 가드는 전체
+response 객체가 아니라 **description**을 봅니다: 산문이 사람이 쓰는 부분이고 따라서 어긋나는 부분입니다.
+
+- **substrate 계열 세 503의 공통점은 "필수 substrate 상태를 추측하거나 날조하지 않는다"** 입니다
+  (`grounding_unavailable`은 네 번째 503이지만 성격이 다릅니다 — substrate가 아니라 **grounding 실행**이
+  판단에 도달하지 못한 것이고, `cap_reached`처럼 **우리 예산**인 경우도 포함합니다. 그래서 OpenAPI의 503
+  문구도 "우리 dependency 잘못"이 아니라 *"grounding execution or a required dependency did not complete"*
+  입니다). 세 substrate 503의 적용 범위는 서로 다릅니다:
   - `UpstreamUnavailableError` — **가장 넓음**. knowledge substrate 장애, 미배선 의존성 등 hard-required
     provider가 답을 못 줄 때 전반. real edge와 무관하게 원래 있던 것.
   - `EdgeProjectionError` / `UnresolvedOwnerIdentityError` — **real edge 전용**으로 새로 들어왔고, 여기서만
@@ -294,12 +342,20 @@ agent 공간**의 edge — edge만 감싸면 그 사이 정보가 사라집니�
 
 | | 뜻 |
 |---|---|
-| `0` | 결론이 선 진단 결과 — 추천·**빈 결과**·명시 silence·`GroundingFailedError`. 빈 결과도 발견이다 |
-| `1` | **실행이 실패함** — provider I/O·상류 계약 위반·생성기 degrade·**cleanup 실패**·**도구 내부 예상 밖 예외** |
+| `0` | 결론이 선 진단 결과 — 추천·**빈 결과**·명시 silence·**판단에 도달한** grounding 실패(`GroundingFailedError`/`GroundingAmbiguousError`). 빈 결과도 발견이다 |
+| `1` | **실행이 실패함** — provider I/O·상류 계약 위반·**`GroundingUnavailableError`**(판단 없이 종료)·생성기 degrade·**cleanup 실패**·**도구 내부 예상 밖 예외** |
 | `2` | **운영자가 입력을 고쳐 다시 돌리면 되는 것** — CLI 사용법·범위 밖 `--limit`·공백 인자·**stance 캡 초과 proposition**(직접 입력 또는 replay fixture)·**topic-only 시나리오에 준 `--proposition`**·`STAGE=prod`·fixture 부재/해시 불일치·대화형 proposition 선택 오답 |
 
 반대편을 "상류"로 부르지 않는 이유: **exit 1이 전부 상류 탓은 아닙니다.** cleanup 실패와 도구 내부의
 예상 밖 예외도 여기 들어가고, 그건 어떤 upstream도 고칠 수 없습니다.
+
+**grounding 실패는 이 선을 걸치고, 어느 쪽인지는 타입이 정합니다**(C4-7 — 메시지가 아닙니다. 위 규율과 같음).
+abstain·gate 거부는 이 코퍼스가 실제로 낸 결과라 exit 0이고, **판단에 도달하지 못한 run은 실행 실패라
+exit 1**입니다. ⚠️ 서브클래스로 만든 대가가 정확히 여기서 나왔습니다 — `except GroundingFailedError`가 그대로
+셋 다 잡아서, 고치지 않으면 proxy 장애·cap 소진이 "결론이 선 진단 결과"로 exit 0이 됩니다. 어느 쪽이든
+**리포트는 cause·trace까지 온전히 남습니다**: exit code는 "그 발견을 믿을지"를 말하고 "볼 게 있는지"를 말하지
+않습니다. 그래서 `except`를 쪼개지 않고 **한 블록에서 타입으로 exit code를 정합니다** — 블록을 복제하면 요구
+사항의 핵심인 그 리포트 보존이 한쪽에서만 갱신되고, 썩는 쪽은 아무도 안 보는 구조화 블록입니다.
 
 **exit 2를 "아직 아무것도 안 썼다"로 읽으면 안 됩니다.** `run` 경로에서는 마침 그렇습니다 — preflight
 phase A는 **sync 함수**이고 provider를 하나도 안 받는데, provider 호출은 전부 coroutine이므로 phase A가
@@ -355,9 +411,10 @@ shape(턴 수·교대·blank)뿐이라, 조항을 무시한 대화도 그대로 
 실패한 gate conjunct·`field:error_type` 라벨·죽는 순간 호출 중이던 tool·본 context 양. 옆에 있는
 `failure` 문자열은 어느 예외가 run을 끝냈는지만 말할 수 있고, **모델이 withhold한 것인지 gate가 거절한
 것인지 proxy가 죽은 것인지는 말할 수 없습니다** — judge 품질 문제를 쫓는 운영자가 실제로는 outage를
-보고 있는 것이 이 블록이 막는 실패 모드입니다. §5는 그래서 예외 문자열을 **반복하지 않습니다**(그 문구가
-"abstained"인데 블록이 `adoption_gate_rejected`라고 말하면 리포트가 자기모순이 되므로 — 실제로 그랬고,
-자체 리뷰에서 잡아 테스트로 고정했습니다). 예외 문자열 자체는 마지막 섹션에 verbatim으로 남습니다(grep 가능).
+보고 있는 것이 이 블록이 막는 실패 모드입니다. §5는 그래서 예외 문자열을 **반복하지 않습니다**. 처음 이유는 자기모순이었습니다 — 문구가 "abstained"인데
+블록이 `adoption_gate_rejected`라고 말하면 리포트가 스스로를 부정합니다(실제로 그랬고 자체 리뷰에서 잡았습니다).
+**C4-7이 그 문구를 진실하게 만든 뒤에도 동작은 그대로인데, 근거가 바뀝니다**: 마지막 섹션이 이미 verbatim으로
+싣고 있으므로(grep 가능) §5가 또 쓰면 두 곳이 어긋날 여지만 생깁니다. §5의 일은 구조화 블록입니다.
 
 **이 도구가 관측 못 하는 것을 리포트가 스스로 밝힙니다** — 탈락 후보의 원 verdict(drop이
 `{agent_id, anchor_id, reason}`만 남김: `wrong_stance`는 verdict가 있었다가 이 이음매에서 사라진 것,

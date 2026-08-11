@@ -172,7 +172,7 @@ Guard는 특정 파이프라인 동작을 고정하는 적대적(adversarial) �
 | Guard | Assertion |
 |-------|-----------|
 | `retrieval-expansion` | cold anchor ⇒ sparse가 one-hop expand 트리거 (이웃 QID가 떠오름); dense ⇒ expand 없음 |
-| `ambiguous-topic` | confidence/margin이 게이트 아래 ⇒ `grounding_failed` raise |
+| `ambiguous-topic` | confidence/margin이 게이트 아래 ⇒ `grounding_failed` raise. ⚠️ code 주의: 이 stratum의 두 sense는 **둘 다 non-exact**라 `n_exact == 0`, 즉 recall miss이고 `grounding_ambiguous`가 말하는 **증명된** 모호성이 아니다(C4-7). 코퍼스가 말하는 "ambiguous"와 wire code는 다른 것 |
 | `same-axis-disagreement` | `for`는 같은 방향 유지 / `against`는 반대 유지; 틀린 편은 need-filter가 drop |
 | `weak-evidence-low-maturity` | 낮은 **maturity** 에이전트가 maturity floor에서 drop (evidence는 ordering 키이지 gate가 아님) |
 | `experience-vs-depth` | `experience`에서, 직접경험(더 낮은 maturity)이 추상적 high-maturity 위에 랭크 |

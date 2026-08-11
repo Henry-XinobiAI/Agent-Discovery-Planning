@@ -63,8 +63,9 @@ completed만 join. stamped인데 record 없으면 **loud KeyError** (계약 위�
 | `grounding_top3` | higher | expected qid ∈ considered[:3] / completed |
 | `ambiguous_fallback_rate` | lower | fallback_used / completed ambiguous |
 
-- `ambiguous_fallback_rate`: decision B — `fallback_used`만 (grounding_failed 에러는 errored-count
-  hard fail로 이미 잡히니 double-book 안 함). eval은 reranker를 주입하지 않아(offline default
+- `ambiguous_fallback_rate`: decision B — `fallback_used`만 (grounding **실패 에러**는 errored-count
+  hard fail로 이미 잡히니 double-book 안 함. 하니스는 raise를 **전부** `errored`로 세고 code를 읽지 않으므로
+  C4-7의 3 code 분화는 이 지표에 영향이 없다 — 재측정에서 baseline 전 지표 불변으로 확인). eval은 reranker를 주입하지 않아(offline default
   `reranker=None`) rerank fallback이 eval에선 안 떠 `fallback_used`가 항상 False → **0.0**. fallback
   자체는 serving에서 live (Phase 8A); rerank·substitution report-only strata가 가짜 rung을 주입해 eval에서도 fallback 경로를 밟지만 committed baseline은 불변(가짜는 그 strata에만 주입·committed gate는 `reranker=None`/`substituter=None` → baseline byte-identical); real-anchor 코퍼스로 eval을 reranker와 함께 돌릴 때 regression signal(변별력)이 생긴다.
 
