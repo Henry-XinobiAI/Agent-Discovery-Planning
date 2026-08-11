@@ -188,6 +188,12 @@ disambiguation** (a parenthetical like `Python (programming language)`, which re
 Spike 1) or **future context-passing**, NOT a rerank redesign. For Alpha the dominant-sense default
 is acceptable, but the team must not rely on the gate to prevent confident sense-mismatches.
 
+> **Code note (2026-08-11, C4-7).** The failures recorded below and above as `grounding_failed` were
+> that code *at the time*. The margin/tie cases among them — Mercury's 0.10 margin, a reranker that
+> returned `None` on a proven tie, the spread-score regression fixture — now raise
+> `grounding_ambiguous` (still 422). The measurements and the reasoning are unchanged; only the wire
+> code split. Contract = [07](07-composition-api-cli.md) "grounding 실패의 wire 계약".
+
 ### Infra note (separate from grounding quality)
 Both port-forwarded endpoints showed transient `RemoteProtocolError: Server disconnected` /
 `All connection attempts failed` (Turkey's rerank degraded to `None`). In production a proxy failure

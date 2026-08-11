@@ -184,7 +184,8 @@ symbolic ① → rerank ② → expansion ③ → substitution ④ → 침묵
 if n_exact == 1:
     if _margin(scored) >= LINKER_MARGIN_MIN:
         return _adopt(scored, method="symbolic", fallback_used=False)
-    raise _grounding_failed(...)          # 유일 exact + margin 실패 = 종료 (사다리 안 탐)
+    raise _grounding_failed(..., error=GroundingAmbiguousError)  # 유일 exact + margin 실패 = 종료
+                                          # (사다리 안 탐) · runner-up이 근접 = 증명된 모호성(C4-7)
 if n_exact >= 2:
     return await self._rerank(...)        # 동음이의 → rung ②
 return await self._expand(...)            # recall miss (n_exact == 0) → rung ③
@@ -361,10 +362,18 @@ dormant-ships(`GroundingAgentSettings.GROUNDING_AGENT_ENABLED` 기본 OFF) — c
   `(cause is MALFORMED_FINAL) == bool(invalid_fields)`을 강제한다. 두 방향 다 조용히 실패하기 때문이다 —
   다른 cause에 라벨이 붙으면 *일어나지 않은 validation*으로 렌더되고, 라벨 없는 malformed final은 *아무것도
   말해주지 않는 cause*로 렌더된다.
-- **외부 계약 불변**: `/recommend`의 422 `grounding_failed`는 code·message 그대로다(byte-identical). 바뀐 건
-  `Grounder`→`Linker` **내부** 계약과 관측뿐. ⚠️ 단 그 메시지는 **부정확하다** — gate 거부·proxy 오류·cap
-  도달에도 "abstained"라고 나간다. 구조화 outcome이 실제로 뭐였는지 말해주므로 이제 그 부정확성이 *보인다*.
-  **moderator/agent 연동 전에 고칠 별도 후속**(코드repo `tasks/todo.md`).
+- **외부 계약은 C4-3 시점에 불변이었다** — `/recommend`의 422 `grounding_failed`는 code·message 그대로였고
+  (byte-identical) 바뀐 건 `Grounder`→`Linker` **내부** 계약과 관측뿐이었다. 그 메시지가 **부정확했고**(gate
+  거부·proxy 오류·cap 도달에도 "abstained") 구조화 outcome이 그 부정확성을 *보이게* 만들었다.
+  ⇒ **C4-7에서 닫혔다**(2026-08-11 · 코드 PR #45): 3 code로 갈라지고 메시지는 3수준이 됐다. 계약 전문은
+  [07](07-composition-api-cli.md) "grounding 실패의 wire 계약". 이 문서 관점에서 핵심 두 가지:
+  - **503 선이 이 문서의 타입 경계에 그대로 떨어진다** — `GrounderFailure`(cause 7종 전부)만
+    `grounding_unavailable`(503)이고, `ExplicitAbstain`·`AdoptionGateRejected`는 **판단**이므로 422에 남는다.
+    기준은 "판단에 도달했는가"이지 "결정적인가"가 아니다(LLM은 결정적이지 않다). 그리고 abstain·gate 거부를
+    통과할 때까지 재시도하는 것은 **안전 게이트의 확률적 우회**다.
+  - **cause 7종은 wire에 안 나간다** — code로든 cause별 메시지로든. 여기 있는 어휘는 운영자용이고, 내보내면
+    한 번 개명한 적 있는 taxonomy가 호출자 계약으로 굳는다(이 어휘를 `structs/`가 아니라 `linker.py`에 둔
+    근거와 같다).
 
 ### online rollout 게이트
 context grounding의 relatedness는 model/human-judged라 **8-4 B2/human judge**([11](11-forward-roadmap.md))가
