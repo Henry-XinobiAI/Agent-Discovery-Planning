@@ -219,13 +219,26 @@ finally:
 ```python
 class RecommendRouter:
     def __init__(self, prefix=""):
-        self.router = APIRouter(prefix=prefix, dependencies=[Depends(verify_token)])  # bearer, 라우터 전체
+        self.router = APIRouter(prefix=prefix)   # 무인증 — 아래 정정(2026-08-11) 참조
         self.router.add_api_route("/recommend", self.recommend, methods=["POST"])
 
     async def recommend(self, request: RecommendRequest, pipeline=Depends(get_pipeline)):
         return await pipeline.recommend(request)   # 로직은 전부 discovery/에
 ```
-- bearer auth를 라우터 전체에 (HTTPBearer/verify_token, 누락/오류 → 401). `/health`는 열려 있음.
+- **정정(2026-08-11) — 이 라우터는 호출자를 인증하지 않는다.** 이전 서술 *"bearer auth를 라우터 전체에
+  (HTTPBearer/verify_token, 누락/오류 → 401)"* 는 폐기됐다(코드 `a693af3`). 오너 결정: in-cluster 서비스는
+  bearer를 강제하지 않으며, 형제 서비스(bourbon-memory-api·e3llm-api)도 같은 `verify_token`을 미부착 상태로
+  둔다. **`401`은 이 라우트의 wire 계약에서 빠졌다** — OpenAPI에서도 제거했다(발행된 계약에 보내지 않는
+  status를 남기면 호출자가 "인증 재시도" 분기를 만든다). 남은 status는 422·503 두 종뿐이다.
+  - **코드는 지우지 않았다**: `api/depends/validates.py`·`AuthorizationError`·`_HTTP_ERROR_CODES`의 401/403
+    행은 **함께 재활성화되는 한 세트**로 남아 있고 전용 단위 테스트(`tests/test_validates.py`)도 유지된다.
+    죽은 코드를 남기면서 테스트를 지우면 재부착이 곧 미검증 코드 부착이 된다.
+  - **무인증을 기록으로 만드는 것은 두 테스트다**: 헤더 없는 `/recommend`가 200을 받는다(`tests/routers/
+    recommend/test_router.py`) + 어떤 매니페스트도 mesh 밖 경로를 만들지 않는다(`tests/test_k8s_manifests.py`).
+    **후자가 전자를 안전하게 만든다.** 공개 노출이 승인되면 인증은 그 변경의 일부이지 후속 과제가 아니다.
+  - 신뢰 모델에 대한 영향은 [`2026-08-05-requester-self-exclusion-design.md`](../docs/superpowers/specs/2026-08-05-requester-self-exclusion-design.md) §3의
+    같은 날짜 정정에 있다 — self-exclusion은 무영향이지만 **"잃는 것이 없다"는 서술은 과장**이다.
+- `/health`는 계속 열려 있다. `/dev/verify`는 **제거됐다** — 자기가 보고하던 인증과 함께 나갔다.
 - 이 라우터는 도메인 예외를 **잡지도 매핑하지도 않음**.
 
 ### 에러 매핑 (`api/errors.py`)
@@ -286,7 +299,8 @@ making a decision"* / `CAP_REACHED`는 *"Ours. The budget, not a verdict"* 라�
 `None` 과부하를 쪼개 proxy 절반만 503으로 승격하는 것은 **별건**(코드repo `tasks/todo.md`).
 
 **OpenAPI가 인계 지점입니다.** 라우터가 에러 응답을 **하나도** 문서화하지 않고 있었습니다(200만). 이제
-401/422/503을 호출자 행동 기준으로 묶어 싣고 봉투 스키마는 `ErrorEnvelope`입니다. 그리고 `_STATUS_BY_CODE`를
+422/503을 호출자 행동 기준으로 묶어 싣고 봉투 스키마는 `ErrorEnvelope`입니다(**정정(2026-08-11)**: 이전에는
+401도 실었습니다 — bearer 미부착과 함께 제거했고, 그 제거 자체를 고정하는 테스트가 있습니다). 그리고 `_STATUS_BY_CODE`를
 순회해 **모든 code가 매핑된 status의 description에 등장**하는지 검사하는 테스트가 있습니다 — 문서 없는 도메인
 에러가 배포될 수 없습니다(`validation_error` 누락을 일회성으로 고치는 대신 재발을 막습니다). 가드는 전체
 response 객체가 아니라 **description**을 봅니다: 산문이 사람이 쓰는 부분이고 따라서 어긋나는 부분입니다.
