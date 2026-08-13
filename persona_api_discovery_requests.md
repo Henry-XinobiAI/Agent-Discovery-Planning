@@ -1,6 +1,6 @@
-# Persona 팀 데이터·API 요청서 (Discovery/agent-recommendation-api) — rev 9 (draft)
+# Persona 팀 데이터·API 요청서 (Discovery/agent-recommendation-api) — rev 10 (draft)
 
-작성: 2026-08-13 · 상태: **내부 리뷰용 초안** (발신 전 리뷰 필요) · rev 3–8 = 외부 리뷰 1–6차 + vector-free 전제 반영 · rev 9 = **다국어 search alias 생성(enrichment)** 요청 신설 — cross-lingual recall의 1차 메커니즘을 query-side 번역에서 storage-side alias로 이동
+작성: 2026-08-13 · 상태: **내부 리뷰용 초안** (발신 전 리뷰 필요) · rev 3–8 = 외부 리뷰 1–6차 + vector-free 전제 반영 · rev 9 = 다국어 search alias 생성 요청 신설 · rev 10 = topic 검색 **원시 필드 필터**(P1 계약 ⑦) 신설
 
 > **검색 전제 (rev 7에서 확정):** topic 탐색은 **vector-free agentic search**다 — LLM이 query를 생성·확장·보정하며 persona의 **텍스트 검색**을 반복 호출하고, LLM이 후보를 판정한다. persona 쪽에 embedding/vector 인프라를 전제하는 요청은 이 문서에서 전부 "persona가 독립적으로 표현 공간을 갖게 될 경우의 선택적 최적화"로 강등했다. vector-free에서 recall을 지키는 책임 분담: persona = **검색 대상 텍스트 재료를 충실히**(name·aliases·search_aliases·description·keywords 전체가 검색 대상) + **다국어 search alias 생성**(P1 계약 ⑤ — "커피" 질의가 "coffee" topic을 찾는 1차 메커니즘), Discovery = **query expansion**(paraphrase·표현 변형; 번역은 보완), 검증 = P11 golden set(정답 label을 미리 확정해 둔 평가 기준 데이터).
 
@@ -90,7 +90,11 @@ POST /{tenant}/persona/topics/search
   "queries": ["기계학습", "머신러닝 모델 튜닝", ...],   # expansion 결과 복수 query, ANY-match
   "limit": 100,
   "per_owner_limit": 3,                                # 한 유저가 결과를 도배하지 않도록
-  "owner_ids": null                                    # null=전체(cross-user), 지정 시 그 유저들로 한정
+  "owner_ids": null,                                   # null=전체(cross-user), 지정 시 그 유저들로 한정
+  "filters": {                                         # 선택 — 계약 ⑦
+    "min_evidence_count": 3, "min_depth": 0.5, "min_consistency": 0.5,
+    "experience": "firsthand", "evidence_last_seen_after": "2026-02-01T00:00:00Z"
+  }
 }
 → { items: [TopicCandidate], next_cursor, truncated, snapshot_id }
 ```
@@ -125,6 +129,7 @@ POST /{tenant}/persona/topics/search
    - (d) recall을 검증할 cross-lingual golden case(P11) — "커피"→"coffee"류가 대표 케이스다.
    - 우리 query expansion의 번역은 **보완**으로 남는다(생성이 커버 못 하는 언어·신조어). semantic 검색이 로드맵에 오르면 그때 cross-lingual 매칭 동작을 계약에 추가한다.
 6. **검색 대상 필드의 계약**: 검색은 **`name` + `aliases`(관측) + `search_aliases`(생성, 계약 ⑤) + `description`(+ 추출 keywords가 있다면 그것까지) 전체**를 대상으로 해야 한다. vector-free에서는 이 폭이 recall의 상한이다 — name만 검색되면 expansion을 아무리 잘해도 설명문에만 있는 표현의 topic은 영원히 안 잡힌다.
+7. **원시 필드 필터**: `TopicCandidate`의 신호 필드에 대한 요청 파라미터 필터 — `min_evidence_count` / `min_depth` / `min_consistency` / `experience`(해당 provenance bucket 존재) / `evidence_last_seen_after` 류. 이유: need별 최소 요건이 다른데(experience need = 직접 경험 있는 유저만), 필터 없이 top-N을 받으면 게이트 탈락분만큼 실사용 후보가 줄고 **N등 밖의 요건 충족 후보는 회수 불가**다 — 대안이 overfetch뿐이라 비용 문제이기도 하다. 경계: **문턱값·조합 판정은 우리가 요청마다 보낸다** — persona에 maturity 같은 파생 판정을 요구하는 것이 아니라 원시 필드 비교만 요청한다(정책 소유권은 우리 쪽 유지). 필터는 pagination 안정성 계약(P10-①)과 함께 동작해야 한다.
 
 ### P2 🔴 Topic 카드 — 단건 조회 + union hydration batch
 
@@ -528,7 +533,7 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
 | # | 요청 | 우선순위 | 없으면 |
 |---|---|---|---|
 | P0 | (내부) context-only 요청 계약 변경 | 🔴 | 제품 시나리오와 우리 API가 어긋남 |
-| P1 | cross-user topic 검색 (text 검색·대상 필드 계약·**다국어 search alias 생성**) — `TopicCandidate` projection | 🔴 | 추천 pool 구성 불가 / N+1 / 언어가 다르면 못 찾음 |
+| P1 | cross-user topic 검색 (text 검색·대상 필드 계약·**다국어 search alias 생성**·원시 필드 필터) — `TopicCandidate` projection | 🔴 | 추천 pool 구성 불가 / N+1 / 언어가 다르면 못 찾음 / 요건 미달 후보가 top-N을 잠식 |
 | P2 | topic 카드 + **union hydration batch** (불변 id·aliases·description·keywords) | 🔴 | rerank·reason 품질 붕괴 / evidence 채널 후보가 랭킹 불가 |
 | P3 | depth·consistency(+**필수 uncertainty**)·evidence_count·**evidence_last_seen**(active 집합 파생값) + vintage 값 + 확장 축 🟡 | 🔴 | gate·정렬 입력 없음 = 추천 없음 |
 | P4 | experience **provenance별 집계** (firsthand/secondhand bucket — 단일 enum 철회) | 🟡 | experience need가 depth 변형으로 퇴화 / 병행 경험 유저의 근거 소실 |
@@ -560,3 +565,4 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
 - **rev 7**: 외부 리뷰 4차 + **vector-free 검색 전제 확정** 반영 — ① 문서 머리에 검색 전제 신설(vector-free agentic; recall 책임 분담 = persona 텍스트 재료 / 우리 query expansion / P11 검증), ② union 후보 hydration 확정: P2 batch가 multi-channel hot path의 공식 hydration 단계로 승격(모든 채널 후보가 같은 `TopicCandidate` projection으로 합류), "hot path 1왕복"을 "채널 내 per-hit N+1 없음"으로 정정, ③ union provenance 규칙(`retrieval_reasons` — 채널별 유입 근거 보존, P7 related에 `source_topic`) 내부 계약 신설, ④ P10-⑦ cross-endpoint **snapshot pinning**(선택적 snapshot_id 입력·만료 시 명시적 오류·차선은 불일치 탐지 재시도), ⑤ score를 "비계약 보조 신호"에서 **version-scoped optional signal**로 정정(shape·의미·version=계약 / cross-version 비교=비보장 / 사용=우리 선택 + 해당 version calibration 통과 후) — P6·§3의 stale 문구 동기화, ⑥ **batch similarity 🔴→🟡 조건부 강등**: 근거("persona는 표현 공간을 어차피 갖는다")가 vector-free 전제에서 오류로 판명 — 다양성 판정 기본 계획은 후보 20–50개 LLM batch 1회, capability-형태 질문으로 전환(제공 시 의미 계약 목록은 유지), P6 `/topics/similar`도 조건부 최적화로 강등, P1 `mode` 필드 제거 + **검색 대상 필드 계약**(name+aliases+description+keywords) 신설, cross-lingual recall 책임을 query expansion으로 이동, ⑦ P3-⑤ uncertainty **필수화**(calibrated confidence / evidence coverage / 상태 enum 중 택일) + 확장 축 의미 질문 Q10, ⑧ P11 평가 소유권 3분할(persona=추출 precision·calibration·정제 보존 / 우리=relevance label·need별 recall·ranking 품질 / 공동=frozen corpus·cross-lingual·fragmentation·overlap snapshot), ⑨ Q8을 "낮은 privacy 등급"에서 "같은 publishability·동의 경계 안의 더 작은 projection"으로 정정, 개정 이력 시간순 재정렬.
 - **rev 8**: 외부 리뷰 5차 반영 — ① **발견층↔본문층 연결**: 발견층 hit에 opaque `statement_id`(+`epistemic`·`matched_query_indices`·`snapshot_id`) 포함, `POST /statements/batch`(ID 정확 fetch) 신설 — 재검색만으로는 발견한 evidence가 judge 입력으로 돌아온다는 보장이 없고 decision log 연결도 불가했다, ② **content snapshot과 privacy 상태 분리**(P10-⑦): 내용·신호는 pinned, publishability·동의·차단은 read-time 최신 — 철회 항목은 과거 snapshot에서도 비반환, 사라진 key는 `not_publishable` 명시 상태로 + snapshot 원자성 질문(Q11: 독립 파이프라인이면 release_id/version vector), ③ **experience 단일 enum 철회** → provenance별 집계(firsthand/secondhand bucket, 각자 count·specificity·confidence·last_seen) — 병행 경험 유저에서 한 provenance가 다른 쪽 근거를 지우는 legacy 제약 제거, null↔specificity 불변식은 bucket 단위 규약으로 대체, ④ **P11 등급 분리**: 출시 게이트 🔴(frozen corpus·fixture·need별 recall label·정제 stance 보존·calibration — vector-free에서 평가는 기능의 일부) / 운영 개선 🟡(shadow·fragmentation 추세·deprecation), ⑤ P2 batch **부분 실패 계약**(item별 outcome: ready/not_publishable/not_found/not_extracted·순서·중복 규약), ⑥ P1 merge 정책 재작업: "query별 균등 quota"도 요구하지 않음(나쁜 확장에 동일 quota면 precision 붕괴) → query별 cap/독립 검색 capability + 서버 merge 시 정책·기여량 공개, ⑦ InteractionStyle 맥락 의존성 — 단일 scalar로 잠그지 않고 표현 shape를 Q9로 확장. **정합 수정(6차 리뷰)**: 반환형 계약 명문화(P1 hit=완성형 TopicCandidate·P2 batch=TopicCandidate·단건 GET만 TopicCard), run 최초 snapshot 획득 절차(P8 status 1회 → 전 fan-out 전달), statements/batch에 item별 outcome + "pinned 발견 ID의 not_found = 무결성 위반" 규칙, P1 표의 experience를 bucket projection으로 동기화, batch 상태별 소비자 행동 명시(not_extracted 포함), ranked 검색 근거에서 ANN 문구 제거(vector-free 정합), 접근 경계 참조 ⑦→⑧ 정정.
 - **rev 9**: **다국어 search alias 생성(enrichment) 요청 신설** — 관측 alias 인덱싱만으로는 "유저가 영어로만 말해 'coffee'로 저장된 topic을 '커피'로 찾는" 시나리오가 안 풀린다(그 언어의 관측 alias가 존재하지 않음). cross-lingual recall의 1차 메커니즘을 query-side 번역(우리 expansion, 요청마다 추측)에서 **storage-side 생성 alias**(topic당 1회, 결정적)로 이동: P1 계약 ⑤ 재작성("커피"→"coffee" 예시·관측/생성 구분·지원 언어 셋은 Q12), P2에 `search_aliases` 필드 신설(관측 `aliases`와 분리 — 정제 부담이 다름), 계약 ⑥ 검색 대상에 포함, 문서 머리 책임 분담 갱신(expansion의 번역은 보완으로), Q12 신설.
+- **rev 10**: P1 계약 ⑦ **원시 필드 필터** 신설 — need별 최소 요건(`min_evidence_count`·`min_depth`·`min_consistency`·`experience` bucket 존재·`evidence_last_seen_after`)을 요청 파라미터로 걸러 받는다. 필터 없이는 게이트 탈락분만큼 top-N의 실사용 후보가 줄고 N등 밖의 요건 충족 후보는 회수 불가(대안이 overfetch뿐). 경계 유지: 문턱값·조합 판정(maturity류)은 우리 소유 — persona에는 원시 필드 비교만 요청.
