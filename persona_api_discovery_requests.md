@@ -2,7 +2,7 @@
 
 작성: 2026-08-13 · 상태: **내부 리뷰용 초안** (발신 전 리뷰 필요) · rev 3–8 = 외부 리뷰 1–6차 + vector-free 전제 반영 · rev 9 = **다국어 search alias 생성(enrichment)** 요청 신설 — cross-lingual recall의 1차 메커니즘을 query-side 번역에서 storage-side alias로 이동
 
-> **검색 전제 (rev 7에서 확정):** topic 탐색은 **vector-free agentic search**다 — LLM이 query를 생성·확장·보정하며 persona의 **텍스트 검색**을 반복 호출하고, LLM이 후보를 판정한다. persona 쪽에 embedding/vector 인프라를 전제하는 요청은 이 문서에서 전부 "persona가 독립적으로 표현 공간을 갖게 될 경우의 선택적 최적화"로 강등했다. vector-free에서 recall을 지키는 책임 분담: persona = **검색 대상 텍스트 재료를 충실히**(name·aliases·search_aliases·description·keywords 전체가 검색 대상) + **다국어 search alias 생성**(P1 계약 ⑤ — "커피" 질의가 "coffee" topic을 찾는 1차 메커니즘), Discovery = **query expansion**(paraphrase·표현 변형; 번역은 보완), 검증 = P11 golden set.
+> **검색 전제 (rev 7에서 확정):** topic 탐색은 **vector-free agentic search**다 — LLM이 query를 생성·확장·보정하며 persona의 **텍스트 검색**을 반복 호출하고, LLM이 후보를 판정한다. persona 쪽에 embedding/vector 인프라를 전제하는 요청은 이 문서에서 전부 "persona가 독립적으로 표현 공간을 갖게 될 경우의 선택적 최적화"로 강등했다. vector-free에서 recall을 지키는 책임 분담: persona = **검색 대상 텍스트 재료를 충실히**(name·aliases·search_aliases·description·keywords 전체가 검색 대상) + **다국어 search alias 생성**(P1 계약 ⑤ — "커피" 질의가 "coffee" topic을 찾는 1차 메커니즘), Discovery = **query expansion**(paraphrase·표현 변형; 번역은 보완), 검증 = P11 golden set(정답 label을 미리 확정해 둔 평가 기준 데이터).
 
 > **선제 대응 문서.** 이 전환은 확정이 아니다. memory-api v2 이행 트랙(분석 문서·V2-1 요청서)은 **현 상태 그대로 유지**하고, 이 문서는 전환이 확정될 경우를 위한 사전 요청 목록이다.
 
@@ -12,16 +12,16 @@
 
 - memory-api에는 **conversation만** 남는다. knowledge(공용 KG)·personal entity는 memory-api에서 빠진다.
 - **persona 팀**이 memory-api(대화)를 source로 우리에게 필요한 데이터와 유저별 persona를 제공한다.
-- 기존 knowledge(Wikidata anchor)는 사라지고 유저별 **topic**이 생긴다. topic = 유저가 관심 갖고 자기 agent와의 대화에서 쌓은 지식·의견의 카테고리. **anchor 없음, 유저마다 generalized한 이름이 독립적으로 결정 → 파편화 가능.**
+- 기존 knowledge(Wikidata anchor — 모든 유저가 공유하던, topic을 고정하는 공용 기준점)는 사라지고 유저별 **topic**이 생긴다. topic = 유저가 관심 갖고 자기 agent와의 대화에서 쌓은 지식·의견의 카테고리. **anchor 없음, 유저마다 generalized한 이름이 독립적으로 결정 → 파편화 가능.**
 - 우리는 topic 탐색에 **agentic search**를 쓴다: client가 topic 지정 및/또는 대화 컨텍스트 제공 → query expansion → 복수 query로 topic 탐색 → 기존 recommend처럼 해당 주제로 대화할 agent, for/against/orthogonal 의견 agent 추천.
 - persona는 유저별 성격/특성을 **HEXACO**로 추출; 추후 "주제 없이 성격이 맞는 유저 추천"에 필요.
 - 지금은 **모든 것을 우선 요청해 둘 수 있는 단계** — 논의로 빠질 수 있음을 전제.
 
 기본 제약: **모든 값은 대화에서 추출 가능한 것이어야 한다.** 이 문서의 모든 요청은 이 제약 안에 있다 (Wikipedia 카테고리 같은 외부-KG 유래 값은 요청하지 않는다).
 
-**요청의 잠금 수준 — 이 문서를 읽는 법.** 우리는 기존 구현을 참고하되 **처음부터 새로 구현하는 것에 열려 있다.** 따라서 이 문서가 계약으로 잠그는 것은 목적 수준의 두 가지뿐이다: **(a) 신호의 축** — 깊이·일관성·근거량·최근성·경험·관계 같은 *어떤 종류의 값이 존재해야 하는가* — 와 **(b) 값의 의미 요건** — consistency의 정의, evidence unit의 중복 제거, `evidence_last_seen`의 파생 규칙처럼 *어떤 구현에서도 지켜져야 값이 안전한 성질*. 반면 **우리의 현행 공식과 파이프라인 구조**(maturity 가중, n/(n+4), 90일 반감기, facet round-robin 등)는 우리가 재설계할 수 있는 부분이며 persona 쪽 제약이 아니다 — 본문에서 현행 소비처를 인용하는 것은 "이 축이 실제로 소비된다"는 증거이지, 그 공식대로 맞춰달라는 요구가 아니다. persona 팀이 같은 축을 더 잘 담는 다른 신호를 제안하면 환영한다.
+**요청의 잠금 수준 — 이 문서를 읽는 법.** 우리는 기존 구현을 참고하되 **처음부터 새로 구현하는 것에 열려 있다.** 따라서 이 문서가 계약으로 잠그는 것은 목적 수준의 두 가지뿐이다: **(a) 신호의 축** — 깊이·일관성·근거량·최근성·경험·관계 같은 *어떤 종류의 값이 존재해야 하는가* — 와 **(b) 값의 의미 요건** — consistency의 정의, evidence unit의 중복 제거, `evidence_last_seen`의 파생 규칙처럼 *어떤 구현에서도 지켜져야 값이 안전한 성질*. 반면 **우리의 현행 공식과 파이프라인 구조**(maturity 가중, n/(n+4), 90일 반감기, facet round-robin — facet은 한 주제 안의 하위 갈래, round-robin은 갈래를 돌아가며 하나씩 뽑는 방식 — 등)는 우리가 재설계할 수 있는 부분이며 persona 쪽 제약이 아니다 — 본문에서 현행 소비처를 인용하는 것은 "이 축이 실제로 소비된다"는 증거이지, 그 공식대로 맞춰달라는 요구가 아니다. persona 팀이 같은 축을 더 잘 담는 다른 신호를 제안하면 환영한다.
 
-용어 주의: **coverage와 orthogonal은 다른 것이고, orthogonal 안에서도 두 개념이 갈린다.** coverage는 현행 NeedType(depth/experience/for/against/coverage)에 있는 기존 기능 — "한 주제의 여러 갈래를 고루 아는 pool" — 이고 그 대체 계약이 P7이다. orthogonal("다른 관점의 의견")은 현행 코드에 없는 **Open Beta 신규 need**로 판정 설계는 추후다. 단 개념을 구분해야 한다: *contrasting topic*("원격근무"↔"사무실 근무" — topic 관계, P7 어휘 ⚪)과 *orthogonal viewpoint*(같은 명제를 생산성이 아니라 조직문화·보안 관점에서 말함 — evidence의 논점 차이)는 다르며, 후자를 가능하게 하는 **evidence primitive는 P5가 지금 확보한다** — 저장된 orthogonal 라벨이 아니라 검색·분류 재료를 요청하는 것이므로 신규 need를 선점 설계하는 것이 아니다.
+용어 주의: **coverage와 orthogonal은 다른 것이고, orthogonal 안에서도 두 개념이 갈린다.** coverage는 현행 NeedType(depth/experience/for/against/coverage)에 있는 기존 기능 — "한 주제의 여러 갈래를 고루 아는 pool" — 이고 그 대체 계약이 P7이다. orthogonal("다른 관점의 의견")은 현행 코드에 없는 **Open Beta 신규 need**로 판정 설계는 추후다. 단 개념을 구분해야 한다: *contrasting topic*("원격근무"↔"사무실 근무" — topic 관계, P7 어휘 ⚪)과 *orthogonal viewpoint*(같은 명제를 생산성이 아니라 조직문화·보안 관점에서 말함 — evidence의 논점 차이)는 다르며, 후자를 가능하게 하는 **evidence primitive(우리가 조합해 쓰는, 상류가 제공하는 기본 연산)는 P5가 지금 확보한다** — 저장된 orthogonal 라벨이 아니라 검색·분류 재료를 요청하는 것이므로 신규 need를 선점 설계하는 것이 아니다.
 
 ### 0.0 확정된 전제 (2026-08-13 확인)
 
@@ -36,7 +36,7 @@
 
 ### 0.2 우리가 소비하는 신호의 대응표
 
-우리 랭킹은 scalar score가 없는 ordering contract다: **gate → filter → lexicographic → tiebreak**. 아래가 그 입력 전부이고, 각각의 persona-시대 대응이 이 문서의 요청 번호다. (위 잠금 수준 원칙대로, 이 표의 "현재 신호" 열은 소비의 증거이지 보존 요구가 아니다 — 잠기는 것은 오른쪽의 축과 각 요청의 의미 요건이다.)
+우리 랭킹은 scalar score가 없는 **순서 계약(ordering contract)**이다 — 점수를 합산하는 대신 단계별 규칙으로 순서를 정한다: **gate(문턱 — 통과 못 하면 후보 자체가 탈락) → filter → lexicographic(사전식 — 앞 기준이 같을 때만 다음 기준을 봄) → tiebreak(동률일 때만 가르는 마지막 기준)**. 아래가 그 입력 전부이고, 각각의 persona-시대 대응이 이 문서의 요청 번호다. (위 잠금 수준 원칙대로, 이 표의 "현재 신호" 열은 소비의 증거이지 보존 요구가 아니다 — 잠기는 것은 오른쪽의 축과 각 요청의 의미 요건이다.)
 
 | 현재 신호 (코드 계약) | 지금까지의 출처 | persona 시대 대응 | 요청 |
 |---|---|---|---|
@@ -44,11 +44,11 @@
 | `maturity` = depth × (0.6 + 0.4×consistency) — **hard gate + 1차 정렬키** | personal entity competence | (owner, topic) competence 등가물 | P3 |
 | `evidence_strength` = n/(n+4) — 밴드 내 2차 정렬키 | 근거 statement 수 | topic별 **evidence unit 수** (extractor 분할 성향 비오염) | P3 |
 | `freshness` — 90일 반감기 decay | (v1/v2 모두 **잘못된 시계**를 읽고 있었음) | `evidence_last_seen` — 이번엔 처음부터 올바르게 | P3-③ |
-| `experience_source_type`/`experience_specificity` — experience need 전용 | **계약에 자리만 있고 채워진 적 없음** | 1인칭 경험 provenance | P4 |
+| `experience_source_type`/`experience_specificity` — experience need 전용 | **계약에 자리만 있고 채워진 적 없음** | 1인칭 경험 provenance(유래 — 직접 겪었나, 배워서 아나) | P4 |
 | stance evidence 검색 (`subject_qid` + owner shortlist + query bag) | personal statement 검색 (BM25) | evidence 검색 **2층** (발견층 + 본문층) | P5 |
 | coverage: QID facet별 그룹핑 → round-robin (`_coverage_round_robin`) | edge가 놓인 QID = facet id | facet 분할은 **query-local로 우리가 소유** — persona에는 재료(관계)만 요청 | P7 |
 | sparse pool의 neighbor 확장 (`expand_connections`, 직접 edge 부족 시) | knowledge graph의 인접 QID | **related-topic 확장** | P7 |
-| `PersonaPrior` (optional·hollow guard·밴드 내 tiebreak 전용) | 미배선 (fixture만) | HEXACO 등 persona 신호 — **wire model은 신규 설계** | P9 |
+| `PersonaPrior` (optional·hollow guard — 힌트는 되지만 자격을 만들지는 못하는 "빈 보증" 신호·밴드 내 tiebreak 전용) | 미배선 (fixture만) | HEXACO 등 persona 신호 — **wire model(HTTP로 오가는 전송 형태)은 신규 설계** | P9 |
 | `discoverable` (privacy-owned) | privacy 팀 (deferred) | 노출 가능 여부 — **owner/topic/statement 3층** | P10-④ |
 
 ---
@@ -66,11 +66,11 @@
 
 기존 API를 고치는 경로든 처음부터 새로 구현하는 경로든 이 계약이 출발점이다 — 재구현이라면 "변경"이 아니라 처음부터 이렇게 설계한다. persona 팀 발신 문서에는 이 항목을 넣지 않는다 — 여기 두는 이유는 발신 문서의 시나리오 서술과 우리 실제 API가 어긋나지 않게 이행 순서에 묶어두기 위해서다.
 
-### P1 🔴 Topic 검색 primitive — agentic search의 발판이자 hot path
+### P1 🔴 Topic 검색 primitive — agentic search의 발판이자 hot path(매 추천 요청마다 실행되는 가장 빈번한 경로)
 
-**왜.** 유저가 "이 주제로 대화할 사람"을 찾을 때, 그 주제를 실제로 아는 유저를 찾는 것이 추천의 첫 단계다. topic이 유저별로 독립 명명되므로 "머신러닝"·"ML"·"기계학습"·"딥러닝 공부"가 네 유저에게 네 개의 다른 topic으로 존재할 수 있다. 우리는 query expansion으로 이 변형들을 생성해 검색한다. vector-free 전제(문서 머리)에서 **검색이 못 찾은 topic은 LLM rerank가 되살릴 수 없으므로**, recall의 방어선은 두 개다: 검색 대상 필드의 폭(계약 ⑥)과 expansion의 표현 다양성(우리 책임). (경험: 기존 stance evidence 검색이 BM25 단독이라 lexical-recall gap이 측정 불가능한 맹점으로 남았다 — 그래서 이번엔 recall을 P11 golden set으로 **측정 가능하게** 만드는 것까지가 요청이다.)
+**왜.** 유저가 "이 주제로 대화할 사람"을 찾을 때, 그 주제를 실제로 아는 유저를 찾는 것이 추천의 첫 단계다. topic이 유저별로 독립 명명되므로 "머신러닝"·"ML"·"기계학습"·"딥러닝 공부"가 네 유저에게 네 개의 다른 topic으로 존재할 수 있다. 우리는 query expansion으로 이 변형들을 생성해 검색한다. vector-free 전제(문서 머리)에서 **검색이 못 찾은 topic은 LLM rerank가 되살릴 수 없으므로**, recall의 방어선은 두 개다: 검색 대상 필드의 폭(계약 ⑥)과 expansion의 표현 다양성(우리 책임). (경험: 기존 stance evidence 검색이 BM25 단독이라 lexical-recall gap — query와 발언의 단어가 겹치지 않아 의미가 같아도 못 찾는 손실 — 이 측정 불가능한 맹점으로 남았다. 그래서 이번엔 recall을 P11 golden set으로 **측정 가능하게** 만드는 것까지가 요청이다.)
 
-**단, P1은 후보 회수의 유일한 채널이 아니다 — topic-first 단일 회수는 legacy 구조다.** 현행 파이프라인은 "grounding → edge → evidence" 순서라 topic(anchor)을 먼저 확정한 owner만 evidence 단계에 도달했다. 이 순서를 그대로 이식하면 need별로 회수 불가능한 유저가 생긴다: 명제에 강한 의견이 있지만 topic competence 순위가 낮은 유저(for/against), 경험은 분명한데 일반 지식 depth가 낮은 유저(experience), topic 이름은 다르지만 중요한 하위 관점을 가진 유저(coverage). 새 설계의 후보 pool은 **채널 union**이다:
+**단, P1은 후보 회수의 유일한 채널이 아니다 — topic-first 단일 회수는 legacy 구조다.** 현행 파이프라인은 "grounding → edge → evidence" 순서라 topic(anchor)을 먼저 확정한 owner만 evidence 단계에 도달했다. 이 순서를 그대로 이식하면 need별로 회수 불가능한 유저가 생긴다: 명제에 강한 의견이 있지만 topic competence 순위가 낮은 유저(for/against), 경험은 분명한데 일반 지식 depth가 낮은 유저(experience), topic 이름은 다르지만 중요한 하위 관점을 가진 유저(coverage). 새 설계의 후보 pool(모집된 후보 집합)은 **채널 union(합집합)**이다:
 
 ```
 topic 검색(P1) ∪ evidence 발견(P5 층 1) ∪ related 확장(P7)
@@ -78,7 +78,7 @@ topic 검색(P1) ∪ evidence 발견(P5 층 1) ∪ related 확장(P7)
 → 비싼 본문 fetch(P5 층 2)·judge는 hydrate된 union 이후에만
 ```
 
-따라서 P1이 잠그는 것은 "topic 채널"의 계약이고, evidence 채널의 후보 발견은 P5 층 1이 담당하며, **어느 채널로 왔든 후보는 최종적으로 같은 `TopicCandidate` projection이 된다**. 반환형 계약: P1 search hit는 **이미 완성된 TopicCandidate**(hydrate 불필요), P5/P7의 좌표-only hit만 P2 batch로 hydrate하고 **그 batch의 반환형도 TopicCandidate**다(상세형 TopicCard는 단건 GET 전용). evidence hit는 그 자체로는 랭킹 불가능하고, key별 단건 조회는 N+1이므로 hydration은 batch 1회다.
+따라서 P1이 잠그는 것은 "topic 채널"의 계약이고, evidence 채널의 후보 발견은 P5 층 1이 담당하며, **어느 채널로 왔든 후보는 최종적으로 같은 `TopicCandidate` projection이 된다**. 여기서 **hydrate**는 좌표(owner, topic)뿐인 후보에 랭킹에 필요한 값을 채워 넣는 보강을 뜻하고, **projection**은 전체 필드 중 필요한 것만 추린 응답 형태를 뜻한다. 반환형 계약: P1 search hit는 **이미 완성된 TopicCandidate**(hydrate 불필요), P5/P7의 좌표-only hit만 P2 batch로 hydrate하고 **그 batch의 반환형도 TopicCandidate**다(상세형 TopicCard는 단건 GET 전용). evidence hit는 그 자체로는 랭킹 불가능하고, key별 단건 조회는 N+1(목록 1회 조회 후 항목마다 추가 조회가 N번 생기는 패턴)이므로 hydration은 batch 1회다.
 
 **union의 provenance 규칙 (우리 내부 계약 — P0과 같은 층).** 같은 (owner, topic)이 세 채널에서 다 발견될 수 있는데, 단순 dedupe하면 "왜 후보가 됐는가"가 사라진다. union 후보는 채널별 유입 근거를 보존한다: `retrieval_reasons: [{channel: topic, matched_query_indices}, {channel: evidence, kind}, {channel: related, source_topic}]`. 이것이 있어야 direct/related 우선순위(related-only 후보가 core 후보로 오인되는 것 방지), 채널별 회수율 측정·cap 조정, 채널 제거 실험, decision log 기록이 가능하다. persona에 요구되는 것은 공통 구조가 아니라 **각 채널 응답이 이 근거를 구성할 최소 정보를 담는 것**뿐이다 — P1의 `matched_query_indices`, P5의 `kind`, P7의 `source_topic`(related 결과가 어느 topic에서 확장됐는지).
 
@@ -108,15 +108,15 @@ POST /{tenant}/persona/topics/search
 
 **계약.**
 1. **cross-user가 기본**이어야 한다. per-owner 조회만 있으면 우리는 전 유저를 순회해야 하고 그건 유저 수에 선형이다. (경험: v1/v2에서 cross-owner 조회가 없어서 별도 요청서(V2-1)를 써야 했다 — 이번엔 처음부터.)
-2. **score는 version-scoped optional signal이다.** (rev 5까지는 score 자체를 받지 말자고 했으나 철회 — "score에 의존하지 않는다"와 "score를 받지 않는다"는 다른 결정이다. rev 6의 "비계약 보조 신호"라는 표현도 정정 — abstain·fusion·pruning에 쓰는 순간 행동을 바꾸므로 그 값은 계약이다.) 정확한 구획:
+2. **score는 version-scoped optional signal이다.** (rev 5까지는 score 자체를 받지 말자고 했으나 철회 — "score에 의존하지 않는다"와 "score를 받지 않는다"는 다른 결정이다. rev 6의 "비계약 보조 신호"라는 표현도 정정 — abstain(판단 보류)·fusion(채널 결과 통합)·pruning(후보 미리 쳐내기)에 쓰는 순간 행동을 바꾸므로 그 값은 계약이다.) 정확한 구획:
    - **계약인 것**: 필드 shape·값 범위·의미·해석 가능한 component 구성(`lexical_match` 등), 그리고 `search_model_version` 동반.
    - **계약이 아닌 것**: 서로 다른 model version 사이의 숫자 비교 가능성 — 보장을 요구하지 않는다.
-   - **우리 구현 선택인 것**: 실제로 ordering/abstain에 쓰는지. 쓴다면 **해당 version에서 calibration/eval을 통과한 뒤에만** (P11) — version이 바뀌면 재검증 전까지 사용 중단.
+   - **우리 구현 선택인 것**: 실제로 ordering/abstain에 쓰는지. 쓴다면 **해당 version에서 calibration(점수가 실제 적중률과 맞는지의 검증)/eval을 통과한 뒤에만** (P11) — version이 바뀌면 재검증 전까지 사용 중단.
    - 결과 **순서**는 version과 무관하게 항상 제공되는 안정 계약이다.
 3. **merge 정책은 우리가 소유한다 — persona에는 그것을 가능하게 하는 capability만 요청한다.** 복수 query의 단일 ANY-match top-N이면 강한 query 하나가 결과를 독점해 나머지 expansion query가 굶는다. 단 "query별 균등 quota"를 계약으로 요구하지도 않는다 — **expansion query는 품질이 균일하지 않고**(LLM이 만든 나쁜 확장에 동일 quota를 주면 recall은 늘어도 precision이 무너진다), 어느 query를 얼마나 신뢰할지는 expansion을 만든 우리만 안다. 요청하는 capability:
    - query별 **cap 설정 가능** (요청 파라미터), 또는 query별 **독립 검색 모드** (우리가 호출을 나눠 merge 소유 — 기본 선호).
    - 서버가 merge를 제공한다면 그 **정책과 query별 기여량을 응답에 공개**.
-   - *observability*: 결과에 **`matched_query_indices`** — merge 정책과 무관하게 expansion coverage 측정에 필요하다. 관련도 score가 아니므로 계약 ②와 충돌하지 않는다.
+   - *observability(계측 가능성)*: 결과에 **`matched_query_indices`** — merge 정책과 무관하게 expansion coverage 측정에 필요하다. 관련도 score가 아니므로 계약 ②와 충돌하지 않는다.
 4. 빈 결과와 "추출이 아직 안 된 코퍼스/유저"는 구분돼야 한다 → P8.
 5. **다국어 계약 — cross-lingual recall의 1차 메커니즘은 storage-side search alias 생성이다.** user-local generalized topic은 언어까지 파편화된다: 유저가 영어로만 대화해서 topic이 "coffee"로 저장됐다면, "커피"로 질의하는 유저는 그 topic을 영원히 못 찾는다 — **관측된 alias의 인덱싱만으로는 안 풀린다** (그 유저는 "커피"라고 말한 적이 없으므로 관측 alias가 없다). 요청:
    - **(a) search alias 생성(enrichment)**: topic 생성/갱신 시 name(+aliases)에서 **서비스 지원 언어(한국어·영어·일본어 등 — 언어 셋은 Q12)의 번역·표기 변형을 생성해 검색 인덱스에 포함**한다. "커피" 질의 → "coffee" topic이 직접 hit되는 것이 목표다. topic당 1회 생성이므로, 요청마다 우리가 번역을 추측하는 것보다 결정적이고 싸다.
@@ -128,7 +128,7 @@ POST /{tenant}/persona/topics/search
 
 ### P2 🔴 Topic 카드 — 단건 조회 + union hydration batch
 
-**왜.** 두 역할이 있다. ① rerank 판정("이게 정말 그 주제인가")과 추천 이유(reason) 생성에 topic의 **내용물**이 필요하다. (경험: grounding rerank의 판정 품질은 후보 payload의 정보량에 직접 비례했다 — v2 분석에서 `abstract`·`instance_of`를 잃는 것이 rerank 입력 손실이라 별도 복구 경로를 찾아야 했다.) ② **batch는 multi-channel hot path의 공식 hydration 단계다** — evidence/related 채널의 후보는 좌표만 갖고 유입되므로, union·dedupe 후 살아남은 key들을 batch 1회로 `TopicCandidate` projection으로 보강한다(P1 계약과 같은 값·같은 vintage). 단건 GET은 디버깅·상세 표시용.
+**왜.** 두 역할이 있다. ① rerank 판정("이게 정말 그 주제인가")과 추천 이유(reason) 생성에 topic의 **내용물**이 필요하다. (경험: grounding rerank의 판정 품질은 후보 payload의 정보량에 직접 비례했다 — v2 분석에서 `abstract`·`instance_of`를 잃는 것이 rerank 입력 손실이라 별도 복구 경로를 찾아야 했다.) ② **batch는 multi-channel hot path의 공식 hydration 단계다** — evidence/related 채널의 후보는 좌표만 갖고 유입되므로, union·dedupe(중복 제거) 후 살아남은 key들을 batch 1회로 `TopicCandidate` projection으로 보강한다 — P1 계약과 같은 값·같은 vintage(같은 추출 실행에서 나온, 생산 시점이 동일한 값). 단건 GET은 디버깅·상세 표시용.
 
 **무엇.**
 
@@ -152,7 +152,7 @@ POST /{tenant}/persona/topics/batch { keys: [{owner_id, topic_id}, ...], snapsho
 
 **계약.**
 1. **topic 식별자의 좌표계 확정**: 우리는 **`(owner_id, topic_id)` 복합 식별**을 전제로 요청한다 (topic은 유저별 독립 생성물이므로). persona 쪽이 tenant-전역 유일 id를 쓴다면 그것도 좋다 — 어느 쪽인지가 P5 scope·P6 similar·decision log 전부의 전제이므로 **양자택일을 계약 1번으로** 못박아 달라. 이 문서의 모든 route 스케치는 복합 식별 가정이다.
-2. **생명주기**: persona 쪽에서 topic 병합·분할·개명이 일어난다면 **그때 id가 어떻게 되는지**(merge → 승계 id? redirect? tombstone?)를 계약으로. 우리 decision log는 topic 식별자를 영구 기록하므로, id가 조용히 재발급되면 감사 추적이 끊긴다.
+2. **생명주기**: persona 쪽에서 topic 병합·분할·개명이 일어난다면 **그때 id가 어떻게 되는지**(merge → 승계 id? redirect? tombstone — 삭제된 자리에 "여기 있었음" 표식만 남기는 방식?)를 계약으로. 우리 decision log는 topic 식별자를 영구 기록하므로, id가 조용히 재발급되면 감사 추적이 끊긴다.
 3. `aliases`/`description`은 사적 대화 내용을 재구성할 수 있는 표면이다 — cross-user 응답에서의 정제 요건은 P10-⑤가 규정한다.
 4. **batch의 부분 실패 계약** — hydration이 hot path가 된 만큼 필수다: 입력 key와 결과의 대응(입력 순서 보존 여부·중복 key 처리 명시), 한 key의 실패가 전체 batch를 죽이지 않을 것, 그리고 사라진 key의 **item별 outcome** — `ready` / `not_publishable` / `not_found` / `not_extracted`를 구분해서:
 
@@ -163,7 +163,7 @@ POST /{tenant}/persona/topics/batch { keys: [{owner_id, topic_id}, ...], snapsho
   ], "snapshot_id": "..." }
 ```
 
-   상태별 **소비자(우리) 행동까지 계약의 일부다**: `ready` = 사용 · `not_publishable` = 해당 후보만 제거하고 계속(철회 존중, 오류 아님) · `not_found` = 같은 pinned snapshot에서 나온 key라면 snapshot 불일치/무결성 신호 → retrieval 재시작(P10-⑦ 차선 경로) · `not_extracted` = 후보 제거하고 계속하되 decision log에 사유 기록(신규/미추출 유저 — 실패도 철회도 아니므로 지표에서 따로 센다).
+   상태별 **소비자(우리) 행동까지 계약의 일부다**: `ready` = 사용 · `not_publishable` = 해당 후보만 제거하고 계속(철회 존중, 오류 아님) · `not_found` = 같은 pinned snapshot(run 동안 고정해 둔 데이터 판본 — P10-⑦)에서 나온 key라면 snapshot 불일치/무결성 신호 → retrieval 재시작(P10-⑦ 차선 경로) · `not_extracted` = 후보 제거하고 계속하되 decision log에 사유 기록(신규/미추출 유저 — 실패도 철회도 아니므로 지표에서 따로 센다).
 
 ### P3 🔴 (owner, topic) competence 등가물 — 게이트·정렬의 입력
 
@@ -224,7 +224,7 @@ evidence_last_seen = max(said_at over currently-active qualifying evidence)
 
 **왜.** "이 주제를 *실제로 겪어본* 사람과 대화하고 싶다"는 need(experience)는 depth와 다른 축이다 — 책으로 깊이 아는 사람 ≠ 직접 해본 사람. 우리 계약에는 이 자리가 처음부터 있었지만(`experience_source_type`/`experience_specificity`) **채워줄 상류가 지금까지 없어서 experience need가 사실상 depth의 변형으로 퇴화해 있었다.** 대화는 이 신호의 가장 좋은 소스다: "제가 해봤는데요"와 "책에서 봤는데요"는 발화에서 구분 가능하다.
 
-**무엇.** (owner, topic) 단위, **P1 projection에 포함**. rev 7까지는 현행 계약을 복제한 단일 enum(`firsthand | secondhand | null`)이었으나 **철회** — 같은 주제에 대해 직접 운영 경험과 책·강의 학습을 *동시에* 가진 유저가 정상이고, 단일 enum은 어느 하나가 다른 하나의 근거를 지워버린다. **provenance별 집계**로 요청한다:
+**무엇.** (owner, topic) 단위, **P1 projection에 포함**. rev 7까지는 현행 계약을 복제한 단일 enum(`firsthand | secondhand | null`)이었으나 **철회** — 같은 주제에 대해 직접 운영 경험과 책·강의 학습을 *동시에* 가진 유저가 정상이고, 단일 enum은 어느 하나가 다른 하나의 근거를 지워버린다. **provenance별 집계**(유래별로 나눈 구획 — 아래 표의 bucket)로 요청한다:
 
 ```json
 "experience": {
@@ -282,7 +282,7 @@ POST /{tenant}/persona/statements/batch
 
 - text를 싣지 않으므로 본문층보다 노출 표면이 좁다 — 단 owner/topic/kind/said_at 좌표 자체도 민감 정보다: 요청하는 것은 **같은 publishability·동의 경계 안에서의 더 작은 projection**이지, 더 낮은 privacy 등급이 아니다 (§4 Q8).
 - **명제↔발언의 어휘 격차가 이 층의 최대 recall 위험이다.** vector-free 전제에서 1차 대응은 우리의 의견 어휘 bag expansion이지만, expansion에도 한계가 있다 — persona가 언젠가 semantic 검색에 투자한다면 **topic 검색보다 이 층이 먼저**라고 본다 (§4 Q4). 그때까지의 방어선은 statement의 검색 대상 텍스트를 충실히 하는 것과 P11 recall 측정이다.
-- orthogonal viewpoint 회수의 재료가 이 층이다 (§0 용어 주의): kind·epistemic 분류가 있으면 "같은 명제, 다른 논점"의 후보를 저장 라벨 없이 회수할 수 있다.
+- orthogonal viewpoint 회수의 재료가 이 층이다 (§0 용어 주의): kind·epistemic(단정/추측/인용 같은, 발언의 인식적 성격) 분류가 있으면 "같은 명제, 다른 논점"의 후보를 저장 라벨 없이 회수할 수 있다.
 
 **무엇 — 층 2: 본문 fetch (scoped).** union으로 확정된 shortlist에 대해서만:
 
@@ -315,7 +315,7 @@ POST /{tenant}/persona/statements/search
 **계약.**
 1. **scope는 단일 필드**: 이전 초안은 `topic_scope`(쌍 목록)와 `owner_ids`를 이중으로 받았는데, 그러면 어느 필드가 권한·비용 경계인지 불명확하다. `scopes` 하나로 통합 — owner 집합은 `scopes`의 owner들로 유도되고, **scope 밖 검색은 없다** (경험: shortlist 밖 전역 검색은 privacy 경계이기도 하고 비용 폭주 경로이기도 하다). 좌표계는 P2 계약 ① 전제.
 2. **active·publishable 항목만 반환한다는 보장** — 검색과 **ID batch fetch 양쪽 모두**. 철회된 statement나 비공개 topic의 statement가 새면 P10-④가 무의미해진다. batch에서 철회분은 P2 계약 ④와 같은 item별 `not_publishable`로 (opaque id를 알고 있다는 것이 읽을 권리가 아니다 — privacy 검사는 read-time 최신, P10-⑦).
-3. `per_owner_limit` 필수 — cost cap이지 overfetch가 아니다.
+3. `per_owner_limit` 필수 — 비용 상한(cost cap)이지 overfetch(필요분보다 넉넉히 미리 가져오기)가 아니다.
 4. **`text`의 정의를 계약으로**: 원 대화 발화의 원문인가, cross-user 노출용으로 정제된 근거문인가. 우리 요청은 후자다 — 단 정제의 목표를 명시해야 한다: **화자 특정 정보·사적 맥락은 제거하되, 주장의 방향과 강도는 보존** (stance judge의 입력이므로 중립화·요약 과정에서 stance가 뭉개지면 판정 자체가 불가능해진다). 원 message id·conversation 좌표 등 원문 provenance는 응답에 포함하지 않는다 (P10-⑤) — 단 `statement_id`는 안전한 대체 식별자로서 반드시 필요하다.
 5. 🟡 **semantic 검색 지원** — vector-free 전제에서 필수 요청은 아니다. 단 persona가 semantic 투자를 하게 되면 우선순위는 층 1(명제↔발언 격차) > topic 검색이라는 의견을 전달한다 (§4 Q4).
 6. 🟡 **동일 owner 내 논점 중복 제거 옵션** (`distinct_viewpoints` 류) — 한 유저가 같은 논점을 20번 말한 것과 서로 다른 논점 5개를 말한 것을 구분해 fetch할 수 있으면 judge 입력의 정보 밀도가 오른다. orthogonal 판정의 재료이기도 하다.
@@ -401,7 +401,7 @@ P1/P6의 `TopicCandidate`에는 해당 데이터 종류의 `extraction_state`/`a
 
 ### P9 🟡 HEXACO + InteractionStyle — 지금은 계약 예약, 소비는 추후
 
-**왜.** "특정 주제 없이 성격이 맞는 유저 추천"은 추후 surface다. 정확한 현재 상태: 우리 쪽에 optional persona provider **seam은 존재**하지만(gate가 agent별 단건 호출, None 허용·degradable), 현행 `PersonaPrior` v0에는 HEXACO 축이 없고(`prior_stance`/`stable_traits`/`expertise_claims`뿐, agent 좌표계) 랭킹은 이를 **밴드 내 tiebreak로만** 소비한다(hollow guard — 밴드 승격 불가). 따라서 **HEXACO wire model·요청자↔후보 pair 비교·batch provider·ranking objective는 전부 신규 설계**다 — "배선이 싸다"가 아니라 "붙일 seam이 있다"가 맞는 서술이다. 지금 요청하는 것은 그 설계의 원자료 계약이다.
+**왜.** "특정 주제 없이 성격이 맞는 유저 추천"은 추후 surface다. 정확한 현재 상태: 우리 쪽에 optional persona provider의 **접합부(seam — 구현을 갈아 끼울 수 있게 만들어 둔 경계)는 존재**하지만(gate가 agent별 단건 호출, None 허용·degradable — 없으면 그 신호 없이 계속 동작), 현행 `PersonaPrior` v0에는 HEXACO 축이 없고(`prior_stance`/`stable_traits`/`expertise_claims`뿐, agent 좌표계) 랭킹은 이를 **밴드 내 tiebreak로만** 소비한다(hollow guard — 밴드 승격 불가). 따라서 **HEXACO wire model·요청자↔후보 pair 비교·batch provider·ranking objective는 전부 신규 설계**다 — "배선이 싸다"가 아니라 "붙일 seam이 있다"가 맞는 서술이다. 지금 요청하는 것은 그 설계의 원자료 계약이다.
 
 서빙 의미(확정 전제 §0.0-3): 타 유저의 agent는 주인의 HEXACO를 모방해 응답하므로, "성격이 맞는 상대 추천"의 비교 축은 **유저 HEXACO 쌍**(요청 유저 ↔ 후보 유저)이고 추천되는 실체는 후보 유저의 agent다. 즉 우리는 매 요청에서 **요청 유저 본인 + 후보 shortlist 전원**의 HEXACO가 필요하다.
 
@@ -446,11 +446,11 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
 4. **노출 제어 — owner 단위로는 부족하다**: cross-user로 나가는 것이 topic 이름·설명·statement 근거문까지이므로, publishability는 **owner / topic / statement 3층**이어야 한다 (유저가 "이 주제는 노출 안 함"을 선택할 수 있어야 한다). 계약 요청:
    - persona API가 노출 불가 항목을 **응답 전에 필터링**한다 (우리에게 도달한 것은 노출 가능한 것뿐).
    - **삭제·철회·비공개 전환의 전파 시점** 명시 (다음 snapshot? 즉시?). 유저가 지운 대화의 흔적이 추천 이유로 계속 나오면 안 된다.
-   - 요청 body에 **requester owner 사전 제외**(self-exclusion) 지원 여부 — 지원되면 좋지만, **우리 downstream self-exclusion은 그와 무관하게 계속 강제**한다 (defense in depth).
+   - 요청 body에 **requester owner 사전 제외**(self-exclusion) 지원 여부 — 지원되면 좋지만, **우리 downstream self-exclusion은 그와 무관하게 계속 강제**한다 (defense in depth — 같은 보호를 여러 층에 겹쳐 두는 다층 방어).
    - 우리 계약에는 privacy-owned `discoverable` 자리가 이미 있다 — persona 필터링과 이중이어도 유지한다.
 5. **Cross-user 응답은 전용 최소 projection으로**: owner 본인용 응답 모델을 cross-user 조회에 재사용하지 말 것. (경험: v1 personal entity의 본인용 모델에는 서사적 필드가 있어 cross-owner로 나가면 과노출이었고, 전용 최소 shape를 별도 요청해야 했다.) P1의 `TopicCandidate` 필드 목록이 그 최소 shape 제안이고, **원문 재구성이 가능한 표면(`text`/`aliases`/`description`)은 cross-user용으로 정제된 값만, 원 message id·conversation 좌표는 반환 금지, 대체 식별자는 opaque `statement_id`**가 요건이다 (정제의 보존 목표는 P5-④).
 6. **빈 결과 ≠ 이용 불가**: P8과 동일 — 모든 endpoint에서 일관되게.
-7. **cross-endpoint snapshot pinning** — multi-channel 결과를 하나의 decision으로 합치는 전제다. 채널별 `snapshot_id` *반환*만으로는 P1→P5→P2 hydrate→본문 fetch 사이에 topic merge/삭제/비공개 전환이 끼어드는 것을 못 막는다: 발견된 topic이 hydrate에서 사라지고, 비공개 전환 전 좌표로 찾은 후보의 본문을 전환 후에 읽고, 한 decision 안에 다른 model vintage가 섞인다. 계약 요청: (0) **최초 획득 절차** — run 시작 시 P8 `GET /status`의 `snapshot_id`(content release token)를 **1회** 얻어 이후 모든 fan-out 호출에 전달한다; 이 절차가 없으면 병렬 P1/P5/P7 첫 호출들이 서로 다른 snapshot에서 출발한다, (a) 모든 검색·batch·본문 endpoint가 **선택적 `snapshot_id` 입력**을 받는다, (b) 우리는 recommendation run 하나에 snapshot 하나를 pin한다, (c) 만료된 snapshot은 조용히 최신값을 주지 말고 **명시적 오류**, (d) 응답의 실제 snapshot_id가 요청값과 일치함을 우리가 검증한다. 입력 pinning의 지원이 어렵다면 차선: 우리가 응답 간 snapshot 불일치를 탐지해 retrieval 전체를 재시도한다 — 이 경우에도 (d)의 반환은 필수다.
+7. **cross-endpoint snapshot pinning**(pinning — 한 recommendation run이 도는 동안 읽는 데이터 판본을 하나로 고정하는 것) — multi-channel 결과를 하나의 decision으로 합치는 전제다. 채널별 `snapshot_id` *반환*만으로는 P1→P5→P2 hydrate→본문 fetch 사이에 topic merge/삭제/비공개 전환이 끼어드는 것을 못 막는다: 발견된 topic이 hydrate에서 사라지고, 비공개 전환 전 좌표로 찾은 후보의 본문을 전환 후에 읽고, 한 decision 안에 다른 model vintage가 섞인다. 계약 요청: (0) **최초 획득 절차** — run 시작 시 P8 `GET /status`의 `snapshot_id`(그 시점 데이터 판본 전체를 가리키는 식별자)를 **1회** 얻어 이후 모든 fan-out(병렬로 흩어 보내는 P1/P5/P7) 호출에 전달한다; 이 절차가 없으면 병렬 P1/P5/P7 첫 호출들이 서로 다른 snapshot에서 출발한다, (a) 모든 검색·batch·본문 endpoint가 **선택적 `snapshot_id` 입력**을 받는다, (b) 우리는 recommendation run 하나에 snapshot 하나를 pin한다, (c) 만료된 snapshot은 조용히 최신값을 주지 말고 **명시적 오류**, (d) 응답의 실제 snapshot_id가 요청값과 일치함을 우리가 검증한다. 입력 pinning의 지원이 어렵다면 차선: 우리가 응답 간 snapshot 불일치를 탐지해 retrieval 전체를 재시도한다 — 이 경우에도 (d)의 반환은 필수다.
 
    **단, pinning은 privacy 즉시 철회와 충돌한다** — "run은 같은 snapshot을 읽는다"와 "비공개 전환은 즉시 반영된다"(④)는 단순하게 동시 성립하지 않는다: pin된 과거 snapshot이 방금 비공개로 전환된 topic을 계속 노출할 수 있다. 요청하는 해소는 **두 축의 분리**다:
    - **content snapshot (pinned)**: topic·statement 내용과 추출 신호는 pin된 snapshot에서 읽는다.
@@ -458,16 +458,16 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
    - 그 결과 pin된 run 중간에 사라지는 key는 오류가 아니라 **명시적 상태**(`not_publishable`)로 돌아오고, 우리는 해당 후보만 제거하고 계속 진행한다.
    - persona가 전부를 단일 immutable snapshot으로만 제공한다면: 비공개 전환 시 해당 snapshot을 즉시 폐기하고, 우리는 새 snapshot으로 run을 재시작한다 (비용이 크므로 분리안을 선호).
 
-   그리고 topics/statements/HEXACO가 독립 추출 파이프라인이라면 **문자열 하나의 snapshot_id가 정말 전체를 원자적으로 가리키는지**를 물어야 한다 — 불가능하다면 전역 release_id 또는 resource별 version vector가 필요하다 (§4 Q11). 단순 재시도로는 독립 인덱스들이 같은 vintage가 되지 않는다.
+   그리고 topics/statements/HEXACO가 독립 추출 파이프라인이라면 **문자열 하나의 snapshot_id가 정말 전체를 원자적으로 가리키는지**를 물어야 한다 — 불가능하다면 전역 release_id 또는 resource별 version vector(자원마다 판본 번호를 따로 갖고 그 묶음으로 시점을 표현하는 방식)가 필요하다 (§4 Q11). 단순 재시도로는 독립 인덱스들이 같은 vintage가 되지 않는다.
 8. **접근 경계는 승계가 아니라 결정**: persona API는 recommendation API보다 민감한 표면이다 — 전체 유저의 topic 검색, 타 유저의 stance 근거문, HEXACO batch가 전부 bulk-read다. 외부 ingress가 없어도 **임의의 in-cluster workload가 전 유저의 추출 데이터를 수집할 수 있는가**가 새로 생기는 질문이고, 현행 "in-cluster 무인증 + 네트워크 경계"를 자동 승계하면 이 threat model 검토가 통째로 생략된다. bearer 강제를 주장하는 것이 아니다 — 결론이 다시 "네트워크 경계 단독"일 수 있다. 다만 다음을 **명시적으로 합의**해야 한다: (a) 호출 workload allowlist 또는 service identity, (b) tenant별 접근 통제, (c) batch 크기 상한, (d) cross-user 조회 audit(어느 workload가 누구 데이터를 읽었나), (e) NetworkPolicy/mTLS 등 실제 경계의 소유자.
 
 ### P11 품질·평가 지원 — schema 밖의 계약 (핵심은 🔴 출시 게이트)
 
-**왜.** 좋은 성능은 wire schema만으로 검증할 수 없다. (경험 두 가지: 우리 eval 하네스는 HTTP 어댑터를 타지 않아 어댑터 회귀를 구조적으로 볼 수 없었고, stance 검색의 lexical-recall gap은 전용 recall eval을 따로 설계해서야 측정 가능해졌다. schema가 맞아도 품질은 따로 재야 한다.) 그리고 **vector-free 전제에서는 평가가 부가 기능이 아니라 기능의 일부다** — query expansion과 검색 대상 텍스트가 recall의 전부이므로, golden evaluation 없이는 "기능이 목표 성능으로 동작하는가"를 판단할 수단 자체가 없다.
+**왜.** 좋은 성능은 wire schema만으로 검증할 수 없다. (경험 두 가지: 우리 eval 하네스(평가를 실행하는 틀)는 HTTP 어댑터를 타지 않아 어댑터 회귀를 구조적으로 볼 수 없었고, stance 검색의 lexical-recall gap은 전용 recall eval을 따로 설계해서야 측정 가능해졌다. schema가 맞아도 품질은 따로 재야 한다.) 그리고 **vector-free 전제에서는 평가가 부가 기능이 아니라 기능의 일부다** — query expansion과 검색 대상 텍스트가 recall의 전부이므로, golden evaluation 없이는 "기능이 목표 성능으로 동작하는가"를 판단할 수단 자체가 없다.
 
 **등급.**
 - 🔴 **출시 게이트** (이것 없이 API는 만들 수 있지만 출시 판단은 불가): frozen corpus/snapshot · HTTP 계약 fixture · "query → relevant owner/topic" label 기반 need별·채널별 recall 측정 · 정제 전후 stance 보존 평가 · 핵심 신호(depth/consistency) confidence calibration.
-- 🟡 **운영 개선**: shadow/overlap 기간 · fragmentation 추세 측정 · 장기 deprecation 프로세스.
+- 🟡 **운영 개선**: shadow/overlap 기간(shadow — 신버전을 응답에 반영하지 않고 병행 실행해 구버전과 비교하는 기간) · fragmentation 추세 측정 · 장기 deprecation 프로세스.
 
 **소유권을 먼저 가른다** — persona 팀이 검색 golden set까지 만들면 자기 검색기를 자기 기준으로 평가하는 순환이 생긴다 (우리가 계약 테스트에서 잠근 것과 같은 순환이다):
 
