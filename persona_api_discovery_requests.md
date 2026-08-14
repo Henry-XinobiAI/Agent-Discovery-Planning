@@ -1,6 +1,6 @@
-# Persona 팀 데이터·API 요청서 (Discovery/agent-recommendation-api) — rev 13 (draft)
+# Persona 팀 데이터·API 요청서 (Discovery/agent-recommendation-api) — rev 14 (draft)
 
-작성: 2026-08-13 · 상태: **내부 리뷰용 초안** (발신 전 리뷰 필요) · 개정 요지는 부록의 개정 이력 참조 (최근: rev 12 = topic 공개 모델 확정 + statement 본문은 내부 판정 전용 · rev 13 = owner별 상태 조회를 진단용 🟡로 강등)
+작성: 2026-08-13 · 상태: **내부 리뷰용 초안** (발신 전 리뷰 필요) · 개정 요지는 부록의 개정 이력 참조 (최근: rev 13 = owner별 상태 조회를 진단용 🟡로 강등 · rev 14 = P9-⑥ 매칭 함수 후보 설계 스케치 추가)
 
 > **검색 전제 (rev 7에서 확정):** topic 탐색은 **vector-free agentic search**다 — LLM이 query를 생성·확장·보정하며 persona의 **텍스트 검색**을 반복 호출하고, LLM이 후보를 판정한다. persona 쪽에 embedding/vector 인프라를 전제하는 요청은 이 문서에서 전부 "persona가 독립적으로 표현 공간을 갖게 될 경우의 선택적 최적화"로 강등했다. vector-free에서 recall을 지키는 책임 분담: persona = **검색 대상 텍스트 재료를 충실히**(name·aliases·search_aliases·description·keywords 전체가 검색 대상) + **다국어 search alias 생성**(P1 계약 ⑤ — "커피" 질의가 "coffee" topic을 찾는 1차 메커니즘), Discovery = **query expansion**(paraphrase·표현 변형; 번역은 보완), 검증 = P11 golden set(정답 label을 미리 확정해 둔 평가 기준 데이터).
 
@@ -441,6 +441,17 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
 5. **노출·사용 동의 정책** — HEXACO는 성격 프로파일이라 topic보다 민감하다. 유저가 자신의 HEXACO가 매칭에 쓰이는 것에 동의했는지를 persona 쪽이 어느 층에서 보장하는지 계약에 명시 (P10-④의 특수 사례).
 6. ⚪ 매칭 함수(어떤 HEXACO 조합이 "잘 맞는" 것인가)는 **자동으로 성립하는 가정이 아니다** — 유사성이 좋은 축과 상보성이 좋은 축이 다를 수 있다. 별도 product/eval 문제로 명시하고, topic 추천 tie-break 활용도 **실험 전 가정**으로만 둔다. 지금은 원자료 계약만. (모방 충실도 — agent가 주인 HEXACO를 얼마나 잘 재현하는가 — 는 persona 팀 소관 품질 지표로 보고 이 요청서 범위 밖에 둔다.)
 
+   **후보 설계 스케치 (우리 내부 — persona 요청 아님, 실험 전 가정 유지).** 관계 연구 문헌의 세 결과에 정렬한 tiered 매칭: ⓐ trait *유사성*의 관계 만족 예측력은 미미하고 **상대방 개인의 주효과**(높은 A·C, 낮은 정서 불안정)가 우세하다(Dyrenforth et al. 2010; Joel et al. 2017 — 쌍별 궁합은 ML로도 주효과 이상 예측 실패), ⓑ 유사/상보의 부호가 축마다 다르다 — H·O는 유사(가치관 경유 동류 짝짓기, Lee & Ashton), warmth는 유사, dominance는 상보(interpersonal circumplex), ⓒ trait 추정보다 **대화 행동 매칭**(Language Style Matching)이 더 잘 예측한다(Ireland et al. 2011). 이를 우리 순서 계약 구조로 옮기면 — scalar 가중합은 만들지 않는다:
+
+   ```
+   gate     : state=ready + 축별 confidence 최소선 (insufficient는 중립 취급, 배제 아님)
+   밴드     : 상대 주효과 — A·C(+E 불안정 계열 낮음)를 confidence 가중으로 밴드화
+   밴드 내  : InteractionStyle 매칭 (제공되면 — trait 유사성보다 우선)
+   tiebreak : H·O 유사 · warmth 유사 · dominance 상보 (단일 유사도 항으로 뭉치지 않는다 — 반대 부호가 상쇄된다)
+   ```
+
+   ⚠ 유의 둘. ① 주효과 밴드는 요청자와 무관한 **보편 desirability**라 popularity prior와 같은 구조적 성질(부익부·특정 유저 상시 하향)을 갖는다 — 노이즈 낀 추출 성격치로 유저를 영구 하향시키지 않도록 confidence 조건화(근거 부족 시 중립)와 노출 다양성 제약이 전제다. ② 인용 문헌은 전부 인간-인간·자기보고 기반 — 대화 추출 HEXACO + agent 모방 세팅으로의 이전 가능성은 미검증이므로, 밴드 기준·tiebreak 순서는 결과 신호(추천 수락률·대화 지속·재대화율)를 decision log의 매칭 입력과 연결해 데이터로 조정한다 — **이 수집은 매칭 기능 첫날부터.**
+
 ### P10 🔴 운영 계약 — 모든 endpoint 공통
 
 전부 v1→v2 이행에서 실제로 문제가 됐던 것들이다. 개별 endpoint보다 이 공통 계약의 합의가 더 오래 간다.
@@ -571,3 +582,4 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
 - **rev 11**: **유저별 상시 증분 갱신 전제 확정(§0.0-5) → snapshot pinning 철회.** persona는 batch release가 아니라 유저별 그때그때 처리이므로 전역 시점 고정 요구는 release 없는 저장 모델에 MVCC류 부담을 강제하는 것(잠금 원칙 위반)이고, run 중 어긋남의 실제 피해는 "후보 하나 손실" 수준 — 소비 시점에는 어차피 다음 갱신이 반영된 세계다. 대체 읽기 모델(P10-⑦ 재작성): (a) 각 단계는 최신 값, 사라진 key는 item별 `not_found`/`not_publishable` → **그 후보만 제거하고 계속**(P2-④·P5의 "무결성 위반 → 재시작" 규칙 삭제), (b) **모든 중간 상태는 유효해야 한다** — 기존 topic의 evidence 증분은 무규약(항상 유효), **신규 topic은 evidence 처리 완료 후 모든 조회 표면에 한 묶음으로 원자적 공개**(절반 처리된 집계값으로 filters 오판·부분 증거 stance 판정 방지), (c) 갱신 중에도 기존 값 계속 조회(2026-08-14 확인 — P8 `pending`은 최초 추출 전에만), (d) privacy read-time 검사는 자연 성립(pin-철회 충돌 자체가 소멸). `statement_id`의 재추출 간 지속성은 🟡 희망 사항으로 강등. wire 스케치 전체에서 `snapshot_id` 제거, Q11 해소(신규 확인 항목: 원자적 공개 보장 가능 여부), Q2 부분 해소, P8에 "갱신 중 pending 회귀 금지" 규약 추가, P10-①에서 snapshot 안정성 문구를 cursor 최소 보장으로 완화.
 - **rev 12**: **topic 공개 모델 확정(§0.0-6·7) 반영.** 제품 확정 둘: ① 노출 결정 단위 = topic(유저별 공개 선택, **기본 비공개** — 명시 공개분만 검색·추천 대상, persona가 공개 필드 관리), ② **발언 본문은 최종 유저 비노출**(내부 judge 재료 — 추천 이유는 요약·부연만, **원문 인용 배제로 잠금**). 파생 수정: (a) P10-④ 노출 3층 철회 → topic 단위 확정(owner층=파생, statement층=topic 승계) + 공개 전환의 topic/statement 양쪽 인덱스 동시 반영 요건, (b) P5-④ `text` 노출용 정제 요구 철회 → "추출된 근거문 + 방향·강도 보존"만 잔존, P5-② 경계를 "공개 topic 소속 발언"으로 정밀화, (c) P10-⑦-(b) 신규 topic 원자적 공개 요건은 기본 비공개 모델이 구조적으로 흡수 → "공개 플래그 양방향 일관 전파" 한 줄로 축소(Q5 합류, Q11 갱신), (d) P10-⑤에서 `text`를 노출 정제 대상에서 제외(`aliases`/`description`은 유지 — 추천 이유에 나갈 수 있는 표면), (e) P1 계약 ①에 "검색 모집단 = 공개 topic만 — pool 상한은 공개 비율" 명시, P8 status에 `publishable_topic_count` 추가, §3에 비요청 항목(노출용 정제·statement 단위 publishability) 기록.
 - **rev 13**: **P8 owner별 상태 조회를 🟡 진단용으로 강등** (서비스 상태는 🔴 유지). 근거: 추천 파이프라인에 이 조회를 부를 지점이 없다 — 후보는 검색 유입이고, 기본 비공개 모델에서 pending 유저와 "공개 topic 0개" 유저는 우리 행동상 동일(검색 비노출·부정 캐시 없음 → "신규 유저 영구 배제" 논거 소멸), 파이프라인 필요분은 batch item `not_extracted`(P2-④)와 갱신 중 기존 값 서빙(P10-⑦-(c))으로 이미 확보. 남는 용도 = 진단("왜 추천 안 되나") + P9 진행 상태 enum의 좌석. pending 의미 계약(최초 추출 전에만·ready/0개와 구분)은 등급과 무관하게 유지 — 상태가 나타나는 모든 자리에 적용.
+- **rev 14**: P9-⑥에 **매칭 함수 후보 설계 스케치** 추가 (요청 변경 없음 — 우리 내부 노트): 문헌 3결과(주효과 우세·축별 유사/상보 부호 상이·행동 매칭 우위)에 정렬한 tiered 순서 계약(gate→주효과 밴드→스타일 매칭→축별 tiebreak), popularity-prior 유사 구조 경고와 confidence 조건화 전제, 결과 신호 수집을 첫날부터. 요약본 ⑦에는 "무엇을 실험하려 하고 그래서 어떤 값이 필요한가"로 요약 반영.
