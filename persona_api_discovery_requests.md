@@ -1,6 +1,6 @@
 # Persona 팀 데이터·API 요청서 (Discovery/agent-recommendation-api) — rev 12 (draft)
 
-작성: 2026-08-13 · 상태: **내부 리뷰용 초안** (발신 전 리뷰 필요) · rev 3–8 = 외부 리뷰 1–6차 + vector-free 전제 반영 · rev 9 = 다국어 search alias 생성 요청 신설 · rev 10 = topic 검색 **원시 필드 필터**(P1 계약 ⑦) 신설 · rev 11 = 유저별 상시 갱신 전제 확정 → **snapshot pinning 철회**, 최신 값 읽기로 대체 · rev 12 = topic 공개 모델 확정(기본 비공개·topic 단위 결정) → 노출 3층 철회, statement 본문 = 내부 판정 전용(원문 인용 배제)
+작성: 2026-08-13 · 상태: **내부 리뷰용 초안** (발신 전 리뷰 필요) · 개정 요지는 부록의 개정 이력 참조 (최근: rev 11 = snapshot pinning 철회 → 최신 값 읽기 · rev 12 = topic 공개 모델 확정 + statement 본문은 내부 판정 전용)
 
 > **검색 전제 (rev 7에서 확정):** topic 탐색은 **vector-free agentic search**다 — LLM이 query를 생성·확장·보정하며 persona의 **텍스트 검색**을 반복 호출하고, LLM이 후보를 판정한다. persona 쪽에 embedding/vector 인프라를 전제하는 요청은 이 문서에서 전부 "persona가 독립적으로 표현 공간을 갖게 될 경우의 선택적 최적화"로 강등했다. vector-free에서 recall을 지키는 책임 분담: persona = **검색 대상 텍스트 재료를 충실히**(name·aliases·search_aliases·description·keywords 전체가 검색 대상) + **다국어 search alias 생성**(P1 계약 ⑤ — "커피" 질의가 "coffee" topic을 찾는 1차 메커니즘), Discovery = **query expansion**(paraphrase·표현 변형; 번역은 보완), 검증 = P11 golden set(정답 label을 미리 확정해 둔 평가 기준 데이터).
 
@@ -29,9 +29,9 @@
 2. **owner ↔ agent는 항상 1:1**이고, 추천 대상은 **항상 타 유저의 agent**다.
 3. **HEXACO 매칭도 서빙 좌표계는 agent 공간 그대로다.** 각 유저의 agent가 주인의 HEXACO를 알고 계속 업데이트하며, 타 유저와 대화할 때 주인의 HEXACO를 모방해 응답한다(자신이 유저라고 말하지는 않음). 따라서 매칭의 *비교 축*은 유저 HEXACO지만 *추천되는 실체*는 그 유저의 agent — 우리 파이프라인의 owner_id→agent_id 파생 identity 층이 그대로 유효하다.
 4. **persona 팀 제공 형태는 online HTTP API.**
-5. **(2026-08-14 확인) 추출은 batch release가 아니라 유저별 상시 증분 처리다.** memory-api처럼 코퍼스 전체를 한 번에 굽는 것이 아니라, 유저가 서비스를 사용함에 따라 그 유저의 데이터가 그때그때(처리 window 단위 가능) 갱신된다. 갱신 중인 순간은 짧고, **갱신이 진행되는 동안에도 그 유저의 기존 값은 계속 조회된다.** 이 전제의 파생 결정: cross-endpoint snapshot pinning은 **철회**하고(전역 시점 고정은 release 없는 저장 모델에 MVCC류 부담을 지우는 요구가 된다), 읽기 모델을 "각 단계는 최신 값 + 사라진 항목은 item별 제거"로 바꾼다 → P10-⑦.
+5. **(2026-08-14 확인) 추출은 batch release가 아니라 유저별 상시 증분 처리다.** memory-api처럼 코퍼스 전체를 한 번에 굽는 것이 아니라, 유저가 서비스를 사용함에 따라 그 유저의 데이터가 그때그때(처리 window 단위 가능) 갱신된다. 갱신 중인 순간은 짧고, **갱신이 진행되는 동안에도 그 유저의 기존 값은 계속 조회된다.** 이 전제의 파생 결정: cross-endpoint snapshot pinning은 **철회**하고(전역 시점 고정은 release 없는 저장 모델에 MVCC — 과거 판본을 함께 보존하는 다중 버전 저장 — 류의 부담을 지우는 요구가 된다), 읽기 모델을 "각 단계는 최신 값 + 사라진 항목은 item별 제거"로 바꾼다 → P10-⑦.
 6. **(2026-08-14 확인) 노출 결정 단위는 topic이고, 기본은 비공개다.** 유저는 자기 agent와 대화하며 지식·의견을 쌓고 이것이 topic별로 카테고리화된다. 유저가 **topic별로** 타 유저 공개 여부를 결정하며, **신규 topic의 기본값은 비공개 — 명시적으로 공개한 topic만** 검색·추천 대상이다. persona가 topic에 공개 여부 필드를 관리한다. 발언의 공개성은 **소속 topic을 승계**하는 파생값이다(발언 단위 독립 제어 없음). 파생 결정: 노출 3층(owner/topic/statement) 요청 철회 → P10-④, 신규 topic 원자적 공개 요건은 이 모델이 구조적으로 흡수 → P10-⑦-(b).
-7. **(2026-08-14 확정) 발언 본문은 최종 유저에게 노출되지 않는다.** statement `text`는 우리 내부 stance 판정(LLM judge)의 재료일 뿐이고, 추천 응답이 요청 유저에게 제공하는 것은 추천 여부와 **요약·부연 수준의 이유**다 — **발언 원문 인용은 배제로 잠근다** (제품 결정, 추후 재론 여지 없이). 파생 결정: `text`의 cross-user 노출용 정제 요구 철회(추출물 + 방향·강도 보존만 요구) → P5-④, statement 개별 억제·statement 단위 publishability 요구 철회.
+7. **(2026-08-14 확정) 발언 본문은 최종 유저에게 노출되지 않는다.** statement `text`는 우리 내부 stance 판정(LLM judge)의 재료일 뿐이고, 추천 응답이 요청 유저에게 제공하는 것은 추천 여부와 **요약·부연 수준의 이유**다 — **발언 원문 인용은 배제로 잠근다** (제품 결정). 파생 결정: `text`의 cross-user 노출용 정제 요구 철회(추출물 + 방향·강도 보존만 요구) → P5-④, statement 개별 억제·statement 단위 publishability 요구 철회.
 
 ### 0.1 이 전환이 우리 파이프라인에 주는 구조적 충격 — 한 문장
 
@@ -71,7 +71,7 @@
 
 ### P1 🔴 Topic 검색 primitive — agentic search의 발판이자 hot path(매 추천 요청마다 실행되는 가장 빈번한 경로)
 
-**왜.** 유저가 "이 주제로 대화할 사람"을 찾을 때, 그 주제를 실제로 아는 유저를 찾는 것이 추천의 첫 단계다. topic이 유저별로 독립 명명되므로 "머신러닝"·"ML"·"기계학습"·"딥러닝 공부"가 네 유저에게 네 개의 다른 topic으로 존재할 수 있다. 우리는 query expansion으로 이 변형들을 생성해 검색한다. vector-free 전제(문서 머리)에서 **검색이 못 찾은 topic은 LLM rerank가 되살릴 수 없으므로**, recall의 방어선은 두 개다: 검색 대상 필드의 폭(계약 ⑥)과 expansion의 표현 다양성(우리 책임). (경험: 기존 stance evidence 검색이 BM25 단독이라 lexical-recall gap — query와 발언의 단어가 겹치지 않아 의미가 같아도 못 찾는 손실 — 이 측정 불가능한 맹점으로 남았다. 그래서 이번엔 recall을 P11 golden set으로 **측정 가능하게** 만드는 것까지가 요청이다.)
+**왜.** 유저가 "이 주제로 대화할 사람"을 찾을 때, 그 주제를 실제로 아는 유저를 찾는 것이 추천의 첫 단계다. topic이 유저별로 독립 명명되므로 "머신러닝"·"ML"·"기계학습"·"딥러닝 공부"가 네 유저에게 네 개의 다른 topic으로 존재할 수 있다. 우리는 query expansion으로 이 변형들을 생성해 검색한다. vector-free 전제(문서 머리)에서 **검색이 못 찾은 topic은 LLM rerank가 되살릴 수 없으므로**, recall의 방어선은 셋이다: 검색 대상 필드의 폭(계약 ⑥), 다국어 search alias 생성(계약 ⑤), expansion의 표현 다양성(우리 책임). (경험: 기존 stance evidence 검색이 BM25 단독이라 lexical-recall gap — query와 발언의 단어가 겹치지 않아 의미가 같아도 못 찾는 손실 — 이 측정 불가능한 맹점으로 남았다. 그래서 이번엔 recall을 P11 golden set으로 **측정 가능하게** 만드는 것까지가 요청이다.)
 
 **단, P1은 후보 회수의 유일한 채널이 아니다 — topic-first 단일 회수는 legacy 구조다.** 현행 파이프라인은 "grounding → edge → evidence" 순서라 topic(anchor)을 먼저 확정한 owner만 evidence 단계에 도달했다. 이 순서를 그대로 이식하면 need별로 회수 불가능한 유저가 생긴다: 명제에 강한 의견이 있지만 topic competence 순위가 낮은 유저(for/against), 경험은 분명한데 일반 지식 depth가 낮은 유저(experience), topic 이름은 다르지만 중요한 하위 관점을 가진 유저(coverage). 새 설계의 후보 pool(모집된 후보 집합)은 **채널 union(합집합)**이다:
 
@@ -90,7 +90,7 @@ topic 검색(P1) ∪ evidence 발견(P5 층 1) ∪ related 확장(P7)
 ```
 POST /{tenant}/persona/topics/search
 {
-  "queries": ["기계학습", "머신러닝 모델 튜닝", ...],   # expansion 결과 복수 query, ANY-match
+  "queries": ["기계학습", "머신러닝 모델 튜닝", ...],   # expansion 결과 복수 query, ANY-match(하나라도 걸리면 hit)
   "limit": 100,
   "per_owner_limit": 3,                                # 한 유저가 결과를 도배하지 않도록
   "owner_ids": null,                                   # null=전체(cross-user), 지정 시 그 유저들로 한정
@@ -115,7 +115,7 @@ POST /{tenant}/persona/topics/search
 
 **계약.**
 1. **cross-user가 기본**이어야 한다. per-owner 조회만 있으면 우리는 전 유저를 순회해야 하고 그건 유저 수에 선형이다. (경험: v1/v2에서 cross-owner 조회가 없어서 별도 요청서(V2-1)를 써야 했다 — 이번엔 처음부터.) 검색 모집단은 **명시적으로 공개된 topic만**이다(§0.0-6·P10-④) — 우리 추천 pool의 상한은 검색 품질 이전에 공개 비율이 정한다.
-2. **score는 version-scoped optional signal이다.** (rev 5까지는 score 자체를 받지 말자고 했으나 철회 — "score에 의존하지 않는다"와 "score를 받지 않는다"는 다른 결정이다. rev 6의 "비계약 보조 신호"라는 표현도 정정 — abstain(판단 보류)·fusion(채널 결과 통합)·pruning(후보 미리 쳐내기)에 쓰는 순간 행동을 바꾸므로 그 값은 계약이다.) 정확한 구획:
+2. **score는 version-scoped optional signal이다.** 두 가지 구분이 이 결정의 바탕이다: "score에 의존하지 않는다"와 "score를 받지 않는다"는 다른 결정이고(받되 의존하지 않을 수 있다), "보조 신호"라도 abstain(판단 보류)·fusion(채널 결과 통합)·pruning(후보 미리 쳐내기)에 쓰는 순간 행동을 바꾸므로 그 값은 계약이다. 정확한 구획:
    - **계약인 것**: 필드 shape·값 범위·의미·해석 가능한 component 구성(`lexical_match` 등), 그리고 `search_model_version` 동반.
    - **계약이 아닌 것**: 서로 다른 model version 사이의 숫자 비교 가능성 — 보장을 요구하지 않는다.
    - **우리 구현 선택인 것**: 실제로 ordering/abstain에 쓰는지. 쓴다면 **해당 version에서 calibration(점수가 실제 적중률과 맞는지의 검증)/eval을 통과한 뒤에만** (P11) — version이 바뀌면 재검증 전까지 사용 중단.
@@ -232,7 +232,7 @@ evidence_last_seen = max(said_at over currently-active qualifying evidence)
 
 **왜.** "이 주제를 *실제로 겪어본* 사람과 대화하고 싶다"는 need(experience)는 depth와 다른 축이다 — 책으로 깊이 아는 사람 ≠ 직접 해본 사람. 우리 계약에는 이 자리가 처음부터 있었지만(`experience_source_type`/`experience_specificity`) **채워줄 상류가 지금까지 없어서 experience need가 사실상 depth의 변형으로 퇴화해 있었다.** 대화는 이 신호의 가장 좋은 소스다: "제가 해봤는데요"와 "책에서 봤는데요"는 발화에서 구분 가능하다.
 
-**무엇.** (owner, topic) 단위, **P1 projection에 포함**. rev 7까지는 현행 계약을 복제한 단일 enum(`firsthand | secondhand | null`)이었으나 **철회** — 같은 주제에 대해 직접 운영 경험과 책·강의 학습을 *동시에* 가진 유저가 정상이고, 단일 enum은 어느 하나가 다른 하나의 근거를 지워버린다. **provenance별 집계**(유래별로 나눈 구획 — 아래 표의 bucket)로 요청한다:
+**무엇.** (owner, topic) 단위, **P1 projection에 포함**. 현행 계약을 복제한 단일 enum(`firsthand | secondhand | null`)은 요청하지 않는다 — 같은 주제에 대해 직접 운영 경험과 책·강의 학습을 *동시에* 가진 유저가 정상이고, 단일 enum은 어느 하나가 다른 하나의 근거를 지워버린다. **provenance별 집계**(유래별로 나눈 구획 — 아래 표의 bucket)로 요청한다:
 
 ```json
 "experience": {
@@ -312,7 +312,7 @@ POST /{tenant}/persona/statements/search
 | 필드 | 요건 |
 |---|---|
 | `statement_id` | **cross-user 공개 가능한 불변 식별자** (opaque — 원 message id가 아니고 역산 불가). 없으면 우리 decision log가 "어느 근거로 판정했는가"를 남길 수 없고, 삭제·철회 전파(P10-④)를 검증할 수도 없다. 우리 edge 계약의 `evidence_refs` 자리가 이 id를 담는다 |
-| `text` | 계약 ④ 정제 요건 |
+| `text` | 계약 ④ — 추출된 근거문, 주장의 방향·강도 보존 |
 | `said_at` | **발화 시각** (P3-③ 성질 5와 동일 근거) |
 | `topic_id` | scope 내 어느 topic에 걸렸는지 |
 | `kind` | **enum 값과 의미를 계약 문서에 명시** (주장/선호/경험담 등 — judge 프롬프트가 kind별로 가중을 달리할 수 있어야 한다) |
@@ -323,7 +323,7 @@ POST /{tenant}/persona/statements/search
 1. **scope는 단일 필드**: 이전 초안은 `topic_scope`(쌍 목록)와 `owner_ids`를 이중으로 받았는데, 그러면 어느 필드가 권한·비용 경계인지 불명확하다. `scopes` 하나로 통합 — owner 집합은 `scopes`의 owner들로 유도되고, **scope 밖 검색은 없다** (경험: shortlist 밖 전역 검색은 privacy 경계이기도 하고 비용 폭주 경로이기도 하다). 좌표계는 P2 계약 ① 전제.
 2. **공개 topic 소속의 active 발언만 반환한다는 보장** — 발언의 공개성은 소속 topic의 공개 여부를 승계한다(§0.0-6·P10-④). 검색과 **ID batch fetch 양쪽 모두**, 발견층(층 1)과 본문층(층 2) **모두** 동일하다 — 비공개 topic의 발언이 발언 검색 경로로 새면 topic 단위 공개 결정이 무의미해진다. batch에서 비공개 전환분은 P2 계약 ④와 같은 item별 `not_publishable`로 (opaque id를 알고 있다는 것이 읽을 권리가 아니다 — privacy 검사는 read-time 최신, P10-⑦).
 3. `per_owner_limit` 필수 — 비용 상한(cost cap)이지 overfetch(필요분보다 넉넉히 미리 가져오기)가 아니다.
-4. **`text`의 정의를 계약으로**: `text`는 최종 유저에게 노출되지 않는다(§0.0-7 — 추천 이유는 요약·부연만, 원문 인용 배제). 따라서 rev 11까지 요구하던 "cross-user 노출용 정제"는 **철회**하고, 남는 요건은 둘이다: ① 원 대화 통짜가 아니라 **추출된 근거문**이면 충분하다 — 원 message id·conversation 좌표 등 원문 provenance는 응답에 포함하지 않는다(경계를 필요 이상 넓히지 않음, P10-⑤), ② 추출·요약 과정에서 **주장의 방향과 강도는 보존** (stance judge의 입력이므로 중립화 과정에서 stance가 뭉개지면 판정 자체가 불가능해진다). `statement_id`는 decision log의 대체 식별자로서 반드시 필요하다.
+4. **`text`의 정의를 계약으로**: `text`는 최종 유저에게 노출되지 않는다(§0.0-7 — 추천 이유는 요약·부연만, 원문 인용 배제). 따라서 노출용 정제는 요구하지 않고, 요건은 둘이다: ① 원 대화 전문이 아니라 **추출된 근거문**이면 충분하다 — 원 message id·conversation 좌표 등 원문 provenance는 응답에 포함하지 않는다(경계를 필요 이상 넓히지 않음, P10-⑤), ② 추출·요약 과정에서 **주장의 방향과 강도는 보존** (stance judge의 입력이므로 중립화 과정에서 stance가 뭉개지면 판정 자체가 불가능해진다). `statement_id`는 decision log의 대체 식별자로서 반드시 필요하다.
 5. 🟡 **semantic 검색 지원** — vector-free 전제에서 필수 요청은 아니다. 단 persona가 semantic 투자를 하게 되면 우선순위는 층 1(명제↔발언 격차) > topic 검색이라는 의견을 전달한다 (§4 Q4).
 6. 🟡 **동일 owner 내 논점 중복 제거 옵션** (`distinct_viewpoints` 류) — 한 유저가 같은 논점을 20번 말한 것과 서로 다른 논점 5개를 말한 것을 구분해 fetch할 수 있으면 judge 입력의 정보 밀도가 오른다. orthogonal 판정의 재료이기도 하다.
 7. ⚪ (judge 비용 절감용, 추후) (owner, topic)별 **의견 요약 1–2문장** — judge 입력을 원문 N개에서 요약+대표발언으로 줄일 수 있다 (경험: judge 입력 감축이 per_owner 40→10으로 유의미한 비용 차이를 만들었다). evidence 간 batch similarity도 같은 ⚪ 층.
@@ -369,7 +369,7 @@ QID·KG가 사라지면 이 둘이 같이 사라진다. P2의 optional 필드가
 | 관계 종류 | 최소 `subtopic_of` / `related` 2종. ⚪ `contrasting`(대비 관점)은 orthogonal need의 미래 입력으로 어휘에 자리만 |
 | 관계 메타 | 관계별 `confidence` + `extraction_run_id`/`model_version` (P3-④와 같은 이유) |
 | related 확장 | sparse 주제에서 "인접 topic을 아는 다른 유저들"로 pool을 넓히는 경로 — related 관계 기반 검색이 P1에 얹히는지, 별도 endpoint인지는 persona 팀 설계에 맡기되 **가능해야 한다는 요건**은 계약으로 |
-| batch similarity 🟡 (조건부) | **rev 6에서 🔴로 뒀으나 강등** — 근거였던 "persona는 semantic 검색용 표현 공간을 어차피 갖는다"가 vector-free 전제에서 틀렸다. 표현 공간이 없는 persona에게 similarity matrix를 요구하는 것은 우리 coverage를 위해 새 semantic subsystem을 만들라는 요청이 된다. 다양성 판정의 기본 계획은 위의 LLM batch 1회다. 요청은 capability 형태로만: *"재사용 가능한 topic representation을 갖게 된다면 후보 집합의 semantic redundancy/diversity를 batch로 평가할 primitive(matrix든 sparse 이웃이든)를 제공할 수 있는가?"* **제공된다면 행동을 결정하는 값이므로 안정 의미 계약 필수**: 값 범위·방향, 대칭성, self-similarity 규약, 누락/비공개/삭제 key 표현, 입력 순서↔좌표 대응, 판본 선언(P10-③), cross-language 동작, version 간 비교 불가 명시, 동일 version 내 calibration 또는 threshold 권고. embedding 자체의 wire 노출은 요청하지 않는다 |
+| batch similarity 🟡 (조건부) | 필수 요청이 아니다 — 표현 공간이 없는 persona에게 similarity matrix를 요구하는 것은 우리 coverage를 위해 새 semantic subsystem을 만들라는 요청이 된다(vector-free 전제). 다양성 판정의 기본 계획은 위의 LLM batch 1회다. 요청은 capability 형태로만: *"재사용 가능한 topic representation을 갖게 된다면 후보 집합의 semantic redundancy/diversity를 batch로 평가할 primitive(matrix든 sparse 이웃이든)를 제공할 수 있는가?"* **제공된다면 행동을 결정하는 값이므로 안정 의미 계약 필수**: 값 범위·방향, 대칭성, self-similarity 규약, 누락/비공개/삭제 key 표현, 입력 순서↔좌표 대응, 판본 선언(P10-③), cross-language 동작, version 간 비교 불가 명시, 동일 version 내 calibration 또는 threshold 권고. embedding 자체의 wire 노출은 요청하지 않는다 |
 
 **계약.**
 1. 관계는 유저별 topic 위에 걸리므로 (owner, topic) 좌표계(P2-①)를 따른다.
@@ -378,11 +378,11 @@ QID·KG가 사라지면 이 둘이 같이 사라진다. P2의 optional 필드가
 
 ### P8 🔴 상태·실패 구분 — 빈 것과 없는 것
 
-**왜.** (경험: memory-api v2 dev에서 코퍼스가 안 만들어진 상태가 `200 {items:[], total:0}`으로 왔고, 우리 파이프라인은 이를 "후보 0개"로 읽어 호출자에게 **422 — 당신의 요청이 grounding에 실패했다**를 돌려줬다. 상류 데이터 부재가 호출자 탓으로 귀속된 것이다. 이걸 사후에 배포 preflight로 막아야 했다.) persona는 유저별 상시 추출 파이프라인(§0.0-5)이므로 이 문제가 유저 단위로 상시 존재한다: 신규 유저, 추출 미완 유저, 추출 실패 유저. 이 조회는 추천 hot path가 아니라 **배포 preflight·장애 진단·신규 유저 구분**용이다.
+**왜.** (경험: memory-api v2 dev에서 코퍼스가 안 만들어진 상태가 `200 {items:[], total:0}`으로 왔고, 우리 파이프라인은 이를 "후보 0개"로 읽어 호출자에게 **422 — 당신의 요청이 grounding에 실패했다**를 돌려줬다. 상류 데이터 부재가 호출자 탓으로 귀속된 것이다. 이걸 사후에 배포 preflight(배포 전 사전 점검)로 막아야 했다.) persona는 유저별 상시 추출 파이프라인(§0.0-5)이므로 이 문제가 유저 단위로 상시 존재한다: 신규 유저, 추출 미완 유저, 추출 실패 유저. 이 조회는 추천 hot path가 아니라 **배포 preflight·장애 진단·신규 유저 구분**용이다.
 
 **무엇.**
 
-1. **서비스/코퍼스 상태**: `GET /{tenant}/persona/status` — 우리 배포 preflight와 degradation 판단(주기 갱신 캐시로 소비 — 요청마다 호출하지 않는다)이 본다:
+1. **서비스/코퍼스 상태**: `GET /{tenant}/persona/status` — 우리 배포 preflight와 degradation 판단(상류가 준비 안 됐을 때 기능을 줄여 계속 동작할지의 판단; 주기 갱신 캐시로 소비 — 요청마다 호출하지 않는다)이 본다:
 
 ```json
 { "source_owner_count": 1500,        # 대화 데이터가 존재하는 owner 수
@@ -450,18 +450,18 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
    - *ranked 검색* (P1/P5/P6): exact total을 요구하지 않는다 — ranked text 검색에서 total은 행동을 바꾸지 않고, 필요한 것은 **pagination 진행 중의 결과 안정성**뿐이다. `limit` + `next_cursor`(또는 `truncated`), 그리고 같은 질의의 **결정적 순서**(동률 시 안정 tiebreak). 코퍼스가 상시 갱신되므로(§0.0-5) cursor 진행 중의 완전한 순서 고정은 요구하지 않는다 — 중복·누락을 최소화하는 cursor/search-after면 충분하다.
 2. **Null 규약**: `null` 직렬화 vs 키 부재 vs 필드별 의미("없음"/"미계산")를 계약 문서에 명시. (경험: ExcludeNoneRoute + null 의미 미정의 조합이 두 번의 오독을 만들었다.)
 3. **버전 선언**: 응답에 `extraction_run_id`/`model_version`(+`as_of`). 우리 decision log는 provider version을 필수 기록하며 "provider 종류에서 버전을 추론하지 않는다"가 규율이다 — 상류가 버전을 선언해줘야 이 기록이 참이 된다.
-4. **노출 제어 — 결정 단위는 topic (제품 확정, §0.0-6)**: 유저가 topic별로 공개 여부를 결정하고 기본은 비공개다. (rev 11까지의 owner/topic/statement 3층 요청은 이 확정으로 대체 — owner층은 "모든 topic 비공개"의 파생이고, statement층은 소속 topic의 공개 여부를 승계하는 파생값이지 독립 제어가 아니다.) 계약 요청:
+4. **노출 제어 — 결정 단위는 topic (제품 확정, §0.0-6)**: 유저가 topic별로 공개 여부를 결정하고 기본은 비공개다. owner 단위 노출은 "모든 topic 비공개"의 파생이고, 발언의 공개성은 소속 topic을 승계하는 파생값이다 — 발언 단위 독립 제어는 요청하지 않는다. 계약 요청:
    - persona API는 **명시적으로 공개된 topic과 그 소속 발언만** 반환한다 — 응답 전 필터링 (우리에게 도달한 것은 공개분뿐). topic 검색·batch·발언 검색·본문 fetch **전 표면 동일**.
    - **삭제·철회·공개↔비공개 전환의 전파 시점** 명시 (즉시? 다음 갱신 주기?). 유저가 지운 대화의 흔적이 추천 이유로 계속 나오면 안 된다. 특히 공개 플래그는 topic에 살지만 발언 검색은 statement 인덱스를 타므로, **전환이 양쪽 인덱스에 함께 반영**돼야 한다 (P10-⑦-(b)).
    - 요청 body에 **requester owner 사전 제외**(self-exclusion) 지원 여부 — 지원되면 좋지만, **우리 downstream self-exclusion은 그와 무관하게 계속 강제**한다 (defense in depth — 같은 보호를 여러 층에 겹쳐 두는 다층 방어).
    - 우리 계약에는 privacy-owned `discoverable` 자리가 이미 있다 — persona 필터링과 이중이어도 유지한다.
 5. **Cross-user 응답은 전용 최소 projection으로**: owner 본인용 응답 모델을 cross-user 조회에 재사용하지 말 것. (경험: v1 personal entity의 본인용 모델에는 서사적 필드가 있어 cross-owner로 나가면 과노출이었고, 전용 최소 shape를 별도 요청해야 했다.) P1의 `TopicCandidate` 필드 목록이 그 최소 shape 제안이고, **`aliases`/`description`(공개 topic의 표시 표면 — 추천 이유에 나갈 수 있다)은 노출 가능하게 정제된 값만, 원 message id·conversation 좌표는 반환 금지, 대체 식별자는 opaque `statement_id`**가 요건이다. statement `text`는 최종 유저에게 노출되지 않으므로(§0.0-7) 노출용 정제 대상이 아니다 — 요건은 P5-④.
 6. **빈 결과 ≠ 이용 불가**: P8과 동일 — 모든 endpoint에서 일관되게.
-7. **읽기 모델 — 각 호출은 최신 값을 읽는다. snapshot pinning은 요청하지 않는다** (rev 8–10에 있던 cross-endpoint snapshot pinning은 rev 11에서 **철회**). 철회 근거 둘: ① persona는 batch release가 아니라 유저별 상시 증분 갱신(§0.0-5)이라, 전역 시점 고정 요구는 release 경계가 없는 저장 모델에 MVCC류 판본 보존을 우리 편의로 강제하는 것이 된다 — "의미를 잠그고 구현을 잠그지 않는다"는 이 문서의 잠금 원칙 위반. ② run 중 어긋남의 실제 피해를 따라가 보면 "후보 하나가 판정에서 빠지거나 순위가 약간 달라짐"이 전부다 — 추천은 유일 정답 조회가 아니고, 소비 시점(추천받은 유저가 실제로 대화 시작)에는 어차피 다음 갱신이 반영된 세계이며, run 자체가 초 단위다. pinning이 막던 것을 대체하는 계약:
+7. **읽기 모델 — 각 호출은 최신 값을 읽는다. snapshot pinning(한 번의 추천 처리 — 이하 run — 가 도는 동안 읽는 데이터 판본을 하나로 고정하는 것)은 요청하지 않는다.** 근거 둘: ① persona는 batch release가 아니라 유저별 상시 증분 갱신(§0.0-5)이라, 전역 시점 고정 요구는 release 경계가 없는 저장 모델에 다중 버전 보존(MVCC류)을 우리 편의로 강제하는 것이 된다 — "의미를 잠그고 구현을 잠그지 않는다"는 이 문서의 잠금 원칙 위반. ② run 중 어긋남의 실제 피해는 "후보 하나가 판정에서 빠지거나 순위가 약간 달라짐"이 전부다 — 추천은 유일 정답 조회가 아니고, 소비 시점(추천받은 유저가 실제로 대화 시작)에는 어차피 다음 갱신이 반영된 세계이며, run 자체가 초 단위다. pinning이 막던 것을 대체하는 계약:
    - (a) **각 단계는 그 시점의 최신 값을 읽고, 처리 중 사라진 key는 item별 명시 상태로 돌아온다** — `not_found`(재추출 등으로 소멸)·`not_publishable`(비공개 전환). 우리는 어느 쪽이든 **그 후보만 제거하고 계속** 진행한다 (P2-④·P5 batch).
    - (b) **모든 중간 상태는 유효한 상태여야 한다** — 이것이 시점 고정을 대체하는 실제 요건이다. 두 조항으로 나뉜다:
      - *기존 topic에의 evidence 증분 반영*: 언제 읽어도 "조금 덜 최신일 뿐인 유효한 프로필"이므로 아무 요구가 없다 — 최신 값 그대로.
-     - *신규 topic*: rev 11에서는 "evidence 처리 완료 전 비노출"을 별도 요구했으나, **기본 비공개 + 명시적 공개 모델(§0.0-6)이 이를 구조적으로 흡수한다** — 유저가 공개를 켜는 시점에는 최초 추출이 끝나 있으므로 미완성 집계값(절반 처리된 depth/consistency로 P1 `filters`가 오판, 부분 증거로 stance 판정)이 노출될 창 자체가 없다. 남는 요건은 한 줄: **공개 플래그 전환(공개↔비공개 양방향)이 topic 검색과 발언 검색 양쪽 표면에 일관되게 반영**될 것 — 공개를 켰는데 발언 인덱스는 아직이거나, 껐는데 발언 쪽만 남는 반쪽 상태 금지 (전파 시점은 Q5).
+     - *신규 topic*: 생성 중인 topic이 미완성 집계값으로 노출되는 문제(절반 처리된 depth/consistency로 P1 `filters`가 오판, 부분 증거로 stance 판정)는 **기본 비공개 + 명시적 공개 모델(§0.0-6)이 구조적으로 막는다** — 유저가 공개를 켜는 시점에는 최초 추출이 끝나 있다. 남는 요건은 한 줄: **공개 플래그 전환(공개↔비공개 양방향)이 topic 검색과 발언 검색 양쪽 표면에 일관되게 반영**될 것 — 공개를 켰는데 발언 인덱스는 아직이거나, 껐는데 발언 쪽만 남는 반쪽 상태 금지 (전파 시점은 Q5).
    - (c) **갱신 진행 중에도 그 유저의 기존 값은 계속 조회된다** (2026-08-14 persona 팀 확인 — 계약으로 기록). 갱신 중 데이터가 잠깐 사라지면 그 유저가 주기적으로 추천에서 증발한다 (P8 `pending` 규약과 짝).
    - (d) privacy는 이 모델에서 자연 성립한다 — 원래도 publishability는 read-time 최신 검사가 요건이었고(④), 이제 모든 읽기가 최신이므로 "pin된 과거 판본이 철회 항목을 노출"하는 충돌 자체가 없다.
    - 🟡 재추출을 넘는 `statement_id` 지속성(같은 발언 = 같은 id)은 (a)의 손실 창을 줄이는 개선 — 요구가 아니라 희망 사항 (P5).
@@ -472,12 +472,12 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
 **왜.** 좋은 성능은 wire schema만으로 검증할 수 없다. (경험 두 가지: 우리 eval 하네스(평가를 실행하는 틀)는 HTTP 어댑터를 타지 않아 어댑터 회귀를 구조적으로 볼 수 없었고, stance 검색의 lexical-recall gap은 전용 recall eval을 따로 설계해서야 측정 가능해졌다. schema가 맞아도 품질은 따로 재야 한다.) 그리고 **vector-free 전제에서는 평가가 부가 기능이 아니라 기능의 일부다** — query expansion과 검색 대상 텍스트가 recall의 전부이므로, golden evaluation 없이는 "기능이 목표 성능으로 동작하는가"를 판단할 수단 자체가 없다.
 
 **등급.**
-- 🔴 **출시 게이트** (이것 없이 API는 만들 수 있지만 출시 판단은 불가): frozen corpus/snapshot · HTTP 계약 fixture · "query → relevant owner/topic" label 기반 need별·채널별 recall 측정 · 정제 전후 stance 보존 평가 · 핵심 신호(depth/consistency) confidence calibration.
+- 🔴 **출시 게이트** (이것 없이 API는 만들 수 있지만 출시 판단은 불가): frozen corpus/snapshot · HTTP 계약 fixture · "query → relevant owner/topic" label 기반 need별·채널별 recall 측정 · 추출·요약 전후 stance 보존 평가 · 핵심 신호(depth/consistency) confidence calibration.
 - 🟡 **운영 개선**: shadow/overlap 기간(shadow — 신버전을 응답에 반영하지 않고 병행 실행해 구버전과 비교하는 기간) · fragmentation 추세 측정 · 장기 deprecation 프로세스.
 
 **소유권을 먼저 가른다** — persona 팀이 검색 golden set까지 만들면 자기 검색기를 자기 기준으로 평가하는 순환이 생긴다 (우리가 계약 테스트에서 잠근 것과 같은 순환이다):
 
-- **persona 소유**: 추출 precision, confidence calibration, 정제 전후 의미 보존.
+- **persona 소유**: 추출 precision, confidence calibration, 추출·요약 전후 의미 보존.
 - **Discovery/product 소유**: "추천 query → relevant owner/topic" relevance label, need별 recall, 최종 ranking 품질.
 - **공동**: frozen corpus, cross-lingual case, fragmentation case, 버전 overlap snapshot.
 
@@ -488,7 +488,7 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
 | 독립 작성된 대표 fixture (endpoint별 응답 JSON) | 우리 계약 테스트가 consumer model에서 payload를 유도하는 순환을 피한다 (우리 쪽 잠근 규율) |
 | 평가 가능한 **frozen snapshot** (corpus 고정본) | 우리가 paraphrase·cross-lingual golden set을 만들어 P1 recall·query expansion 품질을 **독립 측정**할 기반 — label은 우리/공동 소유 |
 | topic fragmentation/과병합 측정치 | P6 병합 판정 임계값을 우리가 잡을 근거 |
-| statement 정제 전후 stance 보존 평가 | P5-④ 정제 요건("방향·강도 보존")이 실제로 지켜지는지 — 지켜지지 않으면 judge 전체가 무효 |
+| statement 추출·요약 전후 stance 보존 평가 | P5-④ 요건("주장의 방향·강도 보존")이 실제로 지켜지는지 — 지켜지지 않으면 judge 전체가 무효 |
 | depth·HEXACO 등 confidence의 calibration 자료 | confidence를 gate 보정에 쓰려면 그 값이 calibrated인지 알아야 한다 (P3-⑤가 필수가 된 만큼 이 짝도 필수에 가깝다) |
 | 모델 버전 교체 시 shadow/overlap 기간 + 신구 동일-owner 비교 snapshot | 전 유저 점수가 일제히 이동하는 이벤트를 우리 지표 회귀와 구분 (P3-④·P9 계약의 운영 짝) |
 | breaking semantic change·deprecation 통지 규약 | 필드 의미가 조용히 바뀌는 것이 가장 비싼 장애다 — 이 문서의 절반이 그 사후 수습 경험에서 나왔다 |
