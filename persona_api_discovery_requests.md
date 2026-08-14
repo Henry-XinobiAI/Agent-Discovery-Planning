@@ -1,6 +1,6 @@
-# Persona 팀 데이터·API 요청서 (Discovery/agent-recommendation-api) — rev 12 (draft)
+# Persona 팀 데이터·API 요청서 (Discovery/agent-recommendation-api) — rev 13 (draft)
 
-작성: 2026-08-13 · 상태: **내부 리뷰용 초안** (발신 전 리뷰 필요) · 개정 요지는 부록의 개정 이력 참조 (최근: rev 11 = snapshot pinning 철회 → 최신 값 읽기 · rev 12 = topic 공개 모델 확정 + statement 본문은 내부 판정 전용)
+작성: 2026-08-13 · 상태: **내부 리뷰용 초안** (발신 전 리뷰 필요) · 개정 요지는 부록의 개정 이력 참조 (최근: rev 12 = topic 공개 모델 확정 + statement 본문은 내부 판정 전용 · rev 13 = owner별 상태 조회를 진단용 🟡로 강등)
 
 > **검색 전제 (rev 7에서 확정):** topic 탐색은 **vector-free agentic search**다 — LLM이 query를 생성·확장·보정하며 persona의 **텍스트 검색**을 반복 호출하고, LLM이 후보를 판정한다. persona 쪽에 embedding/vector 인프라를 전제하는 요청은 이 문서에서 전부 "persona가 독립적으로 표현 공간을 갖게 될 경우의 선택적 최적화"로 강등했다. vector-free에서 recall을 지키는 책임 분담: persona = **검색 대상 텍스트 재료를 충실히**(name·aliases·search_aliases·description·keywords 전체가 검색 대상) + **다국어 search alias 생성**(P1 계약 ⑤ — "커피" 질의가 "coffee" topic을 찾는 1차 메커니즘), Discovery = **query expansion**(paraphrase·표현 변형; 번역은 보완), 검증 = P11 golden set(정답 label을 미리 확정해 둔 평가 기준 데이터).
 
@@ -376,13 +376,13 @@ QID·KG가 사라지면 이 둘이 같이 사라진다. P2의 optional 필드가
 2. **P6 similar와 P7 related는 다른 것이고, 이 구분이 계약이어야 한다**: similar = *같은 주제의 다른 표현* (파편 병합 후보 — pool에 합류), related = *인접한 다른 주제* (확장 후보 — sparse일 때만, `via` 표시와 함께 합류). 두 API의 의미가 겹치면 같은 topic이 병합 경로와 확장 경로로 두 번 들어오는 중복 확장이 생긴다. (현행 코드도 direct edge와 neighbor 유입을 `via`로 구분하고 direct가 선점한다 — 같은 구분이 topic 세계에도 필요하다.)
 3. orthogonal의 **판정 설계**는 추후다 — 단 P7이 예약하는 것은 *contrasting topic* 관계 어휘(⚪)뿐이고, *orthogonal viewpoint*(같은 명제·다른 논점)의 회수 재료는 P5(층 1의 kind·epistemic·semantic 검색, 층 2의 논점 중복 제거)가 **지금** 확보한다. 저장된 orthogonal 라벨은 어느 쪽에서도 요청하지 않는다.
 
-### P8 🔴 상태·실패 구분 — 빈 것과 없는 것
+### P8 상태·실패 구분 — 빈 것과 없는 것 (서비스 상태 🔴 · owner별 상태 🟡)
 
-**왜.** (경험: memory-api v2 dev에서 코퍼스가 안 만들어진 상태가 `200 {items:[], total:0}`으로 왔고, 우리 파이프라인은 이를 "후보 0개"로 읽어 호출자에게 **422 — 당신의 요청이 grounding에 실패했다**를 돌려줬다. 상류 데이터 부재가 호출자 탓으로 귀속된 것이다. 이걸 사후에 배포 preflight(배포 전 사전 점검)로 막아야 했다.) persona는 유저별 상시 추출 파이프라인(§0.0-5)이므로 이 문제가 유저 단위로 상시 존재한다: 신규 유저, 추출 미완 유저, 추출 실패 유저. 이 조회는 추천 hot path가 아니라 **배포 preflight·장애 진단·신규 유저 구분**용이다.
+**왜.** (경험: memory-api v2 dev에서 코퍼스가 안 만들어진 상태가 `200 {items:[], total:0}`으로 왔고, 우리 파이프라인은 이를 "후보 0개"로 읽어 호출자에게 **422 — 당신의 요청이 grounding에 실패했다**를 돌려줬다. 상류 데이터 부재가 호출자 탓으로 귀속된 것이다. 이걸 사후에 배포 preflight(배포 전 사전 점검)로 막아야 했다.) 새 환경 배포·인덱스 재구축·추출 파이프라인 장애 같은 **서비스 수준 부재**를 "후보 0개"로 오독하지 않기 위한 표면이다. 추천 hot path가 아니라 **배포 preflight·장애 진단**용이다.
 
 **무엇.**
 
-1. **서비스/코퍼스 상태**: `GET /{tenant}/persona/status` — 우리 배포 preflight와 degradation 판단(상류가 준비 안 됐을 때 기능을 줄여 계속 동작할지의 판단; 주기 갱신 캐시로 소비 — 요청마다 호출하지 않는다)이 본다:
+1. 🔴 **서비스/코퍼스 상태**: `GET /{tenant}/persona/status` — 우리 배포 preflight와 degradation 판단(상류가 준비 안 됐을 때 기능을 줄여 계속 동작할지의 판단; 주기 갱신 캐시로 소비 — 요청마다 호출하지 않는다)이 본다:
 
 ```json
 { "source_owner_count": 1500,        # 대화 데이터가 존재하는 owner 수
@@ -393,7 +393,7 @@ QID·KG가 사라지면 이 둘이 같이 사라진다. P2의 optional 필드가
   "indexes": { "topics": "ready", "statements": "ready", "hexaco": "building" } }
 ```
 
-2. **유저 상태 — 데이터 종류별**: topic은 ready인데 statement 인덱스나 HEXACO는 pending일 수 있다. 단일 state로는 표현이 안 되므로:
+2. 🟡 **owner별 상태 — 진단용 (파이프라인 비호출)**: 추천 파이프라인에는 이 조회를 부를 지점이 없다 — 후보는 검색으로 유입되고, 검색에 안 잡힌 유저는 추천이 안 될 뿐이며, 기본 비공개 모델(§0.0-6)에서 pending 유저와 "공개 topic 0개" 유저는 우리 행동상 동일하다(둘 다 검색 비노출·부정 결과 캐시 없음 → 영구 배제 메커니즘 없음). 파이프라인이 필요로 하던 것은 batch item별 `not_extracted`(P2-④)와 "갱신 중 기존 값 서빙"(P10-⑦-(c))으로 이미 확보됐다. 남는 용도 둘: **"이 유저는 왜 추천이 안 되나" 진단**(지원·디버깅), 그리고 **P9가 위임한 진행 상태(pending/failed) enum의 좌석**. topic은 ready인데 statement 인덱스나 HEXACO는 pending일 수 있으므로 데이터 종류별로:
 
 ```json
 { "owner_id": "...",
@@ -404,7 +404,7 @@ QID·KG가 사라지면 이 둘이 같이 사라진다. P2의 optional 필드가
 
 P1/P6의 `TopicCandidate`에는 해당 데이터 종류의 `extraction_state`/`as_of`만 싣고, 전체 상태는 이 조회로.
 
-**계약.** "이 유저는 topic이 0개다(ready, 정상)"와 "이 유저는 아직 추출이 안 됐다(pending)"가 **wire에서 구분**되기만 하면 형태는 무엇이든 좋다. 전자는 추천 제외가 맞고, 후자를 전자처럼 다루면 신규 유저가 조용히 영구 배제된다. 그리고 유저별 상시 갱신 전제에서 `pending`은 **최초 추출 전에만** 쓰여야 한다 — 이미 데이터가 있는 유저의 주기 갱신 중에는 `ready` 유지 + 기존 값 서빙(§0.0-5·P10-⑦-(c))이며, 갱신마다 pending으로 돌아가면 그 유저가 주기적으로 추천에서 증발한다.
+**계약.** "이 유저는 topic이 0개다(ready, 정상)"와 "이 유저는 아직 추출이 안 됐다(pending)"가 **wire에서 구분**되기만 하면 형태는 무엇이든 좋다 — 이 구분은 endpoint 등급과 무관한 **상태값의 의미 계약**이고, 이 상태가 나타나는 모든 자리(owner별 조회·batch item state)에 동일 적용된다. 그리고 유저별 상시 갱신 전제에서 `pending`은 **최초 추출 전에만** 쓰여야 한다 — 이미 데이터가 있는 유저의 주기 갱신 중에는 `ready` 유지 + 기존 값 서빙(§0.0-5·P10-⑦-(c))이며, 갱신마다 pending으로 돌아가면 그 유저가 주기적으로 추천에서 증발한다.
 
 ### P9 🟡 HEXACO + InteractionStyle — 지금은 계약 예약, 소비는 추후
 
@@ -542,7 +542,7 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
 | P5 | evidence 검색 **2층** — 발견층(`statement_id` 포함, 본문 없음) + 본문층(ID batch fetch + scoped search) | 🔴 | for/against·experience·orthogonal의 후보 회수가 topic 순위에 종속 + 발견↔judge 입력 단절 |
 | P6 | 파편화: 판정=우리(agentic 반복 검색), 재료=persona — `/similar`는 🟡 조건부 | 🔴 | pool 누수 또는 과병합 |
 | P7 | topic 관계 계약; 다양성 판정 = LLM batch 1회(우리) — batch similarity는 🟡 조건부 | 🔴 | coverage need·sparse 주제 추천 소멸 |
-| P8 | 상태·실패 구분 (서비스 상태 + owner×데이터종류·최초 추출 전만 pending) | 🔴 | 상류 부재가 호출자 422로 귀속 (재발) / 갱신 중 유저가 주기적으로 추천에서 증발 |
+| P8 | 상태·실패 구분 — 서비스 상태 🔴 + owner별 상태 🟡(진단용·파이프라인 비호출) | 🔴/🟡 | 상류 부재가 호출자 422로 귀속 (재발) / "왜 추천 안 되나" 진단 불가 |
 | P9 | HEXACO + **InteractionStyle** 원자료 (confidence·insufficient 구분·동의 정책) | 🟡 | 추후 surface 차단; 단 소비 설계는 전부 신규 |
 | P10 | 운영 계약 (pagination 이원화·null·버전·**공개 topic 단위 노출**·최신 값 읽기·**공개 전환 양방향 전파**·접근 경계) | 🔴 | v1→v2에서 겪은 함정 전부 재발 + 공개 전환의 반쪽 반영(숨긴 topic의 발언이 발언 검색에 잔존) |
 | P11 | 품질·평가 지원 — **출시 게이트**(frozen corpus·fixture·recall label·정제 보존·calibration) + 운영 개선 🟡 | 🔴/🟡 | vector-free에서 "목표 성능 달성" 판단 수단 자체가 없음 |
@@ -570,3 +570,4 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
 - **rev 10**: P1 계약 ⑦ **원시 필드 필터** 신설 — need별 최소 요건(`min_evidence_count`·`min_depth`·`min_consistency`·`experience` bucket 존재·`evidence_last_seen_after`)을 요청 파라미터로 걸러 받는다. 필터 없이는 게이트 탈락분만큼 top-N의 실사용 후보가 줄고 N등 밖의 요건 충족 후보는 회수 불가(대안이 overfetch뿐). 경계 유지: 문턱값·조합 판정(maturity류)은 우리 소유 — persona에는 원시 필드 비교만 요청.
 - **rev 11**: **유저별 상시 증분 갱신 전제 확정(§0.0-5) → snapshot pinning 철회.** persona는 batch release가 아니라 유저별 그때그때 처리이므로 전역 시점 고정 요구는 release 없는 저장 모델에 MVCC류 부담을 강제하는 것(잠금 원칙 위반)이고, run 중 어긋남의 실제 피해는 "후보 하나 손실" 수준 — 소비 시점에는 어차피 다음 갱신이 반영된 세계다. 대체 읽기 모델(P10-⑦ 재작성): (a) 각 단계는 최신 값, 사라진 key는 item별 `not_found`/`not_publishable` → **그 후보만 제거하고 계속**(P2-④·P5의 "무결성 위반 → 재시작" 규칙 삭제), (b) **모든 중간 상태는 유효해야 한다** — 기존 topic의 evidence 증분은 무규약(항상 유효), **신규 topic은 evidence 처리 완료 후 모든 조회 표면에 한 묶음으로 원자적 공개**(절반 처리된 집계값으로 filters 오판·부분 증거 stance 판정 방지), (c) 갱신 중에도 기존 값 계속 조회(2026-08-14 확인 — P8 `pending`은 최초 추출 전에만), (d) privacy read-time 검사는 자연 성립(pin-철회 충돌 자체가 소멸). `statement_id`의 재추출 간 지속성은 🟡 희망 사항으로 강등. wire 스케치 전체에서 `snapshot_id` 제거, Q11 해소(신규 확인 항목: 원자적 공개 보장 가능 여부), Q2 부분 해소, P8에 "갱신 중 pending 회귀 금지" 규약 추가, P10-①에서 snapshot 안정성 문구를 cursor 최소 보장으로 완화.
 - **rev 12**: **topic 공개 모델 확정(§0.0-6·7) 반영.** 제품 확정 둘: ① 노출 결정 단위 = topic(유저별 공개 선택, **기본 비공개** — 명시 공개분만 검색·추천 대상, persona가 공개 필드 관리), ② **발언 본문은 최종 유저 비노출**(내부 judge 재료 — 추천 이유는 요약·부연만, **원문 인용 배제로 잠금**). 파생 수정: (a) P10-④ 노출 3층 철회 → topic 단위 확정(owner층=파생, statement층=topic 승계) + 공개 전환의 topic/statement 양쪽 인덱스 동시 반영 요건, (b) P5-④ `text` 노출용 정제 요구 철회 → "추출된 근거문 + 방향·강도 보존"만 잔존, P5-② 경계를 "공개 topic 소속 발언"으로 정밀화, (c) P10-⑦-(b) 신규 topic 원자적 공개 요건은 기본 비공개 모델이 구조적으로 흡수 → "공개 플래그 양방향 일관 전파" 한 줄로 축소(Q5 합류, Q11 갱신), (d) P10-⑤에서 `text`를 노출 정제 대상에서 제외(`aliases`/`description`은 유지 — 추천 이유에 나갈 수 있는 표면), (e) P1 계약 ①에 "검색 모집단 = 공개 topic만 — pool 상한은 공개 비율" 명시, P8 status에 `publishable_topic_count` 추가, §3에 비요청 항목(노출용 정제·statement 단위 publishability) 기록.
+- **rev 13**: **P8 owner별 상태 조회를 🟡 진단용으로 강등** (서비스 상태는 🔴 유지). 근거: 추천 파이프라인에 이 조회를 부를 지점이 없다 — 후보는 검색 유입이고, 기본 비공개 모델에서 pending 유저와 "공개 topic 0개" 유저는 우리 행동상 동일(검색 비노출·부정 캐시 없음 → "신규 유저 영구 배제" 논거 소멸), 파이프라인 필요분은 batch item `not_extracted`(P2-④)와 갱신 중 기존 값 서빙(P10-⑦-(c))으로 이미 확보. 남는 용도 = 진단("왜 추천 안 되나") + P9 진행 상태 enum의 좌석. pending 의미 계약(최초 추출 전에만·ready/0개와 구분)은 등급과 무관하게 유지 — 상태가 나타나는 모든 자리에 적용.
