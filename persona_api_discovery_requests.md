@@ -124,7 +124,7 @@ POST /{tenant}/persona/topics/search
    - query별 **cap 설정 가능** (요청 파라미터), 또는 query별 **독립 검색 모드** (우리가 호출을 나눠 merge 소유 — 기본 선호).
    - 서버가 merge를 제공한다면 그 **정책과 query별 기여량을 응답에 공개**.
    - *observability(계측 가능성)*: 결과에 **`matched_query_indices`** — merge 정책과 무관하게 expansion coverage 측정에 필요하다. 관련도 score가 아니므로 계약 ②와 충돌하지 않는다.
-4. 빈 결과와 "추출이 아직 안 된 코퍼스/유저"는 구분돼야 한다 → P8.
+4. 빈 결과와 "추출이 아직 안 됨"은 구분돼야 한다 — 서비스/코퍼스 수준은 P8, 유저 단위는 P2-④의 batch item `not_extracted`(rev 13: owner별 상태 조회는 파이프라인이 부르지 않는다).
 5. **다국어 계약 — cross-lingual recall의 1차 메커니즘은 storage-side search alias 생성이다.** user-local generalized topic은 언어까지 파편화된다: 유저가 영어로만 대화해서 topic이 "coffee"로 저장됐다면, "커피"로 질의하는 유저는 그 topic을 영원히 못 찾는다 — **관측된 alias의 인덱싱만으로는 안 풀린다** (그 유저는 "커피"라고 말한 적이 없으므로 관측 alias가 없다). 요청:
    - **(a) search alias 생성(enrichment)**: topic 생성/갱신 시 name(+aliases)에서 **서비스 지원 언어(한국어·영어·일본어 등 — 언어 셋은 Q12)의 번역·표기 변형을 생성해 검색 인덱스에 포함**한다. "커피" 질의 → "coffee" topic이 직접 hit되는 것이 목표다. topic당 1회 생성이므로, 요청마다 우리가 번역을 추측하는 것보다 결정적이고 싸다.
    - (b) 관측 alias와 생성 alias의 **구분 유지**(`aliases` vs `search_aliases`) — 관측 alias는 유저 발화 유래라 정제 대상(P10-⑤)이고, 생성 alias는 name 파생이라 부담이 다르다. 표시·rerank에는 관측만, 검색에는 둘 다.
@@ -311,7 +311,7 @@ POST /{tenant}/persona/statements/search
 
 | 필드 | 요건 |
 |---|---|
-| `statement_id` | **cross-user 공개 가능한 불변 식별자** (opaque — 원 message id가 아니고 역산 불가). 없으면 우리 decision log가 "어느 근거로 판정했는가"를 남길 수 없고, 삭제·철회 전파(P10-④)를 검증할 수도 없다. 우리 edge 계약의 `evidence_refs` 자리가 이 id를 담는다 |
+| `statement_id` | **불변 opaque 식별자** — 원 message id가 아니고 역산 불가라, 유저 경계를 넘어 전달·기록해도 원 대화 좌표가 새지 않는다. 없으면 우리 decision log가 "어느 근거로 판정했는가"를 남길 수 없고, 삭제·철회 전파(P10-④)를 검증할 수도 없다. 우리 edge 계약의 `evidence_refs` 자리가 이 id를 담는다 |
 | `text` | 계약 ④ — 추출된 근거문, 주장의 방향·강도 보존 |
 | `said_at` | **발화 시각** (P3-③ 성질 5와 동일 근거) |
 | `topic_id` | scope 내 어느 topic에 걸렸는지 |
@@ -522,7 +522,7 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
 - Q3. cross-user 정규화(canonical **topic + facet** space)의 로드맵이 있는지 — 있다면 우리의 query-local facet 분류(P7)와 같은-주제 판정(P6 B안)을 단계적으로 대체할 수 있다.
 - Q4. semantic 검색/표현 공간에 대한 독립적 계획이 있는지 — 있다면 우리 의견은 투자 순서가 **evidence 발견층(P5 층 1) > topic 검색**이라는 것이고, 그때 batch similarity(P7)·`/topics/similar`(P6)·cross-lingual 매칭이 선택적 최적화로 활성화된다. 없다면 이들은 전부 비요청이다.
 - Q5. 삭제·철회·**공개↔비공개 전환(양방향)**의 전파 시점 — 즉시인지 다음 갱신 주기인지, 그리고 topic 검색과 statement 검색 **양쪽 인덱스에 함께** 반영되는지 (P10-④·P10-⑦-(b)). `statement_id`(P5)로 우리가 전파를 검증할 수 있는지.
-- Q6. statement `text`의 정제 수준 — 원문/정제문 중 무엇을 계획 중인지, 정제 시 stance 방향·강도 보존이 가능한지 (P5-④).
+- Q6. statement `text`의 형태 — 원 발화 그대로인지 추출·요약된 근거문인지 무엇을 계획 중인지, 추출·요약 시 주장의 방향·강도 보존이 가능한지 (P5-④; 노출용 정제는 §0.0-7로 비요청).
 - Q7. 접근 경계 — P10-⑧의 5개 항목(workload identity·tenant 통제·batch 상한·audit·경계 소유자)에 대한 persona 팀의 계획.
 - Q8. evidence 발견층(P5 층 1)의 projection 경계 — **같은 publishability·동의 경계 안에서** 본문층보다 작은 projection(좌표만)으로 운용하는 것이 맞는지, persona 쪽 필터링 층이 두 층을 동일하게 다루는지.
 - Q9. InteractionStyle — 어디까지 추출 가능한지, 그리고 **표현 shape**: global baseline / 언어별 / context별 분산·범위 / 최근 가중 중 무엇이 현실적인지 (P9) — 가능 범위와 shape에 따라 매칭 설계가 달라진다.
@@ -545,7 +545,7 @@ GET /{tenant}/persona/owners/{owner_id}/interaction-style     # + batch (HEXACO�
 | P8 | 상태·실패 구분 — 서비스 상태 🔴 + owner별 상태 🟡(진단용·파이프라인 비호출) | 🔴/🟡 | 상류 부재가 호출자 422로 귀속 (재발) / "왜 추천 안 되나" 진단 불가 |
 | P9 | HEXACO + **InteractionStyle** 원자료 (confidence·insufficient 구분·동의 정책) | 🟡 | 추후 surface 차단; 단 소비 설계는 전부 신규 |
 | P10 | 운영 계약 (pagination 이원화·null·버전·**공개 topic 단위 노출**·최신 값 읽기·**공개 전환 양방향 전파**·접근 경계) | 🔴 | v1→v2에서 겪은 함정 전부 재발 + 공개 전환의 반쪽 반영(숨긴 topic의 발언이 발언 검색에 잔존) |
-| P11 | 품질·평가 지원 — **출시 게이트**(frozen corpus·fixture·recall label·정제 보존·calibration) + 운영 개선 🟡 | 🔴/🟡 | vector-free에서 "목표 성능 달성" 판단 수단 자체가 없음 |
+| P11 | 품질·평가 지원 — **출시 게이트**(frozen corpus·fixture·recall label·추출 전후 stance 보존·calibration) + 운영 개선 🟡 | 🔴/🟡 | vector-free에서 "목표 성능 달성" 판단 수단 자체가 없음 |
 
 ## 6. 발신 형태 (예고 — 내용 확정 후 분리)
 
