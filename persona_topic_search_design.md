@@ -1,4 +1,4 @@
-# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 4
+# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 5
 
 작성: 2026-08-20 · 상태: **설계 기준 (초안)** — 2026-08-19 회의 결정 + 2026-08-20 설계 리뷰·외부 리뷰 반영. §5의 열린 결정이 닫힐 때마다 rev-up하고, 전부 닫히면 확정으로 승격한다. 개정 이력은 문서 끝.
 
@@ -183,16 +183,29 @@ mock과의 대조에서 합의/유지할 것:
   label 집합**(2차 gate 통과분, 대표 topic 먼저)으로 확정. 능력 태그("research"/"teaching" 류)는
   persona 추출물에서 나올 수 없는 값이라 계약에서 제외. **owner의 전체 topic 목록 금지** —
   매칭 집합만 보낸다(요청 관련성 + 최소 노출). label 언어(현재 영어)는 Q3.
-- **`name`/`description`은 우리 응답이 아니다 (열림 — Q10).** agent 표시 데이터는 bourbon-api
-  레지스트리 소관. 기본안은 클라이언트 hydration(우리는 `agent_id`만)이고, bourbon-api와의 논의
-  결과에 따라 클라이언트 계약이 바뀔 수 있다.
+- **`name`/`description`은 우리 응답이 아니다 (열림 — Q10, 기획 gate).** agent 표시 데이터는
+  bourbon-api 레지스트리 소관. 실사: personal agent의 `name`은 owner 유저 이름 복사본이고
+  `description`은 **항상 NULL**(채우는 경로 없음 — `personal_agents/service.py`). bourbon-agent
+  팀도 확인(2026-08-20): "지금은 비어 있고 공개 시점엔 채워야 할 것 같다. 기획안이 description을
+  안 보여주면 응답엔 불필요"— 즉 **응답에 무엇이 실릴지는 기획안(추천 카드에 뿌릴 데이터)이
+  결정**하고, 그 전까지 기본안은 클라이언트 hydration(우리는 `agent_id` + `matched_topics`만).
+  후보 소스 정리: name ← bourbon-api `agents.name` / description ← bourbon-agent 자기 store의
+  sharable persona(bio) — bourbon-api에는 채울 데이터가 없다.
 - **실패 의미론을 접지 않는다.** 클라이언트는 422 `grounding_failed`(모델이 topic을 고쳐 재호출
   가능)·422 ambiguous·503 unavailable(재시도/불가 안내)·200+빈 목록(진짜 없음)을 구분해야 한다.
   현행 mock 배선은 전부 "unavailable"로 접는다 — 연동 시 분기 요청.
 - **`need_type` 필드 불필요** — 1차 범위 축소(§0)로 소멸.
-- **`room_id`는 우리 계약 밖.** 현행 클라이언트 코드에서 room_id는 로그 한 줄 외에 소비처가 없고,
-  room 내 agent 제외 같은 용도는 클라이언트가 이미 가진 `room_members`로 자체 처리 가능하다.
-  room 맥락이 eligibility에 필요해지는 날 `eligibility_context`로 받는다.
+- **`room_id`는 우리 계약 밖 (확정 — 2026-08-20 bourbon-agent 확인).** 그쪽 답: "방 관련 정보를
+  더 요청할 수 있어서 넣었다" — 즉 현재 정의된 동작이 없는 예비 필드다. 동작 없는 필드는 계약
+  부채이므로 우리 요청 스키마에 넣지 않는다. room 맥락이 실제로 필요해지는 날, 그 동작에 맞는
+  필드(`eligibility_context` 또는 제외 목록)를 그때 추가한다.
+- **room 내 agent 제외 — deferred (2026-08-20 합의).** 1차 시나리오는 DM에서 자기 personal
+  agent가 추천하는 것이라 "같은 방의 타인 agent" 케이스 자체가 없다 → OBT까지 보류. **재개
+  트리거 = group room에서의 추천 도입.** 그때를 위한 메모 둘: ⑴ 충돌 확률은 균등하지 않다 —
+  같은 방 멤버는 topic이 상관되어 있어(같은 관심사로 모인 방) 추천 충돌은 무작위 가정보다
+  **높게** 나온다. ⑵ 제외는 응답 후 클라이언트 필터가 아니라 **cap 앞 서버 측**이어야 한다
+  (후필터는 `max_results`를 깎는다 — self-exclusion과 같은 이유). 형태는 room_members 통째가
+  아니라 **제외할 owner id 목록**(`exclude_owner_ids` 류)으로 받는다.
 - **`context`는 가능하면 실제 대화 턴으로.** 모델이 쓴 요약 문자열보다 task payload의
   `context_messages`(구조화된 턴)가 grounding 재료로 낫다.
 
@@ -286,7 +299,7 @@ BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동�
 | Q7 | owner 수준 gate의 집계 의미론 — 기본은 any-pass(§1-⑦). topic 간 evidence 합산 등 진짜 집계를 도입할지, 한다면 need별로 어떤 연산인지 | 우리 (eval 선행) | 열림 |
 | Q8 | **추천 유형(need_type) 체계 전체 재설계** — persona가 실제 제공하는 정보가 취합된 뒤, 새 구조 위에서 2차 추천 유형(경험·stance·coverage 상당 포함 여부, claims 인덱스 여부)을 새로 디자인 | 우리 + 제품 | 열림 (1차 이후) |
 | Q9 | iac 선행조건: 전용 테이블 생성 + **DynamoDB Streams 설정**(현행 `modules/dynamodb`에 stream 설정 없음) + OSIS 선택 시 초기 백필용 PITR·export S3 | iac | 열림 (Q1의 선행) |
-| Q10 | 응답의 agent 표시 데이터(`name`/`description`) — 기본안은 클라이언트 hydration(우리는 `agent_id`만, §1-⑩). bourbon-api와 논의 후 확정 | 우리 + bourbon-api | 열림 |
+| Q10 | 응답의 agent 표시 데이터(`name`/`description`) — **기획안(추천 카드에 뿌릴 데이터)이 선행 결정** (2026-08-20 bourbon-agent 합의). 그 전까지 기본안 = 클라이언트 hydration, 우리는 `agent_id`+`matched_topics`만(§1-⑩). description 소스 후보는 bourbon-agent sharable persona(bio) — bourbon-api엔 데이터 없음 | 기획 → 우리 + bourbon-agent | 열림 (기획 대기) |
 
 ## 6. 폐기 트랙에서 승계하는 불변식
 
@@ -339,3 +352,8 @@ audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키�
   bourbon-agent 클라이언트 계약 정렬 — `matched_topics` 확정(매칭 집합만·대표 우선·전체 목록
   금지), name/description은 클라이언트 hydration 기본안(Q10), 실패 의미론 분기 요구, room_id는
   계약 밖, context는 실제 턴 권장.
+- **rev 5 (2026-08-20)** — bourbon-agent 팀 회신 반영: room_id는 동작 없는 예비 필드로 확인 →
+  계약 제외 확정. room 내 agent 제외는 deferred(1차 = DM 내 personal agent 추천이라 케이스 부재,
+  재개 트리거 = group room 추천) + 재개 시 메모 2건(충돌 확률은 topic 상관으로 상승·제외는 cap 앞
+  서버 측 `exclude_owner_ids`). Q10을 기획 gate로 갱신(description 실사: bourbon-api에선 personal
+  agent에 항상 NULL, 소스 후보 = sharable persona).
