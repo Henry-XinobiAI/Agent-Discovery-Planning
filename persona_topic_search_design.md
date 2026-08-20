@@ -1,4 +1,4 @@
-# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 10
+# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 11
 
 작성: 2026-08-20 · 상태: **설계 기준 (초안)** — 2026-08-19 회의 결정 + 2026-08-20 설계 리뷰·외부 리뷰 반영. §5의 열린 결정이 닫힐 때마다 rev-up하고, 전부 닫히면 확정으로 승격한다. 개정 이력은 문서 끝.
 
@@ -258,10 +258,11 @@ _msearch recall → 변형별 top-N → owner당 top-K (bounded 후보)
   우리는 gate 생존자에 대해서만 BatchGet한다. 이는 TOPICSEARCH#와 같은 패턴의 세 번째 적용이다 —
   "publish 가능 ⇔ 아이템 존재, 내용물은 publish 가능한 것만", 그리고 **대표 claim 선택은 읽기
   시점이 아니라 쓰기 시점의 일**(claim의 lifecycle·강도를 아는 extractor만 제대로 할 수 있는
-  판단)이다. **부재/빈 상태는 4가지로 분리한다**(rev 9 — rev 8의 "부재 = signature-only"는 C4
+  판단)이다. **부재/빈 상태를 뭉개지 않는다**(rev 9 — rev 8의 "부재 = signature-only"는 C4
   "None 과부하"의 재발이었다): ⑴ 확인된 empty(빈 배열 아이템 + empty sentinel digest) →
-  signature-only 정상 진행, ⑵ revision 대조는 **4-case 수용 규칙**(§2 표 — 더 최신 JUDGE#는 lag가
-  아니라 정상 수용, rev 10 정정), ⑶ strong 재시도 후에도 부재/역행 = **대기 or 장애** → degraded
+  signature-only 정상 진행, ⑵ revision 대조는 **§2의 수용 규칙 표**(rev 11: 2단계도 strong이라
+  eventual lag 분기 소멸 — 더 최신 JUDGE#는 정상 수용, 부재는 TOPIC# 재검증으로 "전환에 의한 정상
+  탈락" vs "불변식 위반" 구분), ⑶ 불변식 위반/저장소 장애 → 일반 bounded retry → 실패 시 degraded
   mode(아래), ⑷ digest 검증 실패 → dedupe 공유 금지 + telemetry. 상세 계약은 §2 bullet.
 - **degraded mode의 발동 정책 (rev 10 — 존재 정의만으로는 extractor 전면 장애 때 전 후보가
   signature-only로 통과하며 200이 나간다):**
@@ -377,20 +378,23 @@ PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim 원본 (색인 �
   signature-only"(rev 8)는 네 상태(공개 claim 진짜 0개 / 생성 대기 / eventual lag / extractor 장애)를
   하나로 접어 배선 장애를 품질 저하로 숨긴다. 분리 수단:
   ⑴ **empty ≠ absent** — 공개 claim 0개면 빈 배열 + **empty sentinel digest**로 아이템을 쓴다.
-  부재의 의미가 "대기 or 장애"로 좁아진다. ⑵ **기대 revision 대조 — 수용 규칙은 4-case다**
-  (rev 10 정정 — rev 9의 "불일치 → 재시도"는 1·2단계 읽기 사이의 **정상 동시 갱신(더 최신 JUDGE#)을
-  lag로 오분류**했다). 1단계에서 읽은 TOPIC#의 기대값을 r이라 하면:
+  부재의 의미가 "대기 or 장애"로 좁아진다. ⑵ **기대 revision 대조 — 수용 규칙 (rev 11: 2단계도
+  strong이므로 eventual lag 분기가 사라진다).** TOPIC#.judge_revision과 JUDGE#.revision은 같은
+  트랜잭션에서 갱신되므로, strong 읽기에서 `< 기대`나 부재는 lag일 수 없다. 1단계에서 읽은
+  기대값을 r이라 하면:
 
-  | 2단계 JUDGE# 상태 | 처리 |
+  | 2단계 JUDGE# 상태 (strong read) | 처리 |
   |---|---|
-  | 부재 또는 revision < r | strong read 1회 재시도 → 여전히면 대기/장애로 분류 |
   | revision == r | 정상 |
-  | revision > r, `publication_epoch` 동일 | **더 최신 정상값 — 수용** |
+  | revision > r, `publication_epoch` 동일 | 두 읽기 사이의 정상 갱신 — **수용** |
   | `publication_epoch` 불일치 | 수용 금지 (전환을 넘은 값) |
+  | 부재 | **TOPIC# strong 재검증 1회** → epoch가 올랐거나 private = 전환으로 인한 **정상 탈락**(조용히 drop) / 여전히 public + 같은 epoch = **불변식 위반 → 장애 분류** |
+  | revision < r | 불변식 위반/저장소 장애 (lag 아님) → 일반 bounded retry → 실패 시 degraded 경로 |
 
-  ⑶ signature-only 판정은 **"확인된 empty" 또는 이름 붙은 degraded mode**에서만 — 발동 정책은
-  §1-⑪(rev 10). `publication_epoch`(전환 감지)와 `judge_revision`(갱신 순서·lag 감지)은 역할이
-  달라 합치지 않는다.
+  부재 분기의 TOPIC# 재검증이 없으면 **정상적인 privatization마다 장애 알람이 울린다** — 장애
+  telemetry의 정직성을 위한 한 단계다. ⑶ signature-only 판정은 **"확인된 empty" 또는 이름 붙은
+  degraded mode**에서만 — 발동 정책은 §1-⑪(rev 10). `publication_epoch`(전환 감지)와
+  `judge_revision`(갱신 순서 감지)은 역할이 달라 합치지 않는다.
 - **digest는 소비자가 검증한다 (rev 9)** — 받은 `publishable_claims` 배열로 canonical digest를
   재계산해 `claim_digest`와 대조하고, 불일치 시 그 topic의 dedupe 공유를 금지(+telemetry).
   extractor 버그가 dedupe key를 조용히 오염시키는 것을 막는다. empty sentinel과 absent는 서로
@@ -452,9 +456,9 @@ PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim 원본 (색인 �
 - TOPIC#이 사라졌으면(재추출·삭제) 후보 탈락 — 인덱스의 잔상은 여기서 걸러진다.
 
 **2단계** — 생존자에 대해서만 TOPICJUDGE#를 BatchGet(아이템 1개/쌍, 100건 chunk)하고
-**relevance 판정(§1-⑪)**으로 넘긴다. 부재/빈/lag/장애는 §1-⑪의 4-상태 분리와 §2의 4-case 수용
-규칙을 따른다(확인된 empty만 조용한 signature-only; 더 최신 revision은 정상 수용; 대기/장애는
-degraded mode — 발동 정책·503 임계는 §1-⑪).
+**relevance 판정(§1-⑪)**으로 넘긴다. 부재/빈/장애는 §1-⑪의 상태 분리와 §2의 수용 규칙 표를
+따른다(확인된 empty만 조용한 signature-only; 더 최신 revision은 정상 수용; 부재는 TOPIC# 재검증으로
+정상 탈락 vs 장애 구분; 장애는 degraded mode — 발동 정책·503 임계는 §1-⑪).
 
 BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동형 — 두 단계 모두 적용):
 - **1단계 chunk = 후보 50쌍** — API 한도는 요청당 100아이템이고 쌍당 2아이템. 2단계는 100건.
@@ -469,9 +473,14 @@ BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동�
   eventual이라 방금 private으로 바뀐 topic을 잠시 public으로 읽을 수 있으므로 strong이 필요하고,
   가장 단순한 단일 요청 both-strong을 택한다. 아이템이 작아 alpha 규모에서 RCU 차이는 무의미하다.
   TOPIC/STAT을 요청 2회로 분리해 STAT만 eventual로 읽는 것은 **측정 후 비용 레버**로만 남긴다.
-  2단계 TOPICJUDGE# 읽기는 **eventual로 충분하다** — 내용물이 publishable-only라 privacy가 걸려
-  있지 않고(1단계 strong visibility 재확인이 이미 후보를 걸렀다), staleness는 약간 낡은 claim
-  선택일 뿐이다.
+  **2단계 TOPICJUDGE# 읽기도 `ConsistentRead=true`다 (rev 11 정정 — rev 8의 "eventual로 충분"
+  철회).** 그 논거("내용물이 publishable-only")는 **작성 시점의 성질이지 읽는 시점의 공개 여부
+  보장이 아니었다**. TOCTOU: ① 1단계 strong — TOPIC# public, epoch=7 → ② 비공개 전환 트랜잭션 —
+  private, epoch=8, SEARCH#/JUDGE# 삭제 → ③ 2단계 eventual — 삭제 전 stale JUDGE#(epoch=7) 반환 →
+  ④ 캐시된 1단계 TOPIC#도 epoch 7이라 대조가 통과 — **비교 기준이 전환 이전 스냅샷이어서 전환
+  자체를 볼 수 없다**. strong으로 읽으면 비공개 트랜잭션과 JUDGE 읽기 사이에 선형화 지점이 생겨,
+  전환이 먼저면 삭제된 JUDGE#가 돌아오지 않고, 읽기가 먼저면 그 순간엔 아직 public이며, epoch
+  불일치는 기존 규칙대로 거부된다. 비용은 쌍당 1아이템 읽기의 RCU 2배 — alpha 규모에서 무의미.
   (표현 정정: eventual lag는 "1초"가 아니라 **짧지만 상한이 보장되지 않는** 지연이다 — 분리 레버를
   당기는 날에는 "불특정 eventual lag를 카운터 값에서 수용한다"가 정확한 서술이다.)
 
@@ -595,3 +604,10 @@ audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키�
   재시도·==기대 = 정상·>기대 & epoch 동일 = 수용·epoch 불일치 = 거부. **degraded mode 발동 정책
   잠금**: fail-open은 명시 설정만·비율/연속 임계 초과 시 503·decision log 기록·launch acceptance
   별도 측정.
+- **rev 11 (2026-08-20)** — 외부 리뷰 7차 반영. **2단계 TOPICJUDGE# 읽기도 ConsistentRead=true**
+  (rev 8 "eventual로 충분" 철회 — privacy TOCTOU: epoch 대조의 기준이 전환 이전 1단계 스냅샷이라
+  비공개 전환 뒤의 stale JUDGE#가 대조를 통과해 LLM에 들어갈 수 있었다; "publishable-only"는 작성
+  시점 성질이지 읽기 시점 보장이 아니다). strong화의 부수 단순화: eventual lag 분기·"strong 재시도
+  1회" 제거 — `< 기대`/부재는 lag일 수 없으므로 불변식 위반/장애로 재분류(일반 bounded retry).
+  단 **부재에는 정상 원인이 하나 남는다** — 두 읽기 사이의 비공개 전환 — 이므로 부재 분기만 TOPIC#
+  strong 재검증 1회로 "정상 탈락 vs 장애"를 구분(정상 privatization이 장애 알람을 울리지 않게).
