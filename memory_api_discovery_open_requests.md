@@ -6,6 +6,7 @@
 - **기준 커밋**: memory-api `f246f93`, bourbon-api `b84b328`, discovery main `60c4cc2` (전 항목 이 시점 소스 직접 확인).
 - **성격**: 이 문서는 **단건 요청서가 아니라 미해결 요청 레지스터**다. 항목별로 독립 처리 가능하다. **R2–R6**은 Phase 10 real-edge turn-on(`REAL_EDGE_ENABLED=ON`) 설계 시점에 이미 식별된 blocker이고, **R1**은 2026-07-28에 새로 발견된 항목, **R7**은 blocker가 아닌 **deferred/conditional** 항목이다(트리거가 오기 전에는 아무것도 막지 않는다).
 - **아직 이 레지스터에 승격하지 않은 deferred 항목 1건**: stance-evidence recall eval의 **tenant ingestion + corpus-hash 계약**(`docs/superpowers/specs/2026-07-21-stance-evidence-recall-eval-design.md` §11). 유효한 cross-team ask지만 해당 eval 자체가 미착수·deferred라 소비 준비가 되면 승격한다 — 즉 **이 레지스터가 열린 cross-team 항목 전체는 아니다**.
+- **폐기된 인접 트랙 (2026-08-19)**: **memory-api v2로의 마이그레이션** 트랙은 폐기됐다. v2가 없어진 것이 아니라 **Discovery의 소스 대상이 아니다** — 따라서 이 레지스터의 기준은 계속 위 "기준 커밋"의 현행 memory-api이고, R1–R7은 v2와 무관하게 유효하다. 이행 분석 문서와 V2-1 요청서 초안은 미머지 폐기했다(로컬 태그 `discarded/memory-api-v2-migration`). 같은 날 persona-api 전환 트랙도 폐기됐다(`archive/persona_api_discovery_requests.md`).
 - **종결된 선행 요청**: statement `attribution` 계약(K-A1) — 결정 기록은 `archive/memory_api_statement_attribution_followup.md`(rev 5). 응답 필드 `#129`/`3e4e7c1`, 요청 필터 `f246f93`로 **shipped**. 남은 것은 아래 R2(테스트)뿐. 최초 요청서(`owner_asserted: bool` 제안)는 **채택되지 않아** `archive/memory_api_statement_attribution_request.md`로 보관했다.
 
 ## 요약

@@ -1,5 +1,7 @@
 # Persona 팀 데이터·API 요청서 (Discovery/agent-recommendation-api) — rev 15 (draft)
 
+> **📦 폐기됨 (2026-08-19) — historical.** persona-api를 Discovery의 데이터 소스로 삼는 **전환 트랙 자체가 폐기됐다**(전체 아키텍처 그림이 다시 바뀜). 이 문서의 요청 목록·계약 초안·열린 질문(Q1–Q15)은 **더 이상 유효한 요청이 아니다** — persona 팀에 이미 공유된 내용의 provenance 기록으로만 남긴다. 함께 폐기한 것: rev 16(소유권 분리 — persona-api를 우리가 만든다는 결정)과 저장소 실사·OpenSearch 색인 설계 문서 `persona_source_review.md`는 미머지 상태로 버렸다(로컬 태그 `discarded/persona-api-ownership-split`에서 복원 가능). 이 문서가 전제로 깔았던 **memory-api v2 이행 트랙도 함께 폐기**됐다(memory-api v2는 존재하지만 우리 소스 대상이 아니다).
+
 작성: 2026-08-13 · 상태: **내부 리뷰용 초안** (발신 전 리뷰 필요) · 개정 요지는 부록의 개정 이력 참조 (최근: rev 14 = P9-⑥ 매칭 함수 후보 설계 스케치 · rev 15 = 외부 리뷰 7차 반영 — publish-ready 계약·statement 참조 안정성 승격·uncertainty의 P1 배선·문헌 서술 교정·최소 안전 처리)
 
 > **검색 전제 (rev 7에서 확정):** topic 탐색은 **vector-free agentic search**다 — LLM이 query를 생성·확장·보정하며 persona의 **텍스트 검색**을 반복 호출하고, LLM이 후보를 판정한다. persona 쪽에 embedding/vector 인프라를 전제하는 요청은 이 문서에서 전부 "persona가 독립적으로 표현 공간을 갖게 될 경우의 선택적 최적화"로 강등했다. vector-free에서 recall을 지키는 책임 분담: persona = **검색 대상 텍스트 재료를 충실히**(name·aliases·search_aliases·description·keywords 전체가 검색 대상) + **다국어 search alias 생성**(P1 계약 ⑤ — "커피" 질의가 "coffee" topic을 찾는 1차 메커니즘), Discovery = **query expansion**(paraphrase·표현 변형; 번역은 보완), 검증 = P11 golden set(정답 label을 미리 확정해 둔 평가 기준 데이터).

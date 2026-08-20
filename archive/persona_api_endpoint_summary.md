@@ -1,5 +1,7 @@
 # Persona API에 필요한 endpoint 요약 (agent-recommendation 팀 → persona 팀, 첫 공유)
 
+> **📦 폐기됨 (2026-08-19) — historical.** 이 요약본은 persona 팀에 **실제로 공유된** 첫 endpoint 요약이지만, persona-api를 데이터 소스로 삼는 전환 트랙이 폐기되면서 **무효**가 됐다. 상세 요청서는 `persona_api_discovery_requests.md`(같은 디렉토리, 같은 날 보관)에 있다. 이미 공유한 문서이므로 폐기 사실은 persona 팀에 별도로 알려야 한다.
+
 우리가 하는 일: 유저가 주제를 지정하거나 대화 컨텍스트를 보내면, **그 주제를 잘 아는 / 직접 경험한 / 찬성·반대 의견을 가진 다른 유저의 agent를 추천**합니다. 그 재료가 persona 팀이 대화에서 추출하는 topic·statement·성격 데이터입니다.
 
 아래는 필요한 endpoint 목록입니다. **route 경로·필드명은 전부 예시**이고 기존 규약에 맞춰 바꾸셔도 됩니다 — 우리가 지키고 싶은 것은 각 값의 *의미*입니다.
