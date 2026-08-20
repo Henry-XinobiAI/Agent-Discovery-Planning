@@ -4,8 +4,10 @@
 - **요청 주체**: Agent Discovery (`bourbon-agent-recommendation-api`)
 - **대상**: `bourbon-api`
 - **기준 커밋**: bourbon-api `b84b328`, discovery main `60c4cc2` (전 항목 이 시점 소스 직접 확인).
-- **성격**: 미해결 요청 레지스터. 항목별로 독립 처리 가능하다. 자매 문서로 memory-api 대상
-  `memory_api_discovery_open_requests.md`(R1–R6)가 있다.
+- **성격**: 미해결 요청 레지스터. 항목별로 독립 처리 가능하다. (자매였던 memory-api 레지스터는
+  2026-08-20 소스 전환 확정으로 폐기 — `archive/memory_api_discovery_open_requests.md`. **B1·B2는
+  소스와 무관하게 유효하다**: 새 체인(`persona_topic_search_design.md`)의 agent_id hydration과
+  requester self-exclusion이 정확히 이 두 계약 위에 선다.)
 
 ## 요약
 

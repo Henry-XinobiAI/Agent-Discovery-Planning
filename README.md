@@ -4,9 +4,9 @@
 
 핵심 한 줄:
 
-> 개인이 자기 agent와 대화하며 **지식·관점(memory·persona)**을 쌓는다 → 그 일부가 **공개(publish)**되어 **공개 지식 그래프(Wikidata anchor)**에 정렬된다 → 다른 유저가 정답 문서가 아니라 **관점을 가진 agent를 발견하고 대화하며 소비**한다.
+> 개인이 자기 agent와 대화하며 **지식·관점(persona: topic·claim)**을 쌓는다 → 그중 **공개 가능한 것**이 검색 가능해진다 → 다른 유저가 정답 문서가 아니라 **그 topic을 잘 아는 agent를 발견하고 대화하며 소비**한다.
 
-> **프레이밍 메모:** 초기 설계는 SKL(Topic Space + Perspective Index) 프레이밍이었고(→ `archive/`), 현재 메모리 기반은 `Agent_Memory_Vision.md`의 **4계층 지식그래프 + Wikidata anchor**로 갈아탔다. discovery & recommendation 설계는 그 위에서 `agent_discovery_recommendation_directions.md`로 새로 정리한다.
+> **프레이밍 메모 (3차, 2026-08-20 확정):** ⑴ 초기 SKL(Topic Space + Perspective Index) → ⑵ `Agent_Memory_Vision.md`의 4계층 지식그래프 + **Wikidata anchor**(memory-api 소스) → ⑶ **persona extractor 체인**(bourbon-agent 추출 → DynamoDB → AOSS 색인 → 2단계 검색). 앞 두 프레이밍의 문서는 전부 `archive/`에 있고, 현재 방향의 정본은 `persona_topic_search_design.md`다. **단, ⑵ 기반의 shipped 시스템은 전환 완료 전까지 계속 가동**되며 그 구현 계약은 `impl/`이 소유한다.
 
 ---
 
@@ -14,13 +14,14 @@
 
 | 문서 | 레이어 | 다루는 것 | 핵심 단위 |
 |---|---|---|---|
-| `Agent_Memory_Vision.md` | **메모리 기반 (확정 전제)** | 개인 지식그래프 4계층(L0 Record → L1 Capsule → L2 Personal Knowledge → L3 Public Knowledge), Wikidata anchor 정렬, expert routing | anchor↔personal-node link |
-| `agent_discovery_recommendation_directions.md` | **discovery & recommendation 설계 근거 (canonical)** | 위 메모리 구조 위에서 발견·추천: 두 모드(pull·push), need 6유형, 토픽⊥입장 표현, 쟁점 축, need별 목적함수, 피드백, **팀 입력 계약(§9)** | stance descriptor (edge) |
-| **`impl/` (README + `01`–`11`)** | **구현 계약·단계 spec (현재 source of truth)** | 데이터 계약·provider 경계·normalize/linker·retrieval·gate/ranking·serving·composition·LLM·eval·metrics/gates·Phase 8–9 로드맵. 실제 shipped 상태를 반영 | typed struct / phase |
-| `agent_discovery_recommendation_implementation.md` | **구현 접근·근거 (research/rationale)** | build vs reuse 원칙, 단계별 컴포넌트 후보(Discovery/Recommendation), 선결 의존성·리스크. 확정 스택 아님 | — |
-| `persona_topic_search_design.md` | **차기 데이터 소스 전환 설계 (2026-08-20)** | persona extractor(bourbon-agent) → DynamoDB → AOSS 색인 → 2-단계 검색으로의 전환 설계. 전환 전까지 memory-api 계약은 현행 유지 | (owner, topic) 아이템 / AOSS 문서 |
+| **`persona_topic_search_design.md`** | **확정된 방향 (design of record, 2026-08-20)** | persona extractor(bourbon-agent) → DynamoDB(TOPIC/TOPICSEARCH/TOPICSTAT/TOPICJUDGE) → AOSS 색인 → 2단계 검색 + relevance 판정. 열린 결정은 그 문서 §5 Q1–Q15 | (owner, topic) 아이템 / AOSS 문서 |
+| **`impl/` (README + `01`–`11`)** | **현행 shipped 시스템의 구현 계약 (전환 전까지 유효)** | memory-api 기반의 실제 가동 중 시스템: 데이터 계약·provider 경계·grounding·gate/ranking·serving·eval. 전환 시 삭제 패스의 기준선이기도 하다 | typed struct / phase |
+| `bourbon_api_discovery_open_requests.md` | 활성 요청 레지스터 (bourbon-api B1–B2) | owner→agent 파생 계약·신뢰된 requester identity — **소스 전환과 무관하게 새 체인에서도 필요**(hydration·self-exclusion의 전제) | B# |
 
-> 현재 active 문서는 위 다섯이다(마지막은 전환 설계 기록). **설계 근거는 directions, 구현 계약·빌드 순서·단계 spec은 `impl/`(README + `01`–`11`)이 현재 source of truth, 구현 접근·근거는 implementation**으로 본다. 겹치는 설계 섹션은 directions가 우선이고, 겹치는 구현 계약은 `impl/`이 우선한다. 구현 형태(wiring) 요약은 §5. 초기 로드맵·build plan·walkthrough·런타임 등 히스토리 문서는 모두 `archive/`(아래)에 둔다.
+> **설계 방향은 `persona_topic_search_design.md`, 가동 중인 것의 계약은 `impl/`.** 이전 프레이밍의
+> 설계 근거 문서들(directions·implementation·Agent_Memory_Vision·technology_selection_evidence)은
+> 2026-08-20에 `archive/`(§2d)로 이동했다 — 현행 시스템이 *왜 그렇게 지어졌는지*가 궁금할 때만
+> 연다. 구현 형태(wiring) 요약은 §5(현행 시스템 기준).
 
 ---
 
@@ -28,7 +29,7 @@
 
 ### 2a. 계보(lineage) — 초기 설계 문서
 
-초기 discovery 설계 문서들. **현재 베이스에서 마이그레이션·재매핑 대상이 아니라 개념 출처(lineage)**로만 남긴다. `agent_discovery_recommendation_directions.md`가 그 용어(`DiscoverablePerspective` 등)를 계보로 인용하되, 메모리 모델은 anchor 그래프(`Agent_Memory_Vision.md`)로 갈아탔다.
+초기 discovery 설계 문서들. **마이그레이션·재매핑 대상이 아니라 개념 출처(lineage)**로만 남긴다. `archive/agent_discovery_recommendation_directions.md`가 그 용어(`DiscoverablePerspective` 등)를 계보로 인용한다.
 
 | 문서 | 당시 다루던 것 |
 |---|---|
@@ -63,27 +64,37 @@ Alpha 구현이 진행되며 실측·계약 기준이 `impl/`로 이동해 대�
 | `archive/persona_api_discovery_requests.md` | persona 팀에 걸 데이터·API 요청서 (rev 15, 2026-08-13) | **폐기된 트랙 (2026-08-19)** — persona-api를 소스로 삼는 전환 자체가 폐기됐다. 요청·열린 질문 전부 무효. rev 16과 실사 문서 `persona_source_review.md`는 미머지 폐기(태그 `discarded/persona-api-ownership-split`) |
 | `archive/persona_api_endpoint_summary.md` | 위 요청서의 endpoint 요약 — persona 팀에 **실제 공유됨** | **폐기된 트랙 (2026-08-19)** — 공유한 문서라 폐기 사실을 persona 팀에 별도 통지해야 한다 |
 
-> **루트에서 활성 요청 레지스터 역할을 하는 문서는 이 둘뿐이다**:
-> `memory_api_discovery_open_requests.md`(memory-api R1–R7) ·
-> `bourbon_api_discovery_open_requests.md`(bourbon-api B1–B2).
-> 단 **이 둘이 열린 cross-team 항목 전체는 아니다** — 아직 승격되지 않은 deferred 항목이
-> `docs/superpowers/specs/`의 스펙 §Open items에 남아 있을 수 있다(현재 1건, memory-api 레지스터 상단 참조).
+### 2d. 방향 재변경으로 보관 (2026-08-20) — 2차 프레이밍의 기준 문서들
+
+2026-08-19 아키텍처 재변경(persona extractor 체인 확정)으로 **전제가 폐기된** 2차 프레이밍
+(4계층 + Wikidata anchor)의 기준 문서들. 각 상단 masthead 참조. 현행 shipped 시스템의 계약은
+계속 `impl/`이 소유하므로, 이 문서들은 "그 시스템이 왜 그렇게 설계됐는지"의 기록이다.
+
+| 문서 | 당시 역할 | 현재 대체 |
+|---|---|---|
+| `archive/Agent_Memory_Vision.md` | 메모리 기반 확정 전제 (4계층 + Wikidata anchor) | `persona_topic_search_design.md` §0 체인 |
+| `archive/agent_discovery_recommendation_directions.md` | discovery & recommendation 설계 근거 (need 6유형·stance·팀 입력 계약 §9) | `persona_topic_search_design.md` (1차 = 단일 추천 유형; need 체계는 그쪽 Q8) |
+| `archive/agent_discovery_recommendation_implementation.md` | 구현 접근·build vs reuse (anchor grounding이 병목이라는 전제) | `persona_topic_search_design.md` §1-⑧·⑪ |
+| `archive/technology_selection_evidence.md` | entity linking·KG 스택 후보 근거 로그 | 대상 소멸 — 검색 스택은 memory-api `memory/search/` 재사용 |
+| `archive/memory_api_discovery_open_requests.md` | memory-api 요청 레지스터 (R1–R7, 미발신 초안) | **폐기** — memory-api가 소스에서 빠짐. 항목별 후계 매핑은 masthead |
+
+> **루트에서 활성 요청 레지스터 역할을 하는 문서는 `bourbon_api_discovery_open_requests.md`(B1–B2) 하나뿐이다.**
+> 새 체인의 cross-team 열린 결정은 `persona_topic_search_design.md` §5(Q1–Q15)가 갖는다.
 
 ---
 
 ## 3. 읽는 순서
 
-1. **`Agent_Memory_Vision.md`** — 메모리 전제(4계층·anchor). 먼저 읽는다.
-2. **`agent_discovery_recommendation_directions.md`** — discovery & recommendation 설계 근거. 자립적이며, 상단에 "읽는 법" 안내가 있다. memory·persona·moderation 팀에 거는 입력 계약은 **§9**.
-3. **`impl/README.md` → `impl/01`–`11`** — 현재 구현 계약·단계 spec(shipped 상태 반영). 무엇이 실제로 지어졌는지·다음 단계는 여기.
-4. **`agent_discovery_recommendation_implementation.md`** — 구현 접근·근거(가져올 것 vs 직접 구현, 단계별 컴포넌트 후보)가 궁금하면.
-5. 초기 로드맵·build plan·walkthrough·런타임·이벤트 구조·계보가 궁금하면 → `archive/`
+1. **`persona_topic_search_design.md`** — 확정된 방향. §0 체인 → §1 결정 사항 → §5 열린 질문 순.
+2. **`impl/README.md` → `impl/01`–`11`** — 지금 가동 중인 시스템의 계약(전환 전까지 유효, 전환 시 삭제 패스 기준선).
+3. `bourbon_api_discovery_open_requests.md`(B1–B2)와 `persona_topic_search_design.md` §5(Q1–Q15) — 타 팀에 걸려 있는 열린 요청·결정.
+4. 현행 시스템이 *왜* 그렇게 지어졌는지 → `archive/`의 2차 프레이밍 문서들(§2d). 그보다 앞 계보는 §2a.
 
 ---
 
 ## 4. 유지되는 제품 불변식 (프레이밍과 무관)
 
-설계 framing이 SKL → anchor 그래프로 바뀌어도 그대로 유지되는 제품 수준 규칙(상세는 `Agent_Memory_Vision.md` / directions 문서):
+framing이 SKL → anchor 그래프 → persona extractor 체인으로 바뀌어도 그대로 유지되는 제품 수준 규칙(3차 프레이밍에서의 구체화는 `persona_topic_search_design.md`):
 
 - **소유·접근** — 모든 기억·지식은 사용자 소유이고, 접근은 **항상 그 사용자의 agent를 거쳐서만** 가능.
 - **공개는 description 수준** — 개별 기억 원문이 아니라, 발견·전문성 판별이 가능한 **간략 description/관점**만 공개.
@@ -93,9 +104,9 @@ Alpha 구현이 진행되며 실측·계약 기준이 `impl/`로 이동해 대�
 
 ---
 
-## 5. 구현 형태 (how it's wired)
+## 5. 구현 형태 (how it's wired) — 현행 shipped 시스템 기준
 
-> 설계 근거는 directions 문서에, 구현 계약·빌드 페이징은 `impl/`(특히 `impl/11-forward-roadmap.md`)에 있고, 여기엔 "어떤 형태로 wiring 되나"만 간략히 둔다. 구체 스택은 미정(TBD).
+> **이 절은 전환 전까지 가동되는 현행 시스템의 wiring이다** (구현 계약은 `impl/`, 설계 근거 기록은 `archive/agent_discovery_recommendation_directions.md`). 전환 후 형태는 `persona_topic_search_design.md` §0. API-first·thin client·moderation-gated push라는 골격은 전환 후에도 유지된다.
 
 discovery는 호출 가능한 **백엔드 서비스(API)**로 구현한다 — 버전된 공유 인덱스(anchor 파티션·stance space·contested axes), cross-agent 집계, lifecycle 이벤트 기반 갱신이 필요해 호출마다 재구축할 수 없기 때문이다. 두 모드는 이 엔진을 부르는 *경로*가 다르다.
 

@@ -1,4 +1,4 @@
-# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 13
+# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 14
 
 작성: 2026-08-20 · 상태: **설계 기준 (초안)** — 2026-08-19 회의 결정 + 2026-08-20 설계 리뷰·외부 리뷰 반영. §5의 열린 결정이 닫힐 때마다 rev-up하고, 전부 닫히면 확정으로 승격한다. 개정 이력은 문서 끝.
 
@@ -560,9 +560,11 @@ audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키�
 
 - persona-api 전환 트랙·memory-api v2 마이그레이션은 2026-08-19 폐기. 경위는 별도 PR
   (`docs/discard-persona-api-track`)의 archive masthead와 로컬 태그 `discarded/*`에 있다.
-- **memory-api는 여전히 현행 데이터 소스다.** 이 문서의 체인이 배포되기 전까지 Discovery의
-  edge/stance 소스는 현행 memory-api 계약 그대로이고, `memory_api_discovery_open_requests.md`의
-  R1–R7도 유효하다. 이 문서는 **전환 후** 그림이다.
+- **memory-api는 전환 완료 전까지 현행 데이터 소스다** — shipped 코드는 이 문서의 체인이 배포될
+  때까지 memory-api 계약으로 가동된다. 단 **그 소스에 걸었던 열린 요청 R1–R7은 2026-08-20 폐기**
+  했다(방향 확정으로 미발신 초안인 채 종결 — `archive/memory_api_discovery_open_requests.md`
+  masthead에 항목별 후계 매핑: R1→Q12, R4→TOPICSTAT# 등). bourbon-api 레지스터(B1–B2)는 소스와
+  무관해 유지된다. 이 문서는 **전환 후** 그림이다.
 
 ---
 
@@ -656,3 +658,8 @@ audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키�
   placeholder 범위를 "§2 신규 저장 스키마 + 미구현 응답 필드"로 한정(기존 외부 식별자 제외). ⑶
   **명칭 ≠ 의미**: 잠근 상태 구분·동시성·privacy 불변식은 이름과 별개로 동일하게 표현되어야 한다.
   matched_topics는 placeholder가 아니라 합의된 이름(착지 시 최종 확인)으로 정정.
+- **rev 14 (2026-08-20)** — 방향 확정에 따른 planning 리포 정리 반영: 2차 프레이밍 기준 문서 4종
+  (directions·implementation·Agent_Memory_Vision·technology_selection_evidence)과 memory-api 요청
+  레지스터(R1–R7, 미발신)를 `archive/`로 이동. §7을 "R1–R7 유효"에서 "R1–R7 폐기(후계 매핑은
+  archive masthead)"로 갱신. bourbon-api 레지스터(B1–B2)는 소스 무관(hydration·self-exclusion의
+  전제)이라 유지.

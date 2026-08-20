@@ -1,5 +1,7 @@
 # Agent Discovery & Recommendation — Implementation Approach (working)
 
+> **📦 보관됨 (2026-08-20) — superseded.** 이 문서의 핵심 전제("Alpha의 구현 병목은 topic→anchor grounding과 agent-topic edge retrieval")가 2026-08-19 재변경으로 폐기됐다 — anchor 자체가 사라지고 데이터 소스가 persona extractor 체인(DynamoDB + AOSS)으로 바뀐다. **전방 방향의 정본은 `../persona_topic_search_design.md`**, 현행 shipped 계약은 `../impl/`. build-vs-reuse 판정의 근거 로그는 `technology_selection_evidence.md`(같은 날 함께 보관).
+
 > **성격 (2026-07-14):** 이 문서는 구현 **접근·근거(research / rationale)** 기록이다. 현재 구현 **계약**의 source of truth는 `impl/`(`impl/README.md` + `01`–`11`)이며, 겹치는 계약이 어긋나면 `impl/`이 우선한다.
 
 > 이 문서는 구현 접근과 **재사용 후보**를 정리한 working document다. 확정 기술 스택이 아니다. 구체 기술 선택(특정 entity linker·store·ANN·LTR 확정)은 deep research 후 별도 `technology_selection` 문서에서 다룬다. 상세 아키텍처를 본격적으로 설계할 때는 별도 architecture 문서로 분리한다.
