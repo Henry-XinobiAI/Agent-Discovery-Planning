@@ -1,4 +1,4 @@
-# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 8
+# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 9
 
 작성: 2026-08-20 · 상태: **설계 기준 (초안)** — 2026-08-19 회의 결정 + 2026-08-20 설계 리뷰·외부 리뷰 반영. §5의 열린 결정이 닫힐 때마다 rev-up하고, 전부 닫히면 확정으로 승격한다. 개정 이력은 문서 끝.
 
@@ -258,9 +258,12 @@ _msearch recall → 변형별 top-N → owner당 top-K (bounded 후보)
   우리는 gate 생존자에 대해서만 BatchGet한다. 이는 TOPICSEARCH#와 같은 패턴의 세 번째 적용이다 —
   "publish 가능 ⇔ 아이템 존재, 내용물은 publish 가능한 것만", 그리고 **대표 claim 선택은 읽기
   시점이 아니라 쓰기 시점의 일**(claim의 lifecycle·강도를 아는 extractor만 제대로 할 수 있는
-  판단)이다. **부재 시 규칙**: 생존한 publishable topic에 TOPICJUDGE#가 없으면(생성 지연) 탈락이
-  아니라 **signature-only 판정으로 진행 + telemetry 카운트** — 내용물이 어차피 publishable-only라
-  privacy는 걸려 있지 않고, 생성 지연은 "관대한 쪽 stale" 부류다.
+  판단)이다. **부재/빈 상태는 4가지로 분리한다**(rev 9 — rev 8의 "부재 = signature-only"는 C4
+  "None 과부하"의 재발이었다): ⑴ 확인된 empty(빈 배열 아이템 + empty sentinel digest) →
+  signature-only 정상 진행, ⑵ eventual lag(TOPIC#의 기대 `judge_revision` 불일치) → strong read
+  1회 재시도, ⑶ 재시도 후에도 부재/불일치 = **대기 or 장애** → 이름 붙은 degraded mode(알람
+  telemetry)에서만 signature-only, ⑷ digest 검증 실패 → dedupe 공유 금지 + telemetry. 상세 계약은
+  §2 bullet.
 - **판정 입력 텍스트는 전부 비신뢰다 (rev 8).** claim만이 아니라 label·description·aliases도 유저
   대화에서 유래한다. 판정 LLM은 고정 system prompt + **구조화 JSON data 슬롯**으로 입력을 받고,
   **입력 텍스트 안의 지시를 따르지 않는다**는 규율을 프롬프트와 테스트 양쪽에 명시한다.
@@ -320,10 +323,13 @@ PK=USER#<owner_uuid>  SK=TOPICSTAT#<topic_id>    ← 카운터 아이템 (고빈
 
 PK=USER#<owner_uuid>  SK=TOPICJUDGE#<topic_id>   ← 판정 재료 projection (§1-⑪, rev 8 권고안 —
   schema_version, extractor_model_version           extractor 협의 대상). **색인 제외**, topic이
-  selection_policy_version                          전역 공개일 때만 존재(TOPICSEARCH#와
-  publishable_claims: [...]                         transact로 lifecycle 동기).
-  claim_digest                                      ← publishable_claims 배열 그대로의 canonical
-  updated_at                                          digest (정렬·정규화·selection_policy 포함)
+  selection_policy_version                          전역 공개일 때만 존재. 동시성 계약은 아래
+  publication_epoch                                 bullet (rev 9) — 전환은 3-아이템 트랜잭션,
+  judge_revision                                    일반 갱신은 epoch ConditionCheck 단독 쓰기.
+  publishable_claims: [...]                         **공개 claim 0개여도 아이템은 존재**(빈 배열 +
+  claim_digest                                      empty sentinel digest) — empty ≠ absent.
+  updated_at                                        ← claim_digest = 이 배열 그대로의 canonical
+                                                      digest (정렬·정규화·selection_policy 포함)
 
 PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim 원본 (색인 제외. 추천이 직접 읽지
   schema_version, proposition_en, stance/condition 등     않는다 — 판정 입력은 TOPICJUDGE# 경유.
@@ -336,9 +342,33 @@ PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim 원본 (색인 �
 - **TOPICJUDGE#는 자주 재작성돼도 무해하다** — claim은 대화마다 쌓이지만 이 아이템은 **색인
   파이프라인 밖**이라(AOSS로 안 흐름) 변경 주기 분리 원칙과 충돌하지 않는다. DynamoDB 아이템
   재작성 비용뿐이다.
+- **동시성 계약 (rev 9 — "transact로 lifecycle 동기"의 정밀화).** 두 종류의 쓰기를 섞으면 안 된다:
+  ⑴ **공개/비공개 전환** = TOPIC# + TOPICSEARCH# + TOPICJUDGE# **3-아이템 트랜잭션**으로 생성·삭제
+  (+ TOPIC#의 `publication_epoch` 증가). ⑵ **일반 claim 갱신** = TOPICSEARCH#는 **건드리지 않고**
+  (touch하면 스트림 이벤트 → AOSS 재색인 — "JUDGE는 색인 밖이라 무해"가 거짓이 된다),
+  "TOPIC#이 여전히 public이고 `publication_epoch` 일치" **ConditionCheck** 하에 TOPICJUDGE#만
+  쓴다(`TransactWriteItems`의 ConditionCheck + Put). JUDGE#에도 같은 epoch를 저장한다 — private
+  전환과 경합한 stale writer가 삭제된 JUDGE#를 **부활시키는 것을 조건 실패로 차단**한다.
+- **부재 상태를 뭉개지 않는다 (rev 9 — C4 "None 과부하" 교훈의 저장 계층 재적용).** "JUDGE# 없음 =
+  signature-only"(rev 8)는 네 상태(공개 claim 진짜 0개 / 생성 대기 / eventual lag / extractor 장애)를
+  하나로 접어 배선 장애를 품질 저하로 숨긴다. 분리 수단:
+  ⑴ **empty ≠ absent** — 공개 claim 0개면 빈 배열 + **empty sentinel digest**로 아이템을 쓴다.
+  부재의 의미가 "대기 or 장애"로 좁아진다. ⑵ **기대 revision 대조** — TOPIC#에 `judge_revision`
+  기대값을 JUDGE# 쓰기와 같은 트랜잭션으로 유지(TOPIC#도 색인 밖이라 touch 무해). 소비자는 대조로
+  lag를 감지하고, eventual 읽기에서 기대 revision이 안 보이면 **strong read 1회 재시도 후 실패로
+  분류**. ⑶ signature-only 판정은 **"확인된 empty" 또는 이름 붙은 degraded mode**(알람 가능한
+  telemetry 동반)에서만 — 조용한 기본 경로가 아니다. `publication_epoch`(전환 감지)와
+  `judge_revision`(갱신 lag 감지)은 역할이 달라 합치지 않는다.
+- **digest는 소비자가 검증한다 (rev 9)** — 받은 `publishable_claims` 배열로 canonical digest를
+  재계산해 `claim_digest`와 대조하고, 불일치 시 그 topic의 dedupe 공유를 금지(+telemetry).
+  extractor 버그가 dedupe key를 조용히 오염시키는 것을 막는다. empty sentinel과 absent는 서로
+  다른 값이어야 한다.
 - **TOPICJUDGE#의 선택 규칙(어떤 claim이 대표인가·상한 몇 개)은 extractor 소관·협의 항목이다.**
-  우리가 요구하는 것은 성질뿐이다: bounded(상한 보장) · publishable-only · deterministic(같은
-  입력이면 같은 배열 — digest 공유의 전제) · `selection_policy_version`으로 규칙 변경 추적.
+  우리가 요구하는 것은 성질과 acceptance다: bounded(상한 보장) · publishable-only ·
+  deterministic(같은 입력이면 같은 배열 — digest 공유의 전제) · `selection_policy_version`으로
+  규칙 변경 추적, **그리고 대표성 acceptance 4종 (rev 9 — 결정적 first-N도 위 성질은 만족하므로)**:
+  stance·논점·시점 편중 방지 / 안정적 tie-break / 원래 publishable claim 집합 대비 coverage /
+  selection 정책 버전별 recommendation recall·abstain 평가(정책 변경이 우리 eval에 잡히게).
 - **owner↔agent 매핑·활성 상태**: 후보 owner를 agent로 해석하는 값(현행은 bourbon-api의 결정적
   `personal_agent_id` 파생)과 owner/agent 활성 여부는 이 테이블이 아니라 eligibility 확인의 몫이다.
   **단, 경계 지정 ≠ 구현 확보** (rev 6, 외부 리뷰 지적): 현행 배선은 deployed-only
@@ -376,7 +406,7 @@ PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim 원본 (색인 �
 - 클라이언트·재연결·AOSS 특이사항(`_stats` 없음 등)은 memory-api
   `memory/search/opensearch_client.py`·`index_family.py` 패턴을 따른다.
 
-## 4. 2차 저장소 읽기 (읽기 시점 재확인) — BatchGet 계약 (rev 3에서 잠금 · rev 7에서 판정 앞으로 이동)
+## 4. 2차 저장소 읽기 (읽기 시점 재확인) — BatchGet 계약 (rev 3에서 잠금 · rev 8에서 2단계 재배치)
 
 읽기는 **2단계 BatchGet**이다 (rev 8 — rev 7의 쌍당 claim Query는 철회, §1-⑪):
 
@@ -390,7 +420,8 @@ PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim 원본 (색인 �
 - TOPIC#이 사라졌으면(재추출·삭제) 후보 탈락 — 인덱스의 잔상은 여기서 걸러진다.
 
 **2단계** — 생존자에 대해서만 TOPICJUDGE#를 BatchGet(아이템 1개/쌍, 100건 chunk)하고
-**relevance 판정(§1-⑪)**으로 넘긴다. 부재 시 signature-only 판정 + telemetry(§1-⑪).
+**relevance 판정(§1-⑪)**으로 넘긴다. 부재/빈/lag/장애는 §1-⑪의 4-상태 분리를 따른다(확인된
+empty만 조용한 signature-only, 나머지는 재시도 → named degraded mode).
 
 BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동형 — 두 단계 모두 적용):
 - **1단계 chunk = 후보 50쌍** — API 한도는 요청당 100아이템이고 쌍당 2아이템. 2단계는 100건.
@@ -426,9 +457,9 @@ BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동�
 | Q9 | iac 선행조건: 전용 테이블 생성 + **DynamoDB Streams 설정**(현행 `modules/dynamodb`에 stream 설정 없음) + OSIS 선택 시 초기 백필용 PITR·export S3 | iac | 열림 (Q1의 선행) |
 | Q10 | 응답의 agent 표시 데이터(`name`/`description`) — **기획안(추천 카드에 뿌릴 데이터)이 선행 결정** (2026-08-20 bourbon-agent 합의). 그 전까지 기본안 = 클라이언트 hydration, 우리는 `agent_id`+`matched_topics`만(§1-⑩). description 소스 후보는 bourbon-agent sharable persona(bio) — bourbon-api엔 데이터 없음 | 기획 → 우리 + bourbon-agent | 열림 (기획 대기) |
 | Q11 | 다의어 처리 — relevance 판정층(§1-⑪)이 "양립 불가능한 두 해석이 다 매칭됨"을 감지했을 때 섞어 반환 vs 사용자 clarification 요구. 별도 wire 상태가 필요한지 포함 | 우리 + 제품 | 열림 |
-| Q13 | **claim publish 경계(visibility 모델) 확정 — 판정층 가동의 출시 gate.** TOPICJUDGE#의 publishable-only 보장이 이 모델 위에 선다. 저장소 선택(Q5)과는 별개 결정 | extractor 팀 | 열림 (**판정층 출시 gate**) |
-| Q14 | TOPICJUDGE# projection 채택 여부 — 우리 권고안(§1-⑪·§2). extractor 작업 증가(세 번째 projection·선택 정책·lifecycle 동기)라 협의 필요. 기각되면 fallback = rev 7의 claim Query + 외부 리뷰의 최소 잠금 목록(visibility 확인 후 Query·ConsistentRead·pagination 상한·deterministic 선택·503) | extractor 팀 | 권고 전달 대기 |
 | Q12 | **real owner/agent eligibility 소스** — 현행 `AllowAllEligibilityProvider`는 stub. 전환 출시 조건: 탈퇴·비활성 owner를 걸러낼 실소스(bourbon-api) 확보 | 우리 + bourbon-api | 열림 (**전환 출시 gate**) |
+| Q13 | **claim publish 경계(visibility 모델) 확정 — 판정층 가동의 출시 gate.** TOPICJUDGE#의 publishable-only 보장이 이 모델 위에 선다. 저장소 선택(Q5)과는 별개 결정 | extractor 팀 | 열림 (**판정층 출시 gate**) |
+| Q14 | TOPICJUDGE# projection 채택 여부 — 우리 권고안(§1-⑪·§2: 동시성 계약 + 부재 4-상태 + 대표성 acceptance 4종 포함). extractor 작업 증가(세 번째 projection·선택 정책·epoch/revision 유지)라 협의 필요. 기각되면 fallback = rev 7의 claim Query + 외부 리뷰의 최소 잠금 목록(visibility 확인 후 Query·ConsistentRead·pagination 상한·deterministic 선택·503) | extractor 팀 | 권고 전달 대기 |
 
 ## 6. 폐기 트랙에서 승계하는 불변식
 
@@ -514,3 +545,11 @@ audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키�
   텍스트로 규정**(고정 system prompt·구조화 JSON 슬롯·입력 내 지시 무시 — claim뿐 아니라
   label/description/aliases도 대화 유래). claim visibility를 Q5에서 분리해 **Q13 = 판정층 출시
   gate**로 승격. §0의 CLAIM 문구 정정(데이터는 1차 판정 입력, 2차는 검색 인덱스만).
+- **rev 9 (2026-08-20)** — 외부 리뷰 5차 반영. **동시성 계약 정밀화**: "transact 동기"를 두 쓰기로
+  분리 — 공개 전환 = 3-아이템 트랜잭션(+`publication_epoch` 증가), 일반 claim 갱신 = SEARCH# 불가침
+  + epoch ConditionCheck 하의 JUDGE# 단독 쓰기(stale writer 부활 차단). **부재 4-상태 분리**(rev 8의
+  "부재 = signature-only"는 C4 None-과부하 재발): empty ≠ absent(빈 배열 + sentinel digest 상시
+  기록)·TOPIC#의 기대 `judge_revision` 대조·strong 재시도 1회·signature-only는 확인된 empty와
+  named degraded mode만. digest는 소비자가 재계산 검증(불일치 = dedupe 금지). Q14에 대표성
+  acceptance 4종(편중 방지·tie-break·coverage·정책 버전별 eval). §4 제목 stale 수정, Q12–Q14
+  번호순 재배열.
