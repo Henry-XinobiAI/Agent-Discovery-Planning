@@ -1,6 +1,6 @@
-# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 2
+# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 3
 
-작성: 2026-08-20 · 상태: **설계 확정 기록** (2026-08-19 회의 결정 + 2026-08-20 설계 리뷰 합의) · 개정 이력은 문서 끝.
+작성: 2026-08-20 · 상태: **설계 기준 (초안)** — 2026-08-19 회의 결정 + 2026-08-20 설계 리뷰·외부 리뷰 반영. §5의 열린 결정이 닫힐 때마다 rev-up하고, 전부 닫히면 확정으로 승격한다. 개정 이력은 문서 끝.
 
 > **이 문서의 역할.** persona-api 전환 트랙과 memory-api v2 마이그레이션이 **둘 다 폐기**된 뒤(2026-08-19),
 > 그 자리를 대체하는 새 그림의 단일 기록이다. 여기 적힌 것은 두 층으로 나뉜다 —
@@ -30,30 +30,45 @@ agent-recommendation-api ──────────────────�
 - **extractor는 bourbon-agent 안에 산다.** bourbon-agent에는 이미 단일 테이블 DynamoDB 규율
   (`bourbon_agent/storage/dynamodb/keys.py`), 세션 경계, 그리고 추출이 쓰고 agent가 읽는
   `user_persona/` 모듈이 있다 — 기존 결을 따르는 배치다.
-- **agent-recommendation은 두 단계로 읽는다.** 1차 = AOSS 인덱스에서 recall(후보 topic-owner 쌍),
-  2차 = 저장소에서 진실 재확인(visibility·gate 신호). 인덱스는 추천 순서를 결정하지 않는다 —
-  ordering contract(gate→filter→lexicographic→tiebreak)는 그대로다.
+- **agent-recommendation은 두 단계로 읽는다.** 1차 = AOSS 인덱스에서 recall, 2차 = 저장소에서
+  진실 재확인(visibility·gate 신호). 후보의 단위는 topic-owner 쌍이 아니라
+  **`(owner, 매칭된 topic 집합)`**이다(§1-⑦) — anchor가 사라진 세계에서 need가 등가류 역할을 하고,
+  한 owner의 여러 topic이 같은 need에 걸리는 것은 노이즈가 아니라 신호다. 인덱스는 추천 순서를
+  결정하지 않는다 — ordering contract(gate→filter→lexicographic→tiebreak)는 그대로다.
+- **1차 범위 (제품 결정, 2026-08-20).** 이 문서의 1차 목표는 **"이 topic에 관심 있는 owner 발견"**
+  이다. for/against(stance)·특정 경험/주장으로만 드러나는 owner 회수는 **범위 밖**이며, 전환 후
+  시나리오 재정의 대상이다(§5 Q8). 전환 전까지 그 기능들의 현행 소스는 memory-api다(§7).
+  §2의 CLAIM# 아이템·claims 인덱스 확장 여지는 이 범위 확장을 막지 않기 위해 남겨 둔다.
 
 ## 1. 결정 사항 (2026-08-19 회의 + 2026-08-20 리뷰)
 
-### ① extractor 배치 = bourbon-agent
-bourbon-api가 발행하는 deferq 이벤트(`bourbon.message_created` 등, at-most-once fire-and-forget)를
-bourbon-agent가 소비해 추출한다. 이벤트 유실 시 그 발화의 추출만 빠진다 — 추출은 누적 통계라
-개별 유실이 치명적이지 않고, 이 성질이 deferq의 전달 보증과 맞는다. (반대로 **색인**은 유실 =
-영구 stale이라 deferq 경로를 쓰지 않는다 — ④.)
+### ① extractor 배치 = bourbon-agent · 입력 데이터는 best-effort로 선언
+bourbon-api가 발행하는 deferq 이벤트(`bourbon.message_created` 등)를 bourbon-agent가 소비해
+추출한다. deferq는 **at-most-once**다(발행 실패는 로그만 남기고 삼킴 — bourbon-api
+`websockets/handlers.py`·`agents/stream.py`, outbox 없음). 따라서:
+- **우리가 소비하는 데이터는 best-effort다** — 유실된 발화가 첫/유일한 발화면 topic 자체가 없고,
+  마지막 발화면 `evidence_count`·`last_evidence_at`이 실제보다 작다. 이를 무해하다고 단정하지
+  않는다. 대신 **제품 결정으로 선언**한다: 추천 랭킹의 재료로서 best-effort persona를 수용한다.
+- 파생 규율: **gate 튜닝은 undercount에 견고해야 한다** — 임계값 하나 차이로 노출이 갈리는
+  설계(경계 과신)를 피하고, 임계는 보수적으로 잡는다.
+- 유실 복구(outbox·watermark 재대사·sweep)와 `(message_id, extractor_version)` 멱등 추출은
+  **bourbon-api/extractor 팀 소관**이다 — 외부 리뷰의 해당 지적은 그쪽에 전달한다(§5 Q6).
+  복구가 생기면 위 선언을 rev-up으로 되돌리면 된다.
+- (대조: **색인**은 유실 = 영구 stale이라 deferq 경로를 쓰지 않는다 — ④.)
 
 ### ② 산출물은 영어 한정
 topic label·claim proposition·alias 전부 영어. 따라서:
 - **query expansion은 영어 변형 생성이다.** 한국어 need "재택근무"에서 `remote work / working from
   home / telecommuting / WFH`처럼 영어 내 동의 변형까지 LLM이 한 번에 생성한다. 단순 1:1 번역이
-  아니다. named query로 어떤 변형이 맞았는지 회수한다(§3).
+  아니다. 변형마다 `_msearch` 독립 검색이라 어떤 변형이 맞았는지는 응답 단위로 회수된다(§3).
 - recall 부담이 저장 시점(다국어 alias — 폐기된 트랙의 1순위 요구)에서 **질의 시점(번역·변형
   품질)**으로 이동한다. 질의 시점이 더 나은 자리다 — 저장된 alias 오류는 재추출 전까지 박제되지만
   질의 변형 오류는 요청 단위라 즉시 개선된다.
 - 인덱스 analyzer가 영어로 단순화된다. nori 검증 불필요. memory-api의 `ANALYSIS_SETTINGS`
   (light_english stemmer + shingle 근접 부스트, `memory/search/analysis.py`)를 재사용한다.
-- **eval은 번역 단계를 포함해야 한다**: golden set이 "한국어 need → 영어 topic" 경로를 통째로
-  측정해야 낮은 recall이 검색 탓인지 변형 생성 탓인지 분리된다.
+- **eval은 3층이다** (E2E 하나로는 번역 실패와 검색 실패가 안 갈린다):
+  ⑴ 한국어 need → 영어 expansion 변형 품질, ⑵ 정답 영어 query → 검색 recall, ⑶ 전체 E2E.
+  golden set은 세 층을 모두 커버한다.
 
 ### ③ 저장소 = DynamoDB, **전용 테이블** (우리 권고 — extractor 팀 확정 대기)
 회의에서는 DynamoDB or MySQL이 열려 있었다. 우리 권고는 DynamoDB이고 근거는:
@@ -69,7 +84,8 @@ topic label·claim proposition·alias 전부 영어. 따라서:
 2. agent-recommendation의 읽기 권한이 이 데이터에만 스코프된다.
 3. bourbon-agent 테이블의 문서는 zlib+AES-GCM 암호화가 규칙(`storage/crypto`)인데 색인 대상은
    평문이어야 한다. **"이 테이블은 평문 + KMS at-rest" 를 의도적 결정으로 기록한다** — 대화에서
-   추출된 파생물을 평문 저장하는 것이며, 노출 통제는 visibility 필드 + 2차 재확인이 담당한다.
+   추출된 파생물을 평문 저장하는 것이며, 노출 통제는 TOPICSEARCH# projection(⑥) + 2차 재확인이
+   담당한다.
 
 ### ④ 색인 계약 — 파이프라인 기술보다 한 층 위에서 잠근다
 인프라 논의(OSIS zero-ETL vs 자체 스트림 컨슈머)와 무관하게 불변인 것만 잠근다:
@@ -88,30 +104,54 @@ topic label·claim proposition·alias 전부 영어. 따라서:
 TOPIC# vs TOPICSTAT#)로만 실현된다. 이 분리는 extractor의 저장 스키마 요건이므로 인프라 논의를
 기다리지 않고 **지금 잠근다**.
 
-### ⑥ visibility는 인덱스에 포함, count류는 제외
-visibility와 count는 변경 빈도의 부류가 다르다: count는 **시스템 전체 메시지 볼륨**에 비례하고,
-visibility는 **유저의 의도적 설정 행위**에 비례한다(문서 1건 재색인 — 유저가 껐다 켰다를 반복해도
-단일 문서 upsert의 반복일 뿐이고, 남용 방어가 필요하면 자리는 저장 설계가 아니라 설정 변경
-엔드포인트의 rate limit/debounce다).
+### ⑥ private은 색인하지 않는다 — TOPICSEARCH# projection (rev 3에서 결정 변경)
+**rev 1은 "TOPIC# 전체를 색인하고 visibility 필드로 필터"였다. 외부 리뷰를 받아 뒤집는다** —
+필터는 응답 유출은 막지만 다음 둘을 못 막는다:
+1. **색인 자체.** private label·description·aliases가 AOSS `_source`와 역색인에 존재한다. AOSS는
+   문서 단위 접근 제어가 없어 보호가 쿼리 규율뿐이고(필터 절 하나 빠뜨리면 유출), 현행 iac의
+   AOSS는 public network access 허용 + dev human role 전체 데이터 권한이라 **사람이 대시보드로
+   읽을 수 있는 저장소**다. private 파생 텍스트를 거기 두지 않는다.
+2. **전환 시 삭제.** visibility가 private으로 바뀌어도 필터 모델에서는 문서 필드만 바뀌고 텍스트는
+   물리적으로 남는다. 파이프라인 조건 필터로 걸러도 이미 색인된 문서를 지우는 이벤트가 없어
+   stale public 문서가 영구히 남는다.
 
-인덱스에 넣는 이유는 성능이 아니라 안전과 recall이다:
-- visibility가 인덱스에 없으면 1차가 private topic까지 후보로 끌어와 그 텍스트가 스코어링에
-  참여한다. private 데이터가 검색 경로를 타는 것 자체를 줄인다.
-- 후보 상한(⑦)을 걸 때 private이 섞인 풀에서 자르면 2차에서 살아남을 public 후보가 밀려나는
-  recall 손실이 생긴다. pre-filter일수록 상한이 유효 후보에 쓰인다.
+**구조: publish 가능 ⇔ 검색 projection 아이템 존재.** extractor가 publish 가능한 topic에만
+`TOPICSEARCH#` 아이템을 만들고(§2), private 전환·삭제 시 그 아이템을 지운다(TOPIC#과
+`transact_write`로 동기). 색인 파이프라인에는 **TOPICSEARCH#만** 흘린다. 그러면 private 전환 =
+아이템 삭제 = 스트림 REMOVE = 색인 문서 삭제가 파이프라인의 **기본 동작**(create/update/delete
+미러링)으로 따라온다 — 조건부 액션 같은 기교가 불필요하다. friend 등 tier 구분이 검색 대상에
+생기면 projection에 tier 필드를 남겨 필터한다(부재=비공개, 필드=tier 구분).
+
+count류는 여전히 색인 제외(⑤). visibility 토글 반복은 아이템 생성/삭제의 반복일 뿐이며 유저
+행위 빈도라 비용은 소음 수준이고, 남용 방어의 자리는 저장 설계가 아니라 설정 변경 엔드포인트의
+rate limit/debounce다.
 
 **불변식 (승계): 인덱스는 관대한 쪽으로만 stale해도 되고, 그것은 2차 읽기 시점 재확인이 잡는다.**
-빠른 토글 중 위험한 방향(인덱스=public, 저장소=private)은 2차가 무조건 잡고, 안전한 방향은
-몇 초의 recall 손실로 끝난다. 진실은 항상 저장소다.
+전환 직후 위험한 방향(색인에 잔존, 저장소=private)은 2차가 무조건 잡고, 안전한 방향(삭제 전파
+지연으로 후보 누락)은 몇 초의 recall 손실로 끝난다. 진실은 항상 저장소다.
 
-### ⑦ 후보 폭주 대응 — 랜덤 샘플링 금지
-후보가 폭주하면(예: 10만 topic-owner 쌍) 랜덤으로 남기지 않는다. 랜덤은 필터 전에 자르는 것이라
-2차를 통과할 후보를 통과 못 할 후보와 같은 확률로 버린다. 순서:
-1. **owner collapse.** 최종 추천은 owner당 한 슬롯(`_keep_one_edge_per_agent`)이므로 실제
-   cardinality는 owner 수다. 1차에서 owner당 최고 히트 1개로 접는다.
-2. **쿼리별 top-N.** expansion 쿼리마다 retrieval 순위 상위 N만 취한다. 검색 점수는 recall 채널의
-   폭 제한이지 랭킹이 아니다 — ordering contract와 충돌하지 않는다.
-3. 그래도 넘치면 마지막에 캡 — 이 시점의 꼬리는 모든 expansion 쿼리가 낮게 평가한 것들이다.
+### ⑦ 후보 단위 = (owner, topic 집합) · 대표 선정은 gate 뒤 — 랜덤 샘플링 금지 (rev 3에서 정정)
+**rev 1의 "1차에서 owner당 최고 히트 1개로 collapse"는 결함이었다**(외부 리뷰 지적): gate 신호는
+인덱스에 없으므로 retrieval 1위 topic이 gate에서 탈락하면, gate를 통과했을 2위 topic이 collapse에서
+이미 버려져 owner가 통째로 사라진다. 검색기는 maturity나 대표 topic을 결정할 자격이 없다 —
+기존 코드가 agent dedupe를 gate·ordering **뒤**에 두는 이유와 같다.
+
+정정된 흐름:
+1. **self-exclusion을 검색 쿼리에서.** `owner_id != requester` 필터를 1차 쿼리에 넣는다 —
+   cap보다 앞에 공짜로 적용된다.
+2. **1차는 owner당 top-K topic을 유지한다** (K는 eval로 결정, BatchGet 비용과 연동 — §4).
+   후보 단위는 `(owner, 매칭된 topic 집합)`이다.
+3. **쿼리별 top-N.** expansion 쿼리마다 retrieval 순위 상위 N만 취한다(`_msearch` 독립 검색 — §3).
+   검색 점수는 recall 채널의 폭 제한이지 랭킹이 아니다.
+4. **2차 hydration/gate 뒤에** need별 ordering → owner당 최종 1 topic(`_keep_one_edge_per_agent`
+   상당) 선정. 대표 topic 선정은 ranking 단계의 일이다.
+5. 그래도 넘치면 마지막에 캡 — 이 시점의 꼬리는 모든 expansion 쿼리가 낮게 평가한 것들이다.
+   **랜덤 샘플링 금지**: 필터 전에 자르는 것이라 2차를 통과할 후보를 같은 확률로 버린다.
+
+**owner 수준 gate의 기본 의미론 = any-pass**: 매칭된 topic 집합 중 gate를 통과하는 topic이
+하나라도 있으면 owner는 살아남고, 통과한 topic들만 ordering에 들어간다. **topic 간 evidence
+합산 같은 집계는 별도 열린 결정**(§5 Q7)이다 — 조용히 sum을 도입하면 immature topic 두 개가
+mature owner 하나로 합쳐지는, 옛 maturity gate가 의도적으로 막았던 경로가 열린다.
 
 ### ⑧ 1차 검색 = BM25 + query expansion. 벡터는 measure-first로 유예
 사내에서 실증된 OpenSearch 스택은 BM25-only다(bourbon-memory-api `memory/search/` — analyzer,
@@ -132,13 +172,20 @@ consumer model에서 유도하지 않는다** (승계 규율) — 기준은 extr
 ## 2. 저장 스키마 스케치 (extractor에 거는 요구 — 초안)
 
 ```
-PK=USER#<owner_uuid>  SK=TOPIC#<topic_id>        ← 검색 아이템 (저빈도)
+PK=USER#<owner_uuid>  SK=TOPIC#<topic_id>        ← 원본 topic (private 포함, 색인 안 됨)
   schema_version, topic_id, owner_id
+  label_en, description_en, aliases_en: [..]
+  visibility                                      ← 진실 (2차 재확인이 읽는 값)
+  structure (parent/child topic ids 등 — extractor 설계에 따름)
+  updated_at
+
+PK=USER#<owner_uuid>  SK=TOPICSEARCH#<topic_id>  ← 검색 projection (§1-⑥) — publish 가능할 때만
+  schema_version, topic_id, owner_id              존재. TOPIC#과 transact_write로 동기.
   label_en                                        ← 검색 대상
   description_en                                  ← 검색 대상 (회수 품질의 핵심 재료)
   aliases_en: [..]                                ← 검색 대상 (영어 내 동의 변형)
-  visibility                                      ← 색인 포함 (§1-⑥)
-  structure (parent/child topic ids 등 — extractor 설계에 따름)
+  (선택) tier                                     ← friend 등 tier 구분이 생기면
+  (선택) search_eligible류 저빈도 파생 플래그      ← 임계 통과 시에만 바뀌는 값만 허용
   updated_at
 
 PK=USER#<owner_uuid>  SK=TOPICSTAT#<topic_id>    ← 카운터 아이템 (고빈도, 색인 제외)
@@ -146,46 +193,72 @@ PK=USER#<owner_uuid>  SK=TOPICSTAT#<topic_id>    ← 카운터 아이템 (고빈
   evidence_count (종류별 개수·종류별 최신 시각 등 — 우리가 요구하는 gate 신호)
   last_evidence_at
 
-PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim (2차/근거 제시용, 1차 색인 제외)
+PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim (1차 범위 밖 — §0. 색인 제외)
   schema_version, proposition_en, stance/condition 등 — extractor 설계에 따름
 ```
 
-- TOPIC#와 TOPICSTAT#의 분리가 §1-⑤의 물리적 실현이다. extractor가 evidence를 볼 때마다 갱신하는
+- TOPICSEARCH#(색인 대상)와 TOPICSTAT#(고빈도)의 분리가 §1-⑤의, TOPIC#(원본)과 TOPICSEARCH#
+  (publish projection)의 분리가 §1-⑥의 물리적 실현이다. extractor가 evidence를 볼 때마다 갱신하는
   것은 STAT 아이템뿐이라 색인 파이프라인이 조용하다.
+- **owner↔agent 매핑·활성 상태**: 후보 owner를 agent로 해석하는 값(현행은 bourbon-api의 결정적
+  `personal_agent_id` 파생)과 owner/agent 활성 여부는 이 테이블이 아니라 eligibility 확인의 몫이다 —
+  탈퇴·비활성 owner 처리는 기존 파이프라인의 eligibility 단계가 담당하고, 스키마에 넣지 않는 대신
+  여기서 그 경계를 명시한다.
 - 필드 상세(어떤 gate 신호를 어떤 이름으로)는 extractor 설계가 나오면 이 문서 rev-up으로 계약화한다.
-  여기서 잠그는 것은 **분리 원칙과 schema_version**이지 필드 목록이 아니다.
+  여기서 잠그는 것은 **분리 원칙·projection 존재 규칙·schema_version**이지 필드 목록이 아니다.
 
 ## 3. 인덱스 설계 스케치 (문서 계약 = 우리 소유)
 
-- 인덱스: `persona-topics-{stage}` (1차). claims 인덱스는 2단계.
-- `_id = <owner_id>:<topic_id>` — 아이템 upsert가 문서 upsert로 멱등 매핑.
+- 인덱스: `persona-topics-{stage}` (1차). 소스는 **TOPICSEARCH# 아이템만**(§1-⑥) — 인덱스에 있는
+  문서는 정의상 publish 가능하다. claims 인덱스는 1차 범위 밖(§0).
+- `_id = <owner_id>:<topic_id>` — 아이템 upsert/삭제가 문서 upsert/삭제로 멱등 매핑.
 - 필드: `owner_id`(keyword), `topic_id`(keyword), `label_en`/`description_en`/`aliases_en`
-  (text — memory-api `ANALYSIS_SETTINGS` 재사용: light_english stemmer + shingles), `visibility`
+  (text — memory-api `ANALYSIS_SETTINGS` 재사용: light_english stemmer + shingles), (선택) `tier`
   (keyword, 필터 전용), `updated_at`. **count류·gate 신호 없음** (§1-⑤).
-- 질의: expansion 변형들을 **named query**로 묶은 bool — 응답의 `matched_queries`로 어떤 변형이
-  맞았는지 무료로 회수. `visibility` pre-filter. owner collapse(§1-⑦-1)는 `collapse` 또는
-  `terms` aggregation + top_hits — AOSS 지원 여부에 따라 선택.
-- 검색 점수는 응답·랭킹에 쓰지 않는다. 쿼리별 top-N 컷에만 쓴다.
+- 질의: **expansion 변형마다 독립 검색**을 `_msearch`로 한 번에 보낸다 — 변형별 top-N(§1-⑦-3)과
+  변형 귀속이 응답 단위로 자연히 나온다. (rev 2까지의 "한 bool + named query + 변형별 top-N"은
+  성립하지 않는 조합이었다 — 한 bool의 size 컷은 전체 점수 기준이고 `matched_queries`는 귀속만
+  알려준다.) 병합은 RRF/round-robin(`memory/search/fusion.py` — 점수 비교 없이 rank만).
+  `owner_id != requester` self-exclusion 필터를 모든 서브 쿼리에 포함(§1-⑦-1).
+- 검색 점수는 응답·랭킹에 쓰지 않는다. 변형별 top-N 컷에만 쓴다.
 - 클라이언트·재연결·AOSS 특이사항(`_stats` 없음 등)은 memory-api
   `memory/search/opensearch_client.py`·`index_family.py` 패턴을 따른다.
 
-## 4. 2차 필터 (읽기 시점 재확인)
+## 4. 2차 필터 (읽기 시점 재확인) — BatchGet 계약 (rev 3에서 잠금)
 
-1차 결과 (owner, topic) 쌍들로 저장소를 BatchGet(TOPIC# + TOPICSTAT#, 100개 단위)한다:
-- **visibility 재확인 — 무조건.** 인덱스 값은 신뢰하지 않는다(정확성/안전).
-- **gate 신호 적용.** maturity 등 ordering contract의 gate 입력은 STAT 아이템 값으로만 판정한다
-  (성능·기밀상 인덱스에 없음).
-- 아이템이 사라졌으면(재추출·삭제) 후보 탈락 — 인덱스의 잔상은 여기서 걸러진다.
+1차 결과 (owner, topic) 쌍들로 저장소를 BatchGet(쌍당 TOPIC# + TOPICSTAT# 2아이템)한다.
+판정 규칙:
+- **visibility 재확인 — 무조건.** 인덱스에 있었다는 사실(=TOPICSEARCH# 존재의 잔상)을 신뢰하지
+  않고 TOPIC#의 visibility로 판정한다(정확성/안전).
+- **gate 신호 적용.** maturity 등 ordering contract의 gate 입력은 STAT 아이템 값으로만 판정한다.
+  owner 수준은 any-pass가 기본(§1-⑦).
+- TOPIC#이 사라졌으면(재추출·삭제) 후보 탈락 — 인덱스의 잔상은 여기서 걸러진다.
+
+BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동형):
+- **chunk = 후보 50쌍** — API 한도는 요청당 100아이템이고 쌍당 2아이템이다.
+- 응답은 순서가 없다 → **key 기준 재결합**.
+- **`UnprocessedKeys` ≠ 없는 아이템.** throttling 시 HTTP 200과 함께 일부 key만 돌아온다.
+  bounded retry(지수 backoff) 후에도 남으면 그 후보를 조용히 탈락시키지 않는다 —
+  **후보 탈락이 아니라 fail-loud(503 unavailable)**. throttling을 조용한 recall 손실로 바꾸면
+  상류 장애가 호출자 탓으로 귀속된다(승계 규율: unavailable을 실패로 오귀속 금지).
+- **일관성 분할: TOPIC#(visibility 판정)은 `ConsistentRead=true`, TOPICSTAT#(카운터)는 eventual.**
+  BatchGet 기본값은 eventual이라 방금 private으로 바뀐 topic을 잠시 public으로 읽을 수 있다 —
+  privacy 판정에만 strong을 쓰고, 카운터의 1초 staleness는 무의미하므로 RCU 2배를 지불하지
+  않는다. (같은 요청 안에서 테이블별 ConsistentRead 지정이 가능하다.)
 
 ## 5. 열린 질문
 
 | # | 질문 | 소유 | 상태 |
 |---|---|---|---|
 | Q1 | 색인 파이프라인: OSIS zero-ETL vs 자체 스트림 컨슈머 (비용 — OSIS는 파이프라인당 최소 OCU 상시 과금 / 운영 소유). 참고: Lambda 컨슈머는 스트림 배치 윈도우(최대 300초) 안에서 같은 key의 마지막 이미지만 upsert하는 이벤트 합치기가 부수적으로 따라오고, OSIS는 선언형 프로세서라 이런 debounce가 불가 — 단 토글류는 같은 `_id` 덮어쓰기라 비용이 소음 수준이므로 **결정 조건은 아니다** (1순위 방어선은 어차피 설정 변경 API의 rate limit — §1-⑥) | 인프라 협의 | 열림 |
-| Q2 | OSIS 선택 시 SK 패턴 선택 색인(TOPIC#만) 가능 여부 — 불가하면 검색/카운터 **테이블 2분할**이 fallback | 인프라 협의 | 열림 (Q1에 종속) |
+| Q2 | OSIS 선택 시 SK 패턴 선택 색인(TOPICSEARCH#만) 가능 여부 — 불가하면 projection **테이블 분리**가 fallback (TOPICSEARCH#를 별도 테이블로 빼면 파이프라인은 테이블 전체 미러) | 인프라 협의 | 열림 (Q1에 종속) |
 | Q3 | 영어 topic label·claim의 표시 시점 번역 — 한국어 유저에게 보여줄 추천 이유에 영어 label이 박힌다. 누가 언제 번역하나 | 제품 | 열림 |
 | Q4 | iac: agent-recommendation의 AOSS 데이터 접근(IRSA) 추가 + 컬렉션 선택(기존 `bourbon-aoss-tokyo-{stage}` vs 신규) | 우리 + iac | 열림 |
 | Q5 | 저장소 DynamoDB 확정 (우리 권고 §1-③ — MySQL 최종 폐기 확인) | extractor 팀 | 권고 전달 대기 |
+| Q6 | deferq 유실 복구(outbox·watermark 재대사·sweep)와 `(message_id, extractor_version)` 멱등 추출 — 외부 리뷰 지적 전달. 복구가 생기면 §1-①의 best-effort 선언을 되돌린다 | bourbon-api / extractor 팀 | 전달 대기 |
+| Q7 | owner 수준 gate의 집계 의미론 — 기본은 any-pass(§1-⑦). topic 간 evidence 합산 등 진짜 집계를 도입할지, 한다면 need별로 어떤 연산인지 | 우리 (eval 선행) | 열림 |
+| Q8 | 1차 범위 이후 시나리오 재정의 — for/against·경험 기반 회수를 새 구조에서 어떻게 (claims 인덱스 여부 포함) | 우리 + 제품 | 열림 (1차 이후) |
+| Q9 | iac 선행조건: 전용 테이블 생성 + **DynamoDB Streams 설정**(현행 `modules/dynamodb`에 stream 설정 없음) + OSIS 선택 시 초기 백필용 PITR·export S3 | iac | 열림 (Q1의 선행) |
 
 ## 6. 폐기 트랙에서 승계하는 불변식
 
@@ -200,6 +273,8 @@ PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim (2차/근거 제
 5. **DynamoDB vector search 기각** — TopK 100 상한·equality 전용 필터 등 구조적 제약. 새 그림도
    벡터를 DynamoDB에 두지 않는다 (재제안 방지용 기록)
 6. **계약 테스트 payload를 consumer model에서 유도 금지** (→ §1-⑨)
+7. **unavailable을 호출자 실패로 오귀속 금지** — 상류 부재/장애(BatchGet UnprocessedKeys 잔존 등)는
+   후보 탈락이 아니라 503 fail-loud (→ §4)
 
 승계하지 **않는** 것: 다국어 alias 저장 요구(→ 영어 한정 + 질의 시점 변형으로 대체, §1-②),
 audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키마 실사 결과 전체(저장소가 바뀜).
@@ -222,3 +297,12 @@ audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키�
   유예, 문서 계약 소유)를 기록. 열린 질문 Q1–Q5.
 - **rev 2 (2026-08-20)** — Q1에 파이프라인별 이벤트 합치기 비교 주석 추가(Lambda=배치 윈도우로
   부수적 debounce, OSIS=불가하나 결정 조건 아님 — 방어선 1순위는 API 층).
+- **rev 3 (2026-08-20)** — 외부 리뷰 반영. 상태를 "설계 기준 (초안)"으로 강등. **결정 변경 2건**:
+  ⑥ visibility 필드 필터 → TOPICSEARCH# publish projection(private은 색인 자체를 안 함, 전환 =
+  아이템 삭제 = 색인 삭제), ⑦ 1차 owner당 1-collapse(결함) → `(owner, top-K topic 집합)` 후보 +
+  대표 선정은 gate·ordering 뒤 + any-pass 기본. 그 외: ① 유실 무해 단정 삭제 → best-effort 제품
+  선언 + gate 튜닝 undercount 견고성(복구는 extractor 팀 소관, Q6), §0에 1차 범위 명시(topic 기반
+  owner 발견 — stance·경험 회수는 Q8), §3을 `_msearch` 독립 검색 + RRF로 정정(한 bool + 변형별
+  top-N은 성립 안 함), §4 BatchGet 계약 잠금(50쌍 chunk·UnprocessedKeys≠부재·fail-loud 503·
+  TOPIC#만 ConsistentRead), self-exclusion을 1차 쿼리로 전진, eval 3층 분리, Q6–Q9 추가
+  (iac streams/PITR 선행조건 포함), 승계 불변식에 오귀속 금지 추가.
