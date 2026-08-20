@@ -1,6 +1,10 @@
-# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 6
+# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 7
 
 작성: 2026-08-20 · 상태: **설계 기준 (초안)** — 2026-08-19 회의 결정 + 2026-08-20 설계 리뷰·외부 리뷰 반영. §5의 열린 결정이 닫힐 때마다 rev-up하고, 전부 닫히면 확정으로 승격한다. 개정 이력은 문서 끝.
+
+> **개정 체크 (rev 7부터 상시).** 결정을 뒤집는 rev은 커밋 전에 **뒤집은 단어를 문서 전체에서
+> grep**해 stale 잔재를 확인한다 — rev 4의 "need별 ordering", rev 6의 §3 `tier`가 이 sweep 미비로
+> 남았던 전례다.
 
 > **이 문서의 역할.** persona-api 전환 트랙과 memory-api v2 마이그레이션이 **둘 다 폐기**된 뒤(2026-08-19),
 > 그 자리를 대체하는 새 그림의 단일 기록이다. 여기 적힌 것은 두 층으로 나뉜다 —
@@ -71,7 +75,8 @@ topic label·claim proposition·alias 전부 영어. 따라서:
   (light_english stemmer + shingle 근접 부스트, `memory/search/analysis.py`)를 재사용한다.
 - **eval은 4층이다** (E2E 하나로는 실패 원인이 안 갈린다):
   ⑴ 한국어 need → 영어 expansion 변형 품질, ⑵ 정답 영어 query → 검색 recall,
-  ⑶ relevance 판정 정밀도(§1-⑪), ⑷ 전체 E2E. golden set은 네 층을 모두 커버한다.
+  ⑶ relevance 판정 품질(§1-⑪ — precision·recall·abstain·strata, owner 전이 손실 포함),
+  ⑷ 전체 E2E. golden set은 네 층을 모두 커버한다.
 
 ### ③ 저장소 = DynamoDB, **전용 테이블** (우리 권고 — extractor 팀 확정 대기)
 회의에서는 DynamoDB or MySQL이 열려 있었다. 우리 권고는 DynamoDB이고 근거는:
@@ -153,7 +158,7 @@ rate limit/debounce다.
    후보 단위는 `(owner, 매칭된 topic 집합)`이다.
 3. **쿼리별 top-N.** expansion 쿼리마다 retrieval 순위 상위 N만 취한다(`_msearch` 독립 검색 — §3).
    검색 점수는 recall 채널의 폭 제한이지 랭킹이 아니다.
-4. **relevance 판정(⑪) → 2차 hydration/gate 뒤에** 단일 competence ordering → owner당 최종
+4. **저장소 읽기(§4) → relevance 판정(⑪) → gate 뒤에** 단일 competence ordering → owner당 최종
    1 topic(`_keep_one_edge_per_agent` 상당) 선정. 대표 topic 선정은 ranking 단계의 일이다.
    (1차는 추천 유형이 하나이므로 need별 ordering은 없다 — §0.)
 5. 그래도 넘치면 마지막에 캡 — 이 시점의 꼬리는 모든 expansion 쿼리가 낮게 평가한 것들이다.
@@ -223,7 +228,7 @@ mock과의 대조에서 합의/유지할 것:
 - **`context`는 가능하면 실제 대화 턴으로.** 모델이 쓴 요약 문자열보다 task payload의
   `context_messages`(구조화된 턴)가 grounding 재료로 낫다.
 
-### ⑪ relevance 판정층 — exact anchor의 후계자 (rev 6 신설)
+### ⑪ relevance 판정층 — exact anchor의 후계자 (rev 6 신설 · rev 7 정정)
 옛 구조에서 "이 후보가 요청과 관련 있다"의 보장은 **exact anchor grounding**이 하던 일이었다.
 앵커를 없애면서 그 역할의 후계자가 비어 있었다(외부 리뷰 지적): BM25 top-N은 recall 후보일 뿐이고,
 검색 점수를 랭킹에 안 쓰는 우리 원칙 때문에 expansion이 조금만 drift하면 "성숙하지만 약하게 관련된
@@ -232,22 +237,40 @@ topic"(예: 요청 "Kubernetes 운영" vs topic "software systems" maturity 0.95
 
 ```
 _msearch recall → 변형별 top-N → owner당 top-K (bounded 후보)
+  → 저장소 읽기 (§4 — TOPIC#/TOPICSTAT# BatchGet + claim 조회) + visibility 재확인
   → LLM relevance 판정 (batch)          ← 신설 — 요청↔topic 관련성 verdict
-  → DynamoDB 진실 재확인 + gate (§4)
-  → 단일 competence ordering → owner당 대표 1 topic
+  → gate → 단일 competence ordering → owner당 대표 1 topic
 ```
 
-- **판정 입력은 bounded다**: top-N/top-K 뒤의 유한 집합에만 LLM을 댄다. **정규화된 label 텍스트로
-  dedupe해서 판정한다** — 같은 label을 가진 owner가 100명이어도 판정은 1회. 호출 수는 owner 수가
-  아니라 고유 label 수에 비례한다.
+- **판정 입력 = topic의 의미를 결정하는 재료 전부다** (2026-08-20 오너 결정 포함): label ·
+  description · aliases에 더해 **그 topic에 대한 claim들**(persona extractor 산출물)을 참고한다.
+  label만으로는 판정 자체가 불가능하다 — owner A의 "Java"(JVM 언어)와 owner B의 "Java"(인도네시아
+  섬)는 label이 같다. claim이 붙으면 topic의 실제 내용(무엇을 알고 무엇을 주장하나)까지 보고
+  관련성을 판정할 수 있다. 이 때문에 저장소 읽기가 판정 **앞**으로 온다(위 다이어그램) — claim은
+  인덱스에 없고 저장소에만 있다.
+- **dedupe는 label이 아니라 semantic signature로만** (rev 6 정정 — label-only dedupe는 위 Java
+  반례로 자기모순이었다): 정규화한 (label + description + aliases + claim digest +
+  `extractor_model_version`)의 hash가 완전히 같을 때만 판정을 공유한다. 단, 유저별 LLM 추출물이
+  바이트 단위로 일치할 확률은 낮으므로 **dedupe의 절감 효과는 제한적이다 — 실질 비용 통제는
+  K·N 캡이다** ("호출 수 ∝ 고유 label 수" 기대는 철회).
+- **판정 입력은 bounded다**: top-N/top-K 뒤의 유한 집합에만 LLM을 댄다. claim 포함으로 입력
+  토큰이 커지므로 topic당 claim 수 캡을 둔다. 비용 레버(측정 후): 1단계는 signature만으로 판정,
+  경계/abstain 후보만 claim을 붙여 2단계 판정하는 tiered 구조.
 - **산출물은 topic별 relevance verdict**(+ 어떤 expansion 변형에 걸렸는지)이지 scalar 점수가
   아니다 — 점수를 랭킹에 안 쓰는 원칙은 그대로다. verdict는 gate처럼 동작한다(관련 없음 = 탈락).
-- **C4 grounder 규율을 승계한다**: outcome ≠ cause 분리 · 재시도 기준은 "판단에 도달했는가" ·
-  abstain을 tool 스키마로 죽이지 않는다. 기존 agentic grounder 코드가 이 판정층의 출발점이다 —
-  출력이 "승자 anchor 1개"에서 "topic별 verdict"로 바뀔 뿐이다.
-- **eval에 relevance 정밀도 층이 추가된다**(§1-② 3층 → 4층): 판정층의 오판이 새 실패 모드다.
-- **latency/비용은 K·N 캡과 label dedupe로 통제**하고, staging 측정 게이트 대상이다(hot path에
+- **C4 grounder에서 승계하는 것은 코드가 아니라 규율이다** (rev 7 완화 — batch relevance
+  classifier는 search/get/submit tool loop와 형태가 다르다): outcome ≠ cause 분리 · explicit
+  abstain(스키마로 죽이지 않기) · bounded retry("판단에 도달했는가" 기준) · structured trace.
+- **eval ⑶층은 정밀도만으로 부족하다** (rev 7 확장 — 판정은 hard gate라 false negative가 침묵
+  손실이다): precision · **recall** · abstain rate · 질의/언어/다의어 strata별 분해. 특히 recall은
+  **owner 전이 손실**과 함께 본다 — owner는 any-pass(⑦)라 topic 하나의 FN과 그 owner의 매칭
+  topic 전부가 FN이어서 owner가 통째로 사라지는 것은 영향이 다르다. 핵심 지표는 "판정 FN이
+  owner 손실로 전이된 비율"이다.
+- **latency/비용은 K·N 캡(+ claim 수 캡)으로 통제**하고, staging 측정 게이트 대상이다(hot path에
   LLM 판정 1회 추가 — 옛 grounder도 hot path였으므로 전례는 있다).
+- **claim 사용 범위 (경계 노트)**: 판정은 내부 처리지만, 기본은 **publish 가능한 claim만** 입력에
+  쓴다 — publish 불가 claim이 관련성 판정에 영향을 주면 비공개 정보의 간접 추론 채널이 된다.
+  claim의 visibility 모델 자체가 extractor 설계 미정이므로 협의 항목이다(§5 Q5와 함께).
 - 양립 불가능한 두 해석이 다 매칭되는 다의어(예: "자바" → 언어/섬)를 판정층이 감지했을 때 섞어서
   반환할지 clarification을 요구할지는 열린 결정이다(Q11).
 
@@ -276,8 +299,9 @@ PK=USER#<owner_uuid>  SK=TOPICSTAT#<topic_id>    ← 카운터 아이템 (고빈
   evidence_count (종류별 개수·종류별 최신 시각 등 — 우리가 요구하는 gate 신호)
   last_evidence_at
 
-PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim (1차 범위 밖 — §0. 색인 제외)
-  schema_version, proposition_en, stance/condition 등 — extractor 설계에 따름
+PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim (색인 제외. 검색 대상은 아니지만
+  schema_version, proposition_en, stance/condition 등     **1차에서 relevance 판정 입력으로 사용** —
+  — extractor 설계에 따름                                  §1-⑪. claim 자체의 visibility 모델 협의 필요)
 ```
 
 - TOPICSEARCH#(색인 대상)와 TOPICSTAT#(고빈도)의 분리가 §1-⑤의, TOPIC#(원본)과 TOPICSEARCH#
@@ -297,33 +321,47 @@ PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim (1차 범위 밖
   문서는 정의상 publish 가능하다. claims 인덱스는 1차 범위 밖(§0).
 - `_id = <owner_id>:<topic_id>` — 아이템 upsert/삭제가 문서 upsert/삭제로 멱등 매핑.
 - 필드: `owner_id`(keyword), `topic_id`(keyword), `label_en`/`description_en`/`aliases_en`
-  (text — memory-api `ANALYSIS_SETTINGS` 재사용: light_english stemmer + shingles), (선택) `tier`
-  (keyword, 필터 전용), `updated_at`. **count류·gate 신호 없음** (§1-⑤).
+  (text — memory-api `ANALYSIS_SETTINGS` 재사용: light_english stemmer + shingles),
+  `schema_version`, `extractor_model_version`, `updated_at`. **count류·gate 신호 없음** (§1-⑤).
+  **tier 필드 없음** (rev 7에서 stale 제거 — §1-⑥: 인덱스 존재 = 전역 discoverable이고, tier
+  필드는 그 경계의 정반대 주장이었다).
 - 질의: **expansion 변형마다 독립 검색**을 `_msearch`로 한 번에 보낸다 — 변형별 top-N(§1-⑦-3)과
   변형 귀속이 응답 단위로 자연히 나온다. (rev 2까지의 "한 bool + named query + 변형별 top-N"은
   성립하지 않는 조합이었다 — 한 bool의 size 컷은 전체 점수 기준이고 `matched_queries`는 귀속만
   알려준다.) 병합은 RRF/round-robin(`memory/search/fusion.py` — 점수 비교 없이 rank만).
   `owner_id != requester` self-exclusion 필터를 모든 서브 쿼리에 포함(§1-⑦-1).
 - 검색 점수는 응답·랭킹에 쓰지 않는다. 변형별 top-N 컷에만 쓴다.
-- **버전 위생 (rev 6)**: AOSS 문서에도 `schema_version` + `extractor_model_version`을 포함한다.
-  인덱스는 **versioned index + alias**(`persona-topics-{stage}-v{n}` + 읽기 alias)로 운용하고,
-  매핑 변경·extractor 모델 교체 시의 **백필 절차**(새 인덱스에 재색인 → alias 전환)를 계약에
-  포함한다 — 모델 교체와 index migration이 조용히 섞이지 않게 하는 최소 장치다.
+- **버전 위생 (rev 6 · rev 7 구분 정밀화)**: AOSS 문서에도 `schema_version` +
+  `extractor_model_version`을 포함하고, 인덱스는 **versioned index + alias**
+  (`persona-topics-{stage}-v{n}` + 읽기 alias)로 운용한다. 변경의 종류에 따라 절차와 소유자가
+  다르다 — 셋을 섞지 않는다:
+
+  | 변경 | 절차 | 소유 |
+  |---|---|---|
+  | 인덱스 **매핑** 변경 | 기존 projection을 새 인덱스로 재색인 → alias 전환 | 우리 |
+  | **extractor 모델** 변경 | OpenSearch reindex로 해결 불가 — **DynamoDB projection 자체를 새 모델로 재추출/백필**해야 하고, 우리 인덱스 마이그레이션은 그 뒤 | 재추출 = bourbon-agent · 색인 = 우리 |
+  | 백필 중 **live 변경 유실 방지** | dual-ingest 또는 stream cutover 절차 (백필 시작~alias 전환 사이의 스트림 이벤트 처리 규칙) | 파이프라인 소유자 (Q1) |
 - 클라이언트·재연결·AOSS 특이사항(`_stats` 없음 등)은 memory-api
   `memory/search/opensearch_client.py`·`index_family.py` 패턴을 따른다.
 
-## 4. 2차 필터 (읽기 시점 재확인) — BatchGet 계약 (rev 3에서 잠금)
+## 4. 2차 저장소 읽기 (읽기 시점 재확인) — BatchGet 계약 (rev 3에서 잠금 · rev 7에서 판정 앞으로 이동)
 
-relevance 판정(§1-⑪)을 통과한 (owner, topic) 쌍들로 저장소를 BatchGet(쌍당 TOPIC# + TOPICSTAT#
-2아이템)한다. 판정 규칙:
-- **visibility 재확인 — 무조건.** 인덱스에 있었다는 사실(=TOPICSEARCH# 존재의 잔상)을 신뢰하지
-  않고 TOPIC#의 visibility로 판정한다(정확성/안전).
-- **gate 신호 적용.** maturity 등 ordering contract의 gate 입력은 STAT 아이템 값으로만 판정한다.
-  owner 수준은 any-pass가 기본(§1-⑦).
+recall된 (owner, topic) 후보 쌍들로 저장소를 읽는다 — **relevance 판정(§1-⑪)이 claim을 입력으로
+쓰므로 저장소 읽기가 판정보다 앞이다**(rev 7 재배치). 읽기 = 쌍당 TOPIC# + TOPICSTAT#
+BatchGet + **topic별 claim 조회**(claim id를 미리 모르므로 BatchGet이 아니라 `begins_with(SK,
+CLAIM#<topic_id>)` Query — 쌍당 1회, K·N 캡으로 bounded, 병렬 실행). 읽은 값 위에서 순서대로:
+1. **visibility 재확인 — 무조건, 판정보다 먼저.** 인덱스에 있었다는 사실(=TOPICSEARCH# 존재의
+   잔상)을 신뢰하지 않고 TOPIC#의 visibility로 판정한다(정확성/안전). private으로 바뀐 topic은
+   LLM 판정 입력으로도 들어가지 않는다.
+2. **relevance 판정(§1-⑪)** — signature + claim을 입력으로.
+3. **gate 신호 적용.** maturity 등 ordering contract의 gate 입력은 STAT 아이템 값으로만 판정한다.
+   owner 수준은 any-pass가 기본(§1-⑦).
 - TOPIC#이 사라졌으면(재추출·삭제) 후보 탈락 — 인덱스의 잔상은 여기서 걸러진다.
+- 비용 노트: 판정 앞 읽기라서 판정이 탈락시킬 후보의 저장소 읽기도 발생한다 — K·N 캡이 상한이고,
+  줄여야 하면 §1-⑪의 tiered 판정(1단계 signature-only)이 레버다.
 
 BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동형):
-- **chunk = 후보 50쌍** — API 한도는 요청당 100아이템이고 쌍당 2아이템이다.
+- **chunk = 후보 50쌍** — API 한도는 요청당 100아이템이고 쌍당 2아이템이다(claim Query는 별도).
 - 응답은 순서가 없다 → **key 기준 재결합**.
 - **`UnprocessedKeys` ≠ 없는 아이템.** throttling 시 HTTP 200과 함께 일부 key만 돌아온다.
   bounded retry(지수 backoff) 후에도 남으면 그 후보를 조용히 탈락시키지 않는다 —
@@ -420,3 +458,13 @@ audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키�
   ordering" 잔재 제거(단일 competence ordering), Q7을 2차로 이동, eligibility는 경계 지정 ≠ 구현
   확보 → Q12(**전환 출시 gate**), AOSS 문서 버전 위생(schema/extractor_model_version·versioned
   index/alias·백필), Q1의 OSIS debounce 서술을 spike 대상으로 완화.
+- **rev 7 (2026-08-20)** — 외부 리뷰 3차 + 오너 결정 반영. **판정 입력에 claim 추가**(오너 결정) →
+  저장소 읽기가 판정 앞으로 이동(§4 재배치: 읽기 → visibility 재확인 → 판정 → gate, claim은
+  쌍당 Query·publish 가능 claim만 기본). **label-only dedupe 철회**(rev 6 자기모순 — Java 반례):
+  semantic signature hash로만 공유, 절감 효과 제한적이므로 실질 통제는 K·N 캡 + tiered 판정 레버.
+  §3의 stale `tier` 필드 제거(privacy 경계의 정반대 주장이었다) + `schema_version`/
+  `extractor_model_version` 필드 추가. eval ⑶층을 precision→**precision·recall·abstain·strata +
+  owner 전이 손실**로 확장(hard gate의 FN은 침묵 손실). grounder 승계를 "코드가 아니라 규율"로
+  완화. §3 버전 위생을 3-case 표로(매핑 변경=우리 / extractor 모델 변경=**projection 재추출,
+  bourbon-agent** / live 유실 방지=dual-ingest·cutover). 문서 머리에 개정 체크(뒤집은 단어 전체
+  grep) 상시화.
