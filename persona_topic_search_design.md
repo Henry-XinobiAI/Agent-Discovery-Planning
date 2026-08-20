@@ -1,4 +1,4 @@
-# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 7
+# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 8
 
 작성: 2026-08-20 · 상태: **설계 기준 (초안)** — 2026-08-19 회의 결정 + 2026-08-20 설계 리뷰·외부 리뷰 반영. §5의 열린 결정이 닫힐 때마다 rev-up하고, 전부 닫히면 확정으로 승격한다. 개정 이력은 문서 끝.
 
@@ -44,7 +44,8 @@ agent-recommendation-api ──────────────────�
   **1차에서 전부 폐기**한다 — for/against만 빼는 게 아니라 **need_type 축 자체가 1차 wire 계약에서
   사라진다**(내부적으로 단일 유형 고정). 추천 유형 체계는 persona가 실제로 제공하는 정보가 취합된
   뒤 **2차에서 새로 설계**한다(§5 Q8). 전환 전까지 기존 기능의 현행 소스는 memory-api다(§7).
-  §2의 CLAIM# 아이템·claims 인덱스 확장 여지는 이 확장을 막지 않기 위해 남겨 둔다. 파급: 기존
+  단, **CLAIM 데이터 자체는 1차에서 relevance 판정 입력으로 쓴다**(§1-⑪ — TOPICJUDGE# projection
+  경유) — 2차 확장으로 미루는 것은 **claims 검색 인덱스**뿐이다. 파급: 기존
   코드의 `NeedType`·stance 파이프라인(`STANCE_NEEDS`·judge 경로)은 전환 시 삭제 패스 대상이다.
 
 ## 1. 결정 사항 (2026-08-19 회의 + 2026-08-20 리뷰)
@@ -158,9 +159,9 @@ rate limit/debounce다.
    후보 단위는 `(owner, 매칭된 topic 집합)`이다.
 3. **쿼리별 top-N.** expansion 쿼리마다 retrieval 순위 상위 N만 취한다(`_msearch` 독립 검색 — §3).
    검색 점수는 recall 채널의 폭 제한이지 랭킹이 아니다.
-4. **저장소 읽기(§4) → relevance 판정(⑪) → gate 뒤에** 단일 competence ordering → owner당 최종
-   1 topic(`_keep_one_edge_per_agent` 상당) 선정. 대표 topic 선정은 ranking 단계의 일이다.
-   (1차는 추천 유형이 하나이므로 need별 ordering은 없다 — §0.)
+4. **1단계 읽기 + visibility·gate(§4) → 2단계 읽기 → relevance 판정(⑪) 뒤에** 단일 competence
+   ordering → owner당 최종 1 topic(`_keep_one_edge_per_agent` 상당) 선정. 대표 topic 선정은
+   ranking 단계의 일이다. (1차는 추천 유형이 하나이므로 need별 ordering은 없다 — §0.)
 5. 그래도 넘치면 마지막에 캡 — 이 시점의 꼬리는 모든 expansion 쿼리가 낮게 평가한 것들이다.
    **랜덤 샘플링 금지**: 필터 전에 자르는 것이라 2차를 통과할 후보를 같은 확률로 버린다.
 
@@ -237,25 +238,42 @@ topic"(예: 요청 "Kubernetes 운영" vs topic "software systems" maturity 0.95
 
 ```
 _msearch recall → 변형별 top-N → owner당 top-K (bounded 후보)
-  → 저장소 읽기 (§4 — TOPIC#/TOPICSTAT# BatchGet + claim 조회) + visibility 재확인
-  → LLM relevance 판정 (batch)          ← 신설 — 요청↔topic 관련성 verdict
-  → gate → 단일 competence ordering → owner당 대표 1 topic
+  → 1단계 읽기: TOPIC# + TOPICSTAT# BatchGet (both strong, §4)
+  → visibility 재확인 + gate            ← 싼 필터 먼저 — 탈락 후보에 claim 읽기·LLM 비용 없음
+  → 2단계 읽기: 생존자만 TOPICJUDGE# BatchGet (§2 — bounded 판정 재료)
+  → LLM relevance 판정 (batch)          ← 요청↔topic 관련성 verdict
+  → 단일 competence ordering → owner당 대표 1 topic
 ```
 
 - **판정 입력 = topic의 의미를 결정하는 재료 전부다** (2026-08-20 오너 결정 포함): label ·
   description · aliases에 더해 **그 topic에 대한 claim들**(persona extractor 산출물)을 참고한다.
   label만으로는 판정 자체가 불가능하다 — owner A의 "Java"(JVM 언어)와 owner B의 "Java"(인도네시아
   섬)는 label이 같다. claim이 붙으면 topic의 실제 내용(무엇을 알고 무엇을 주장하나)까지 보고
-  관련성을 판정할 수 있다. 이 때문에 저장소 읽기가 판정 **앞**으로 온다(위 다이어그램) — claim은
-  인덱스에 없고 저장소에만 있다.
+  관련성을 판정할 수 있다.
+- **claim 공급 = `TOPICJUDGE#` projection (rev 8 — 우리 권고안, extractor 협의 대상).** rev 7의
+  "쌍당 `begins_with(SK, CLAIM#…)` Query"는 **철회한다**(외부 리뷰): ⑴ K·N 캡은 Query 횟수만
+  제한하고 topic 하나의 claim 수·1MB pagination을 제한하지 못했고, ⑵ UUID SK에 Limit를 걸면 대표
+  claim이 아니라 임의 표본이며, ⑶ visibility 확인 전에 private일 수 있는 topic의 claim이
+  메모리에 들어왔다. 대신 extractor가 **bounded 판정 재료 아이템**(§2 TOPICJUDGE#)을 유지하고
+  우리는 gate 생존자에 대해서만 BatchGet한다. 이는 TOPICSEARCH#와 같은 패턴의 세 번째 적용이다 —
+  "publish 가능 ⇔ 아이템 존재, 내용물은 publish 가능한 것만", 그리고 **대표 claim 선택은 읽기
+  시점이 아니라 쓰기 시점의 일**(claim의 lifecycle·강도를 아는 extractor만 제대로 할 수 있는
+  판단)이다. **부재 시 규칙**: 생존한 publishable topic에 TOPICJUDGE#가 없으면(생성 지연) 탈락이
+  아니라 **signature-only 판정으로 진행 + telemetry 카운트** — 내용물이 어차피 publishable-only라
+  privacy는 걸려 있지 않고, 생성 지연은 "관대한 쪽 stale" 부류다.
+- **판정 입력 텍스트는 전부 비신뢰다 (rev 8).** claim만이 아니라 label·description·aliases도 유저
+  대화에서 유래한다. 판정 LLM은 고정 system prompt + **구조화 JSON data 슬롯**으로 입력을 받고,
+  **입력 텍스트 안의 지시를 따르지 않는다**는 규율을 프롬프트와 테스트 양쪽에 명시한다.
 - **dedupe는 label이 아니라 semantic signature로만** (rev 6 정정 — label-only dedupe는 위 Java
-  반례로 자기모순이었다): 정규화한 (label + description + aliases + claim digest +
-  `extractor_model_version`)의 hash가 완전히 같을 때만 판정을 공유한다. 단, 유저별 LLM 추출물이
-  바이트 단위로 일치할 확률은 낮으므로 **dedupe의 절감 효과는 제한적이다 — 실질 비용 통제는
-  K·N 캡이다** ("호출 수 ∝ 고유 label 수" 기대는 철회).
-- **판정 입력은 bounded다**: top-N/top-K 뒤의 유한 집합에만 LLM을 댄다. claim 포함으로 입력
-  토큰이 커지므로 topic당 claim 수 캡을 둔다. 비용 레버(측정 후): 1단계는 signature만으로 판정,
-  경계/abstain 후보만 claim을 붙여 2단계 판정하는 tiered 구조.
+  반례로 자기모순이었다): 정규화한 (label + description + aliases + `claim_digest` +
+  `extractor_model_version`)의 hash가 완전히 같을 때만 판정을 공유한다. **`claim_digest`는 "전체
+  claim"이 아니라 LLM에 실제 전달된 bounded 배열의 canonical digest다**(rev 8 정밀화 — 정렬·정규화
+  규칙과 `selection_policy_version`이 digest 입력에 포함된다; TOPICJUDGE#가 이 값을 들고 있다).
+  단, 유저별 LLM 추출물이 바이트 단위로 일치할 확률은 낮으므로 **dedupe의 절감 효과는 제한적이다 —
+  실질 비용 통제는 K·N 캡이다** ("호출 수 ∝ 고유 label 수" 기대는 철회).
+- **판정 입력은 bounded다**: top-N/top-K 뒤의 유한 집합에만 LLM을 대고, topic당 claim 수는
+  TOPICJUDGE#의 bounded 배열이 보장한다(상한·선택 규칙 = extractor 소관, §2). 비용 레버(측정 후):
+  1단계는 signature만으로 판정, 경계/abstain 후보만 claim을 붙여 2단계 판정하는 tiered 구조.
 - **산출물은 topic별 relevance verdict**(+ 어떤 expansion 변형에 걸렸는지)이지 scalar 점수가
   아니다 — 점수를 랭킹에 안 쓰는 원칙은 그대로다. verdict는 gate처럼 동작한다(관련 없음 = 탈락).
 - **C4 grounder에서 승계하는 것은 코드가 아니라 규율이다** (rev 7 완화 — batch relevance
@@ -268,9 +286,10 @@ _msearch recall → 변형별 top-N → owner당 top-K (bounded 후보)
   owner 손실로 전이된 비율"이다.
 - **latency/비용은 K·N 캡(+ claim 수 캡)으로 통제**하고, staging 측정 게이트 대상이다(hot path에
   LLM 판정 1회 추가 — 옛 grounder도 hot path였으므로 전례는 있다).
-- **claim 사용 범위 (경계 노트)**: 판정은 내부 처리지만, 기본은 **publish 가능한 claim만** 입력에
-  쓴다 — publish 불가 claim이 관련성 판정에 영향을 주면 비공개 정보의 간접 추론 채널이 된다.
-  claim의 visibility 모델 자체가 extractor 설계 미정이므로 협의 항목이다(§5 Q5와 함께).
+- **claim 사용 범위**: **publish 가능한 claim만** 판정 입력에 쓴다 — publish 불가 claim이 관련성
+  판정에 영향을 주면 비공개 정보의 간접 추론 채널이 된다. TOPICJUDGE#의 존재·내용물 규칙이 이를
+  구조로 보장한다. claim의 publish 경계(visibility 모델) 확정은 **판정층 가동의 출시 gate**다 —
+  §5 Q13 (저장소 선택 Q5와는 다른 결정이라 분리).
 - 양립 불가능한 두 해석이 다 매칭되는 다의어(예: "자바" → 언어/섬)를 판정층이 감지했을 때 섞어서
   반환할지 clarification을 요구할지는 열린 결정이다(Q11).
 
@@ -299,14 +318,27 @@ PK=USER#<owner_uuid>  SK=TOPICSTAT#<topic_id>    ← 카운터 아이템 (고빈
   evidence_count (종류별 개수·종류별 최신 시각 등 — 우리가 요구하는 gate 신호)
   last_evidence_at
 
-PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim (색인 제외. 검색 대상은 아니지만
-  schema_version, proposition_en, stance/condition 등     **1차에서 relevance 판정 입력으로 사용** —
-  — extractor 설계에 따름                                  §1-⑪. claim 자체의 visibility 모델 협의 필요)
+PK=USER#<owner_uuid>  SK=TOPICJUDGE#<topic_id>   ← 판정 재료 projection (§1-⑪, rev 8 권고안 —
+  schema_version, extractor_model_version           extractor 협의 대상). **색인 제외**, topic이
+  selection_policy_version                          전역 공개일 때만 존재(TOPICSEARCH#와
+  publishable_claims: [...]                         transact로 lifecycle 동기).
+  claim_digest                                      ← publishable_claims 배열 그대로의 canonical
+  updated_at                                          digest (정렬·정규화·selection_policy 포함)
+
+PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim 원본 (색인 제외. 추천이 직접 읽지
+  schema_version, proposition_en, stance/condition 등     않는다 — 판정 입력은 TOPICJUDGE# 경유.
+  — extractor 설계에 따름                                  visibility 모델 확정 = Q13 출시 gate)
 ```
 
 - TOPICSEARCH#(색인 대상)와 TOPICSTAT#(고빈도)의 분리가 §1-⑤의, TOPIC#(원본)과 TOPICSEARCH#
   (publish projection)의 분리가 §1-⑥의 물리적 실현이다. extractor가 evidence를 볼 때마다 갱신하는
   것은 STAT 아이템뿐이라 색인 파이프라인이 조용하다.
+- **TOPICJUDGE#는 자주 재작성돼도 무해하다** — claim은 대화마다 쌓이지만 이 아이템은 **색인
+  파이프라인 밖**이라(AOSS로 안 흐름) 변경 주기 분리 원칙과 충돌하지 않는다. DynamoDB 아이템
+  재작성 비용뿐이다.
+- **TOPICJUDGE#의 선택 규칙(어떤 claim이 대표인가·상한 몇 개)은 extractor 소관·협의 항목이다.**
+  우리가 요구하는 것은 성질뿐이다: bounded(상한 보장) · publishable-only · deterministic(같은
+  입력이면 같은 배열 — digest 공유의 전제) · `selection_policy_version`으로 규칙 변경 추적.
 - **owner↔agent 매핑·활성 상태**: 후보 owner를 agent로 해석하는 값(현행은 bourbon-api의 결정적
   `personal_agent_id` 파생)과 owner/agent 활성 여부는 이 테이블이 아니라 eligibility 확인의 몫이다.
   **단, 경계 지정 ≠ 구현 확보** (rev 6, 외부 리뷰 지적): 현행 배선은 deployed-only
@@ -346,22 +378,22 @@ PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim (색인 제외. 
 
 ## 4. 2차 저장소 읽기 (읽기 시점 재확인) — BatchGet 계약 (rev 3에서 잠금 · rev 7에서 판정 앞으로 이동)
 
-recall된 (owner, topic) 후보 쌍들로 저장소를 읽는다 — **relevance 판정(§1-⑪)이 claim을 입력으로
-쓰므로 저장소 읽기가 판정보다 앞이다**(rev 7 재배치). 읽기 = 쌍당 TOPIC# + TOPICSTAT#
-BatchGet + **topic별 claim 조회**(claim id를 미리 모르므로 BatchGet이 아니라 `begins_with(SK,
-CLAIM#<topic_id>)` Query — 쌍당 1회, K·N 캡으로 bounded, 병렬 실행). 읽은 값 위에서 순서대로:
+읽기는 **2단계 BatchGet**이다 (rev 8 — rev 7의 쌍당 claim Query는 철회, §1-⑪):
+
+**1단계** — recall된 (owner, topic) 후보 쌍들로 TOPIC# + TOPICSTAT#을 BatchGet하고, 그 값 위에서:
 1. **visibility 재확인 — 무조건, 판정보다 먼저.** 인덱스에 있었다는 사실(=TOPICSEARCH# 존재의
    잔상)을 신뢰하지 않고 TOPIC#의 visibility로 판정한다(정확성/안전). private으로 바뀐 topic은
-   LLM 판정 입력으로도 들어가지 않는다.
-2. **relevance 판정(§1-⑪)** — signature + claim을 입력으로.
-3. **gate 신호 적용.** maturity 등 ordering contract의 gate 입력은 STAT 아이템 값으로만 판정한다.
-   owner 수준은 any-pass가 기본(§1-⑦).
+   **claim 읽기·LLM 판정 어느 쪽에도 들어가지 않는다**.
+2. **gate 신호 적용.** maturity 등 ordering contract의 gate 입력은 STAT 아이템 값으로만 판정한다.
+   owner 수준은 any-pass가 기본(§1-⑦). (싼 필터를 판정 앞에 — 탈락 후보에 2단계 읽기·LLM 비용을
+   쓰지 않는다.)
 - TOPIC#이 사라졌으면(재추출·삭제) 후보 탈락 — 인덱스의 잔상은 여기서 걸러진다.
-- 비용 노트: 판정 앞 읽기라서 판정이 탈락시킬 후보의 저장소 읽기도 발생한다 — K·N 캡이 상한이고,
-  줄여야 하면 §1-⑪의 tiered 판정(1단계 signature-only)이 레버다.
 
-BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동형):
-- **chunk = 후보 50쌍** — API 한도는 요청당 100아이템이고 쌍당 2아이템이다(claim Query는 별도).
+**2단계** — 생존자에 대해서만 TOPICJUDGE#를 BatchGet(아이템 1개/쌍, 100건 chunk)하고
+**relevance 판정(§1-⑪)**으로 넘긴다. 부재 시 signature-only 판정 + telemetry(§1-⑪).
+
+BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동형 — 두 단계 모두 적용):
+- **1단계 chunk = 후보 50쌍** — API 한도는 요청당 100아이템이고 쌍당 2아이템. 2단계는 100건.
 - 응답은 순서가 없다 → **key 기준 재결합**.
 - **`UnprocessedKeys` ≠ 없는 아이템.** throttling 시 HTTP 200과 함께 일부 key만 돌아온다.
   bounded retry(지수 backoff) 후에도 남으면 그 후보를 조용히 탈락시키지 않는다 —
@@ -373,6 +405,9 @@ BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동�
   eventual이라 방금 private으로 바뀐 topic을 잠시 public으로 읽을 수 있으므로 strong이 필요하고,
   가장 단순한 단일 요청 both-strong을 택한다. 아이템이 작아 alpha 규모에서 RCU 차이는 무의미하다.
   TOPIC/STAT을 요청 2회로 분리해 STAT만 eventual로 읽는 것은 **측정 후 비용 레버**로만 남긴다.
+  2단계 TOPICJUDGE# 읽기는 **eventual로 충분하다** — 내용물이 publishable-only라 privacy가 걸려
+  있지 않고(1단계 strong visibility 재확인이 이미 후보를 걸렀다), staleness는 약간 낡은 claim
+  선택일 뿐이다.
   (표현 정정: eventual lag는 "1초"가 아니라 **짧지만 상한이 보장되지 않는** 지연이다 — 분리 레버를
   당기는 날에는 "불특정 eventual lag를 카운터 값에서 수용한다"가 정확한 서술이다.)
 
@@ -391,6 +426,8 @@ BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동�
 | Q9 | iac 선행조건: 전용 테이블 생성 + **DynamoDB Streams 설정**(현행 `modules/dynamodb`에 stream 설정 없음) + OSIS 선택 시 초기 백필용 PITR·export S3 | iac | 열림 (Q1의 선행) |
 | Q10 | 응답의 agent 표시 데이터(`name`/`description`) — **기획안(추천 카드에 뿌릴 데이터)이 선행 결정** (2026-08-20 bourbon-agent 합의). 그 전까지 기본안 = 클라이언트 hydration, 우리는 `agent_id`+`matched_topics`만(§1-⑩). description 소스 후보는 bourbon-agent sharable persona(bio) — bourbon-api엔 데이터 없음 | 기획 → 우리 + bourbon-agent | 열림 (기획 대기) |
 | Q11 | 다의어 처리 — relevance 판정층(§1-⑪)이 "양립 불가능한 두 해석이 다 매칭됨"을 감지했을 때 섞어 반환 vs 사용자 clarification 요구. 별도 wire 상태가 필요한지 포함 | 우리 + 제품 | 열림 |
+| Q13 | **claim publish 경계(visibility 모델) 확정 — 판정층 가동의 출시 gate.** TOPICJUDGE#의 publishable-only 보장이 이 모델 위에 선다. 저장소 선택(Q5)과는 별개 결정 | extractor 팀 | 열림 (**판정층 출시 gate**) |
+| Q14 | TOPICJUDGE# projection 채택 여부 — 우리 권고안(§1-⑪·§2). extractor 작업 증가(세 번째 projection·선택 정책·lifecycle 동기)라 협의 필요. 기각되면 fallback = rev 7의 claim Query + 외부 리뷰의 최소 잠금 목록(visibility 확인 후 Query·ConsistentRead·pagination 상한·deterministic 선택·503) | extractor 팀 | 권고 전달 대기 |
 | Q12 | **real owner/agent eligibility 소스** — 현행 `AllowAllEligibilityProvider`는 stub. 전환 출시 조건: 탈퇴·비활성 owner를 걸러낼 실소스(bourbon-api) 확보 | 우리 + bourbon-api | 열림 (**전환 출시 gate**) |
 
 ## 6. 폐기 트랙에서 승계하는 불변식
@@ -468,3 +505,12 @@ audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키�
   완화. §3 버전 위생을 3-case 표로(매핑 변경=우리 / extractor 모델 변경=**projection 재추출,
   bourbon-agent** / live 유실 방지=dual-ingest·cutover). 문서 머리에 개정 체크(뒤집은 단어 전체
   grep) 상시화.
+- **rev 8 (2026-08-20)** — 외부 리뷰 4차 반영. **rev 7의 쌍당 claim Query 철회** → `TOPICJUDGE#`
+  bounded 판정 재료 projection(우리 권고안·extractor 협의 = Q14): 캡이 Query 횟수만 제한하고
+  claim 수·pagination을 못 막았고, UUID SK Limit는 임의 표본이었으며, visibility 확인 전에 private
+  가능 topic의 claim이 메모리에 들어왔다. 읽기를 2단계로 재배치(TOPIC#+STAT# strong →
+  visibility+gate → 생존자만 TOPICJUDGE# eventual → 판정). claim_digest를 "LLM에 실제 전달된
+  bounded 배열의 canonical digest(+selection_policy_version)"로 정밀화. **판정 입력 전체를 비신뢰
+  텍스트로 규정**(고정 system prompt·구조화 JSON 슬롯·입력 내 지시 무시 — claim뿐 아니라
+  label/description/aliases도 대화 유래). claim visibility를 Q5에서 분리해 **Q13 = 판정층 출시
+  gate**로 승격. §0의 CLAIM 문구 정정(데이터는 1차 판정 입력, 2차는 검색 인덱스만).
