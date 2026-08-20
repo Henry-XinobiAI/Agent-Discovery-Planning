@@ -1,4 +1,4 @@
-# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 3
+# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 4
 
 작성: 2026-08-20 · 상태: **설계 기준 (초안)** — 2026-08-19 회의 결정 + 2026-08-20 설계 리뷰·외부 리뷰 반영. §5의 열린 결정이 닫힐 때마다 rev-up하고, 전부 닫히면 확정으로 승격한다. 개정 이력은 문서 끝.
 
@@ -35,10 +35,13 @@ agent-recommendation-api ──────────────────�
   **`(owner, 매칭된 topic 집합)`**이다(§1-⑦) — anchor가 사라진 세계에서 need가 등가류 역할을 하고,
   한 owner의 여러 topic이 같은 need에 걸리는 것은 노이즈가 아니라 신호다. 인덱스는 추천 순서를
   결정하지 않는다 — ordering contract(gate→filter→lexicographic→tiebreak)는 그대로다.
-- **1차 범위 (제품 결정, 2026-08-20).** 이 문서의 1차 목표는 **"이 topic에 관심 있는 owner 발견"**
-  이다. for/against(stance)·특정 경험/주장으로만 드러나는 owner 회수는 **범위 밖**이며, 전환 후
-  시나리오 재정의 대상이다(§5 Q8). 전환 전까지 그 기능들의 현행 소스는 memory-api다(§7).
-  §2의 CLAIM# 아이템·claims 인덱스 확장 여지는 이 범위 확장을 막지 않기 위해 남겨 둔다.
+- **1차 범위 (제품 결정, 2026-08-20 · rev 4에서 재축소).** 1차의 추천 유형은 **하나**다:
+  "이 topic을 가장 잘 아는 agent 추천". 기존 need 축(depth/experience/for/against/coverage)은
+  **1차에서 전부 폐기**한다 — for/against만 빼는 게 아니라 **need_type 축 자체가 1차 wire 계약에서
+  사라진다**(내부적으로 단일 유형 고정). 추천 유형 체계는 persona가 실제로 제공하는 정보가 취합된
+  뒤 **2차에서 새로 설계**한다(§5 Q8). 전환 전까지 기존 기능의 현행 소스는 memory-api다(§7).
+  §2의 CLAIM# 아이템·claims 인덱스 확장 여지는 이 확장을 막지 않기 위해 남겨 둔다. 파급: 기존
+  코드의 `NeedType`·stance 파이프라인(`STANCE_NEEDS`·judge 경로)은 전환 시 삭제 패스 대상이다.
 
 ## 1. 결정 사항 (2026-08-19 회의 + 2026-08-20 리뷰)
 
@@ -169,6 +172,30 @@ extractor(bourbon-agent)가 쓰고 agent-recommendation이 직접 읽으므로 D
 리포에 같은 fixture로 계약 테스트, 필드 추가는 additive-only, 제거는 협의. **계약 테스트 payload를
 consumer model에서 유도하지 않는다** (승계 규율) — 기준은 extractor가 실제로 쓴 아이템이다.
 
+### ⑩ 1차 클라이언트 계약 — bourbon-agent 정렬 (2026-08-20)
+클라이언트가 확정됐다: bourbon-agent의 personal agent가 `recommend_agents` tool로 호출한다
+(bourbon-agent #142 — Protocol 시임 `AgentRecommendationClient` + mock, 실 API 착지 시 교체).
+mock과의 대조에서 합의/유지할 것:
+
+- **신뢰 모델 일치 (유지).** requester metadata는 handler가 task payload에서 채우고 모델은 못
+  넣는다 — 우리 `requester_owner_id`(on_behalf_of claim) 정의와 동일. self-exclusion 전제 성립.
+- **`matched_topics` (확정).** mock의 `expertise: list[str]` 자리는 **이 요청에 매칭된 topic
+  label 집합**(2차 gate 통과분, 대표 topic 먼저)으로 확정. 능력 태그("research"/"teaching" 류)는
+  persona 추출물에서 나올 수 없는 값이라 계약에서 제외. **owner의 전체 topic 목록 금지** —
+  매칭 집합만 보낸다(요청 관련성 + 최소 노출). label 언어(현재 영어)는 Q3.
+- **`name`/`description`은 우리 응답이 아니다 (열림 — Q10).** agent 표시 데이터는 bourbon-api
+  레지스트리 소관. 기본안은 클라이언트 hydration(우리는 `agent_id`만)이고, bourbon-api와의 논의
+  결과에 따라 클라이언트 계약이 바뀔 수 있다.
+- **실패 의미론을 접지 않는다.** 클라이언트는 422 `grounding_failed`(모델이 topic을 고쳐 재호출
+  가능)·422 ambiguous·503 unavailable(재시도/불가 안내)·200+빈 목록(진짜 없음)을 구분해야 한다.
+  현행 mock 배선은 전부 "unavailable"로 접는다 — 연동 시 분기 요청.
+- **`need_type` 필드 불필요** — 1차 범위 축소(§0)로 소멸.
+- **`room_id`는 우리 계약 밖.** 현행 클라이언트 코드에서 room_id는 로그 한 줄 외에 소비처가 없고,
+  room 내 agent 제외 같은 용도는 클라이언트가 이미 가진 `room_members`로 자체 처리 가능하다.
+  room 맥락이 eligibility에 필요해지는 날 `eligibility_context`로 받는다.
+- **`context`는 가능하면 실제 대화 턴으로.** 모델이 쓴 요약 문자열보다 task payload의
+  `context_messages`(구조화된 턴)가 grounding 재료로 낫다.
+
 ## 2. 저장 스키마 스케치 (extractor에 거는 요구 — 초안)
 
 ```
@@ -257,8 +284,9 @@ BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동�
 | Q5 | 저장소 DynamoDB 확정 (우리 권고 §1-③ — MySQL 최종 폐기 확인) | extractor 팀 | 권고 전달 대기 |
 | Q6 | deferq 유실 복구(outbox·watermark 재대사·sweep)와 `(message_id, extractor_version)` 멱등 추출 — 외부 리뷰 지적 전달. 복구가 생기면 §1-①의 best-effort 선언을 되돌린다 | bourbon-api / extractor 팀 | 전달 대기 |
 | Q7 | owner 수준 gate의 집계 의미론 — 기본은 any-pass(§1-⑦). topic 간 evidence 합산 등 진짜 집계를 도입할지, 한다면 need별로 어떤 연산인지 | 우리 (eval 선행) | 열림 |
-| Q8 | 1차 범위 이후 시나리오 재정의 — for/against·경험 기반 회수를 새 구조에서 어떻게 (claims 인덱스 여부 포함) | 우리 + 제품 | 열림 (1차 이후) |
+| Q8 | **추천 유형(need_type) 체계 전체 재설계** — persona가 실제 제공하는 정보가 취합된 뒤, 새 구조 위에서 2차 추천 유형(경험·stance·coverage 상당 포함 여부, claims 인덱스 여부)을 새로 디자인 | 우리 + 제품 | 열림 (1차 이후) |
 | Q9 | iac 선행조건: 전용 테이블 생성 + **DynamoDB Streams 설정**(현행 `modules/dynamodb`에 stream 설정 없음) + OSIS 선택 시 초기 백필용 PITR·export S3 | iac | 열림 (Q1의 선행) |
+| Q10 | 응답의 agent 표시 데이터(`name`/`description`) — 기본안은 클라이언트 hydration(우리는 `agent_id`만, §1-⑩). bourbon-api와 논의 후 확정 | 우리 + bourbon-api | 열림 |
 
 ## 6. 폐기 트랙에서 승계하는 불변식
 
@@ -306,3 +334,8 @@ audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키�
   top-N은 성립 안 함), §4 BatchGet 계약 잠금(50쌍 chunk·UnprocessedKeys≠부재·fail-loud 503·
   TOPIC#만 ConsistentRead), self-exclusion을 1차 쿼리로 전진, eval 3층 분리, Q6–Q9 추가
   (iac streams/PITR 선행조건 포함), 승계 불변식에 오귀속 금지 추가.
+- **rev 4 (2026-08-20)** — 1차 범위 재축소: 추천 유형은 "이 topic을 가장 잘 아는 agent" 하나,
+  **need_type 축 자체를 1차에서 폐기**(체계 재설계는 Q8 — persona 정보 취합 후). §1-⑩ 신설:
+  bourbon-agent 클라이언트 계약 정렬 — `matched_topics` 확정(매칭 집합만·대표 우선·전체 목록
+  금지), name/description은 클라이언트 hydration 기본안(Q10), 실패 의미론 분기 요구, room_id는
+  계약 밖, context는 실제 턴 권장.
