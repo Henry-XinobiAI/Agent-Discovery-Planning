@@ -1,4 +1,4 @@
-# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 12
+# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 13
 
 작성: 2026-08-20 · 상태: **설계 기준 (초안)** — 2026-08-19 회의 결정 + 2026-08-20 설계 리뷰·외부 리뷰 반영. §5의 열린 결정이 닫힐 때마다 rev-up하고, 전부 닫히면 확정으로 승격한다. 개정 이력은 문서 끝.
 
@@ -186,9 +186,23 @@ extractor(bourbon-agent)가 쓰고 agent-recommendation이 직접 읽으므로 D
 리포에 같은 fixture로 계약 테스트, 필드 추가는 additive-only, 제거는 협의. **계약 테스트 payload를
 consumer model에서 유도하지 않는다** (승계 규율) — 기준은 extractor가 실제로 쓴 아이템이다.
 
-**용어는 persona(extractor) 팀 어휘와 싱크한다 (rev 12 — 오너 지시).** 이 문서의 이름들은 전부
-**우리가 임시로 지은 placeholder**이고, 명명의 정본은 extractor 팀 설계다 — 그쪽 어휘가 확정되면
-이 문서를 전면 rename한다. 이미 알고 있는 충돌/미확정 지점:
+**용어는 persona(extractor) 팀 어휘와 싱크한다 (rev 12 — 오너 지시 · rev 13에서 소유권 단계
+구분).** placeholder의 범위는 **§2의 신규 저장 스키마 이름들과 아직 구현되지 않은 응답 필드
+이름**이다 — `agent_id`처럼 이미 존재하는 외부 식별자나 합의된 의미는 해당 없다. 이름의 우선권은
+계약의 수명 단계에 따라 다르다 (rev 12의 "명명의 정본은 extractor 팀"은 확정 후까지 덮는 과대
+서술이었다 — 그 문장대로면 §1-⑨의 additive-only wire contract 규율과 모순):
+
+1. **계약 확정 전** — 도메인 소유 리포의 기존 어휘가 우선하고 우리 placeholder가 양보한다.
+2. **계약 확정 후** — 저장된 필드·SK·enum 값은 **양 서비스가 공동 소유하는 wire contract**다.
+   rename은 단독 결정이 아니라 **schema migration**이다(§3 버전 위생과 같은 부류).
+3. **내부 코드 이름** — 각 리포가 자유롭게 정하되 wire mapping에서 변환한다.
+
+> **명칭과 의미는 분리한다.** 이름은 도메인 소유 리포의 어휘에 맞춘다. 그러나 이 문서가 잠근
+> 상태 구분·동시성·privacy **불변식은 이름과 별개**이며, 다른 이름으로도 동일하게 표현되어야
+> 한다 — persona 쪽이 `publication_epoch`를 다른 이름으로 부르는 것은 수용하되, "공개 경계가
+> 바뀔 때 증가하며 stale writer를 차단한다"는 의미가 그쪽 기존 모델에 맞춰 약화되면 안 된다.
+
+이미 알고 있는 충돌/미확정 지점 (전부 1단계 — 계약 확정 전):
 - **`visibility` 값 집합과 "publish/publishable" 표현** — 이 문서는 옛 bourbon-persona 어휘
   (public/friend/private)를 승계했지만, bourbon-agent의 기존 persona 코드는
   **`sharable`/`private` 2값**(`user_persona/structs.py`의 `Visibility`)이다. "publishable-only" ·
@@ -200,10 +214,10 @@ consumer model에서 유도하지 않는다** (승계 규율) — 기준은 extr
   따른다(전용 테이블이라도 같은 규율을 상속하는 것이 안전).
 - **owner/requester 계열** — bourbon-api `owner_user_id` · bourbon-agent mock `requester_user_id` ·
   우리 `requester_owner_id`가 같은 것을 다르게 부른다. 연동 시 한 이름으로 수렴.
-- **클라이언트 응답 필드명**(`matched_topics` 등, §1-⑩) — 의미는 확정이지만 이름은 bourbon-agent
-  컨벤션에 맞춰 바뀔 수 있다.
-우리가 임의로 만든 이름이 타 리포의 기존 용어와 충돌하는 것을 발견하면 **우리 쪽이 양보**하는
-것이 기본이다 — 용어의 소유자는 그 도메인을 소유한 리포다.
+- **클라이언트 응답 필드명**(`matched_topics` 등, §1-⑩) — placeholder가 아니라 **현재 합의된
+  이름**이다. bourbon-agent의 실제 wire 계약 착지 시 최종 확인만 남는다(의미는 확정).
+확정 전 단계에서 우리가 임의로 만든 이름이 타 리포의 기존 용어와 충돌하는 것을 발견하면
+**우리 쪽이 양보**하는 것이 기본이다 — 그 단계에서 용어의 소유자는 도메인을 소유한 리포다.
 
 ### ⑩ 1차 클라이언트 계약 — bourbon-agent 정렬 (2026-08-20)
 클라이언트가 확정됐다: bourbon-agent의 personal agent가 `recommend_agents` tool로 호출한다
@@ -521,7 +535,7 @@ BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동�
 | Q12 | **real owner/agent eligibility 소스** — 현행 `AllowAllEligibilityProvider`는 stub. 전환 출시 조건: 탈퇴·비활성 owner를 걸러낼 실소스(bourbon-api) 확보 | 우리 + bourbon-api | 열림 (**전환 출시 gate**) |
 | Q13 | **claim publish 경계(visibility 모델) 확정 — 판정층 가동의 출시 gate.** TOPICJUDGE#의 publishable-only 보장이 이 모델 위에 선다. 저장소 선택(Q5)과는 별개 결정 | extractor 팀 | 열림 (**판정층 출시 gate**) |
 | Q14 | TOPICJUDGE# projection 채택 여부 — 우리 권고안(§1-⑪·§2: 동시성 계약 + 부재 4-상태 + 대표성 acceptance 4종 포함). 협의 세부: `judge_revision` 쓰기 조건 = **CAS(추천 — 실패 시 재읽기·재계산) vs 순서 비교(오래된 이벤트 폐기)** 및 재시도 정책 — extractor 쓰기 경로 구조에 달림. extractor 작업 증가(세 번째 projection·선택 정책·epoch/revision 유지)라 협의 필요. 기각되면 fallback = rev 7의 claim Query + 외부 리뷰의 최소 잠금 목록(visibility 확인 후 Query·ConsistentRead·pagination 상한·deterministic 선택·503) | extractor 팀 | 권고 전달 대기 |
-| Q15 | **용어 싱크(§1-⑨)** — extractor 팀 어휘 확정 시 이 문서 전면 rename(visibility 값 집합·topic/claim/evidence·SK 엔티티명·owner/requester 계열·클라이언트 필드명). 명명의 정본은 각 도메인 소유 리포 | 우리 (extractor·bourbon-agent·bourbon-api 어휘 확정 대기) | 열림 |
+| Q15 | **용어 싱크(§1-⑨)** — 계약 확정 전 어휘 정렬(visibility 값 집합·topic/claim/evidence·SK 엔티티명·owner/requester 계열). 확정 후에는 공동 소유 wire contract가 되어 rename = schema migration. 잠근 불변식(상태 구분·동시성·privacy)은 이름과 무관하게 유지 | 우리 (extractor·bourbon-agent·bourbon-api 어휘 확정 대기) | 열림 |
 
 ## 6. 폐기 트랙에서 승계하는 불변식
 
@@ -636,3 +650,9 @@ audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키�
   (옛 persona public/friend/private vs bourbon-agent `sharable`/`private`)·topic/claim/evidence
   어휘·SK 엔티티명(keys.py closed-enum 절차)·owner/requester 계열 3종·클라이언트 응답 필드명.
   충돌 발견 시 우리 쪽이 양보가 기본.
+- **rev 13 (2026-08-20)** — 외부 리뷰 반영: rev 12의 용어 소유권 문구 3곳 축소. ⑴ "명명의 정본 =
+  extractor"는 §1-⑨의 wire contract 규율과 모순 → **수명 단계 구분**(확정 전 = 도메인 리포 우선 /
+  확정 후 = 공동 소유·rename은 schema migration / 내부 코드명 = 자유 + wire mapping). ⑵
+  placeholder 범위를 "§2 신규 저장 스키마 + 미구현 응답 필드"로 한정(기존 외부 식별자 제외). ⑶
+  **명칭 ≠ 의미**: 잠근 상태 구분·동시성·privacy 불변식은 이름과 별개로 동일하게 표현되어야 한다.
+  matched_topics는 placeholder가 아니라 합의된 이름(착지 시 최종 확인)으로 정정.
