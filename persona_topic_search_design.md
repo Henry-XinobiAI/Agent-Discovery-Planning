@@ -1,4 +1,4 @@
-# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 1
+# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 2
 
 작성: 2026-08-20 · 상태: **설계 확정 기록** (2026-08-19 회의 결정 + 2026-08-20 설계 리뷰 합의) · 개정 이력은 문서 끝.
 
@@ -181,7 +181,7 @@ PK=USER#<owner_uuid>  SK=CLAIM#<topic_id>#<claim_id>  ← claim (2차/근거 제
 
 | # | 질문 | 소유 | 상태 |
 |---|---|---|---|
-| Q1 | 색인 파이프라인: OSIS zero-ETL vs 자체 스트림 컨슈머 (비용 — OSIS는 파이프라인당 최소 OCU 상시 과금 / 운영 소유) | 인프라 협의 | 열림 |
+| Q1 | 색인 파이프라인: OSIS zero-ETL vs 자체 스트림 컨슈머 (비용 — OSIS는 파이프라인당 최소 OCU 상시 과금 / 운영 소유). 참고: Lambda 컨슈머는 스트림 배치 윈도우(최대 300초) 안에서 같은 key의 마지막 이미지만 upsert하는 이벤트 합치기가 부수적으로 따라오고, OSIS는 선언형 프로세서라 이런 debounce가 불가 — 단 토글류는 같은 `_id` 덮어쓰기라 비용이 소음 수준이므로 **결정 조건은 아니다** (1순위 방어선은 어차피 설정 변경 API의 rate limit — §1-⑥) | 인프라 협의 | 열림 |
 | Q2 | OSIS 선택 시 SK 패턴 선택 색인(TOPIC#만) 가능 여부 — 불가하면 검색/카운터 **테이블 2분할**이 fallback | 인프라 협의 | 열림 (Q1에 종속) |
 | Q3 | 영어 topic label·claim의 표시 시점 번역 — 한국어 유저에게 보여줄 추천 이유에 영어 label이 박힌다. 누가 언제 번역하나 | 제품 | 열림 |
 | Q4 | iac: agent-recommendation의 AOSS 데이터 접근(IRSA) 추가 + 컬렉션 선택(기존 `bourbon-aoss-tokyo-{stage}` vs 신규) | 우리 + iac | 열림 |
@@ -220,3 +220,5 @@ audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키�
   산출물 영어 한정, OpenSearch 1차 + 저장소 2차) + 2026-08-20 설계 리뷰 합의(DynamoDB 전용 테이블
   권고, TOPIC#/TOPICSTAT# 아이템 분리, visibility 인덱스 포함, 랜덤 샘플링 금지, BM25 우선·벡터
   유예, 문서 계약 소유)를 기록. 열린 질문 Q1–Q5.
+- **rev 2 (2026-08-20)** — Q1에 파이프라인별 이벤트 합치기 비교 주석 추가(Lambda=배치 윈도우로
+  부수적 debounce, OSIS=불가하나 결정 조건 아님 — 방어선 1순위는 API 층).
