@@ -1,5 +1,7 @@
 # Technology Selection — Evidence Log (source log)
 
+> **📦 보관됨 (2026-08-20) — superseded.** `agent_discovery_recommendation_implementation.md`(같은 날 함께 보관) §4 후보 판정의 근거 로그. entity linking·KG access·KG embedding 후보 조사는 **anchor 기반 접근의 부속물**이라 2026-08-19 재변경으로 대상이 사라졌다. 검색 스택의 현행 방향은 `../persona_topic_search_design.md` §1-⑧(BM25 + query expansion, memory-api 스택 재사용).
+
 > 이 문서는 `agent_discovery_recommendation_implementation.md` §4 후보 판정의 **근거 로그**다. 본문에는 citation을 싣지 않고, 강한 disqualifier(archived / non-commercial / broken / EOL)와 버전·유지보수 판정의 출처·확인일을 여기에 남긴다. 추후 별도 `technology_selection` 문서로 본격 정리할 때 이 표를 옮긴다.
 >
 > **검증 방법**: 독립 web 리서치(4개 영역 — entity linking / KG access / KG embedding·vector / recommendation·eval), 1차 소스(공식 repo/PyPI/arXiv/벤더 문서) 우선. **확인일: 2026-06-22.** 버전·날짜는 그 시점 기준이며 변동될 수 있으니 재확인 후 갱신한다.
