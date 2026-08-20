@@ -18,8 +18,9 @@
 | `agent_discovery_recommendation_directions.md` | **discovery & recommendation 설계 근거 (canonical)** | 위 메모리 구조 위에서 발견·추천: 두 모드(pull·push), need 6유형, 토픽⊥입장 표현, 쟁점 축, need별 목적함수, 피드백, **팀 입력 계약(§9)** | stance descriptor (edge) |
 | **`impl/` (README + `01`–`11`)** | **구현 계약·단계 spec (현재 source of truth)** | 데이터 계약·provider 경계·normalize/linker·retrieval·gate/ranking·serving·composition·LLM·eval·metrics/gates·Phase 8–9 로드맵. 실제 shipped 상태를 반영 | typed struct / phase |
 | `agent_discovery_recommendation_implementation.md` | **구현 접근·근거 (research/rationale)** | build vs reuse 원칙, 단계별 컴포넌트 후보(Discovery/Recommendation), 선결 의존성·리스크. 확정 스택 아님 | — |
+| `persona_topic_search_design.md` | **차기 데이터 소스 전환 설계 (2026-08-20)** | persona extractor(bourbon-agent) → DynamoDB → AOSS 색인 → 2-단계 검색으로의 전환 설계. 전환 전까지 memory-api 계약은 현행 유지 | (owner, topic) 아이템 / AOSS 문서 |
 
-> 현재 active 문서는 위 넷이다. **설계 근거는 directions, 구현 계약·빌드 순서·단계 spec은 `impl/`(README + `01`–`11`)이 현재 source of truth, 구현 접근·근거는 implementation**으로 본다. 겹치는 설계 섹션은 directions가 우선이고, 겹치는 구현 계약은 `impl/`이 우선한다. 구현 형태(wiring) 요약은 §5. 초기 로드맵·build plan·walkthrough·런타임 등 히스토리 문서는 모두 `archive/`(아래)에 둔다.
+> 현재 active 문서는 위 다섯이다(마지막은 전환 설계 기록). **설계 근거는 directions, 구현 계약·빌드 순서·단계 spec은 `impl/`(README + `01`–`11`)이 현재 source of truth, 구현 접근·근거는 implementation**으로 본다. 겹치는 설계 섹션은 directions가 우선이고, 겹치는 구현 계약은 `impl/`이 우선한다. 구현 형태(wiring) 요약은 §5. 초기 로드맵·build plan·walkthrough·런타임 등 히스토리 문서는 모두 `archive/`(아래)에 둔다.
 
 ---
 
