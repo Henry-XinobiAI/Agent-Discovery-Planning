@@ -1,4 +1,4 @@
-# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 11
+# Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 12
 
 작성: 2026-08-20 · 상태: **설계 기준 (초안)** — 2026-08-19 회의 결정 + 2026-08-20 설계 리뷰·외부 리뷰 반영. §5의 열린 결정이 닫힐 때마다 rev-up하고, 전부 닫히면 확정으로 승격한다. 개정 이력은 문서 끝.
 
@@ -185,6 +185,25 @@ extractor(bourbon-agent)가 쓰고 agent-recommendation이 직접 읽으므로 D
 두 서비스 사이의 wire contract다. HTTP API처럼 관리한다: 아이템에 `schema_version` 속성, 양쪽
 리포에 같은 fixture로 계약 테스트, 필드 추가는 additive-only, 제거는 협의. **계약 테스트 payload를
 consumer model에서 유도하지 않는다** (승계 규율) — 기준은 extractor가 실제로 쓴 아이템이다.
+
+**용어는 persona(extractor) 팀 어휘와 싱크한다 (rev 12 — 오너 지시).** 이 문서의 이름들은 전부
+**우리가 임시로 지은 placeholder**이고, 명명의 정본은 extractor 팀 설계다 — 그쪽 어휘가 확정되면
+이 문서를 전면 rename한다. 이미 알고 있는 충돌/미확정 지점:
+- **`visibility` 값 집합과 "publish/publishable" 표현** — 이 문서는 옛 bourbon-persona 어휘
+  (public/friend/private)를 승계했지만, bourbon-agent의 기존 persona 코드는
+  **`sharable`/`private` 2값**(`user_persona/structs.py`의 `Visibility`)이다. "publishable-only" ·
+  "publication_epoch" 같은 파생 표현이 전부 이 결정에 걸려 있다.
+- **`topic`·`claim`·`evidence` 어휘 자체** — 옛 bourbon-persona 설계에서 승계한 것이라 새
+  extractor가 다른 이름을 쓰면 아이템명(TOPIC#/CLAIM# 등)·필드명(evidence_count 등)이 함께 바뀐다.
+- **SK 엔티티명** — bourbon-agent `storage/dynamodb/keys.py`는 shared 데이터셋이 늘면 엔티티명
+  closed enum 등록을 요구한다. TOPIC#/TOPICSEARCH#/TOPICSTAT#/TOPICJUDGE#/CLAIM#는 그 절차를
+  따른다(전용 테이블이라도 같은 규율을 상속하는 것이 안전).
+- **owner/requester 계열** — bourbon-api `owner_user_id` · bourbon-agent mock `requester_user_id` ·
+  우리 `requester_owner_id`가 같은 것을 다르게 부른다. 연동 시 한 이름으로 수렴.
+- **클라이언트 응답 필드명**(`matched_topics` 등, §1-⑩) — 의미는 확정이지만 이름은 bourbon-agent
+  컨벤션에 맞춰 바뀔 수 있다.
+우리가 임의로 만든 이름이 타 리포의 기존 용어와 충돌하는 것을 발견하면 **우리 쪽이 양보**하는
+것이 기본이다 — 용어의 소유자는 그 도메인을 소유한 리포다.
 
 ### ⑩ 1차 클라이언트 계약 — bourbon-agent 정렬 (2026-08-20)
 클라이언트가 확정됐다: bourbon-agent의 personal agent가 `recommend_agents` tool로 호출한다
@@ -502,6 +521,7 @@ BatchGetItem 계약 (bourbon-agent `storage/dynamodb/batch.py`의 처리와 동�
 | Q12 | **real owner/agent eligibility 소스** — 현행 `AllowAllEligibilityProvider`는 stub. 전환 출시 조건: 탈퇴·비활성 owner를 걸러낼 실소스(bourbon-api) 확보 | 우리 + bourbon-api | 열림 (**전환 출시 gate**) |
 | Q13 | **claim publish 경계(visibility 모델) 확정 — 판정층 가동의 출시 gate.** TOPICJUDGE#의 publishable-only 보장이 이 모델 위에 선다. 저장소 선택(Q5)과는 별개 결정 | extractor 팀 | 열림 (**판정층 출시 gate**) |
 | Q14 | TOPICJUDGE# projection 채택 여부 — 우리 권고안(§1-⑪·§2: 동시성 계약 + 부재 4-상태 + 대표성 acceptance 4종 포함). 협의 세부: `judge_revision` 쓰기 조건 = **CAS(추천 — 실패 시 재읽기·재계산) vs 순서 비교(오래된 이벤트 폐기)** 및 재시도 정책 — extractor 쓰기 경로 구조에 달림. extractor 작업 증가(세 번째 projection·선택 정책·epoch/revision 유지)라 협의 필요. 기각되면 fallback = rev 7의 claim Query + 외부 리뷰의 최소 잠금 목록(visibility 확인 후 Query·ConsistentRead·pagination 상한·deterministic 선택·503) | extractor 팀 | 권고 전달 대기 |
+| Q15 | **용어 싱크(§1-⑨)** — extractor 팀 어휘 확정 시 이 문서 전면 rename(visibility 값 집합·topic/claim/evidence·SK 엔티티명·owner/requester 계열·클라이언트 필드명). 명명의 정본은 각 도메인 소유 리포 | 우리 (extractor·bourbon-agent·bourbon-api 어휘 확정 대기) | 열림 |
 
 ## 6. 폐기 트랙에서 승계하는 불변식
 
@@ -611,3 +631,8 @@ audience별 벡터 재료 규칙(벡터 자체가 유예), persona MySQL 스키�
   1회" 제거 — `< 기대`/부재는 lag일 수 없으므로 불변식 위반/장애로 재분류(일반 bounded retry).
   단 **부재에는 정상 원인이 하나 남는다** — 두 읽기 사이의 비공개 전환 — 이므로 부재 분기만 TOPIC#
   strong 재검증 1회로 "정상 탈락 vs 장애"를 구분(정상 privatization이 장애 알람을 울리지 않게).
+- **rev 12 (2026-08-20)** — 용어 싱크 규율 추가(오너 지시, §1-⑨ + Q15): 이 문서의 이름은 전부
+  placeholder이고 명명의 정본은 각 도메인 소유 리포다. 알려진 충돌 기록 — visibility 값 집합
+  (옛 persona public/friend/private vs bourbon-agent `sharable`/`private`)·topic/claim/evidence
+  어휘·SK 엔티티명(keys.py closed-enum 절차)·owner/requester 계열 3종·클라이언트 응답 필드명.
+  충돌 발견 시 우리 쪽이 양보가 기본.
