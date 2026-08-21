@@ -4,7 +4,9 @@
 > 이 문서는 `persona_topic_search_design.md`(rev 14)를 대체하기 위한 **재설계의 입력**이며,
 > 재설계 결과가 나오면 그 문서가 새 정본이 된다.
 >
-> **작성 근거**: 2026-08-21, `../bourbon-topic-api`(HEAD `296723d`) 전수 읽기 + 테스트 실행 +
+> **작성 근거**: 2026-08-21, `../bourbon-topic-api` 전수 읽기 + 테스트 실행 + 카탈로그 시드
+> 실측. 초판은 HEAD `296723d`, **rev 3은 HEAD `107f5cd`** — 카탈로그가 DynamoDB 테이블에서
+> 이미지 내 빌드 산출물로 바뀐 #17을 포함해 5커밋을 반영했다.
 > 카탈로그 시드 실측. 대조 대상은 `../../iac`(origin/main `d364d3c`),
 > `../bourbon-api`(origin/main `943b5f5`), `../bourbon-agent`(HEAD `18fbcac`).
 >
@@ -17,7 +19,8 @@
 ## §0 한 페이지 요약
 
 **무엇을 발견했나.** `bourbon-topic-api`는 이미 구현된 독립 마이크로서비스다. 큐레이션된
-Wikidata 기반 토픽 카탈로그(2,605개)와 유저별 토픽 점수를 DynamoDB 2테이블에 두고,
+Wikidata 기반 토픽 카탈로그(2,605개 — **이미지에 커밋된 JSON 산출물**)와 유저별 토픽 점수
+(DynamoDB 1테이블)를 두고,
 "토픽 → 그 토픽을 가진 유저 랭킹"을 답한다. **OpenSearch를 쓰지 않는다.**
 
 **우리 rev 14와의 관계.** rev 14는 "extractor가 bourbon-agent 안에 있고, 우리가 전용 테이블에
@@ -46,11 +49,11 @@ self-exclusion, 판정 입력 비신뢰)과 얇은 보정층(ordering 키, reran
 | 항목 | 내용 |
 |---|---|
 | 형태 | 독립 마이크로서비스. bourbon 호스트 `/api/svc/topic/` 뒤, edge-auth 사이드카 경유 |
-| 스택 | FastAPI + DynamoDB(2테이블) + uv + structlog. **Python `>=3.14,<3.15`** |
+| 스택 | FastAPI + DynamoDB(**user topic 1테이블**) + uv + structlog. **Python `>=3.14,<3.15`**. 카탈로그는 테이블이 아니라 `catalog_dist/catalog.json`(133k줄, git 커밋·이미지 포함) — 시작 시 1회 로드, 변경은 redeploy로 반영(#17) |
 | 문법 | PEP 758(`except A, B:` 괄호 없는 다중 예외) 실사용 — **3.13에서는 컴파일 실패** |
 | 인증 | 코드 0줄. `bourbon.xinobi.ai/edge-auth` 라벨이 붙은 파드의 사이드카가 토큰 검증 후 `x-user-id` 주입, `Authorization`/`Cookie` 제거 |
 | 규모 | Python ~11k줄 |
-| 테스트 | **922 passed / 62 skipped / 1 failed**. 유일한 실패는 `tests/test_env.py`가 `LOG_LEVEL` 환경변수를 요구하는 것(`.env` 미생성). skip 62개는 DynamoDB 로컬 엔드포인트 미설정 |
+| 테스트 | HEAD `107f5cd`에서 재실행: **942 passed / 50 skipped / 0 failed**(`LOG_LEVEL`만 주면 전부 통과). skip 50개는 DynamoDB 로컬 엔드포인트 미설정. 초판 시점(296723d)은 922/62/1이었다 |
 
 `AWS_REGION`은 configmap에 고정(`ap-northeast-1`). botocore가 기본값을 갖지 않아 누락 시
 클라이언트 생성 단계에서 `NoRegionError`로 죽는다.
@@ -62,7 +65,7 @@ self-exclusion, 판정 입력 비신뢰)과 얇은 보정층(ordering 키, reran
 | 역할 | prefix | edge-auth | 게이트웨이 라우트 | 서비스 |
 |---|---|---|---|---|
 | `public` | `/api/svc/topic` | 있음 | 필요 | 읽기 7개 라우트 |
-| `internal` | `/internal/topic` | **없음** | 없음 | score 주입 · 카탈로그 관리 · 공개 읽기 미러 |
+| `internal` | `/internal/topic` | **없음** | 없음 | score 주입 · 유저 삭제 · 공개 읽기 미러 (카탈로그 관리 라우트는 #17에서 **전부 제거** — 카탈로그 편집은 seeds→build→redeploy) |
 
 쓰기 라우트는 public 워크로드에 **아예 마운트되지 않는다** — 게이트웨이 오설정으로도 노출
 불가. 이 패턴은 우리가 dev 배포 경계(K1–K4)에서 고민한 것보다 깔끔하다.
@@ -77,9 +80,9 @@ internal은 `AuthorizationPolicy`를 출하하지 않아 메시 내 어느 파�
 ### 1.3 3층 구조
 
 ```
-① 카탈로그 (토픽 DAG)        topic/catalog/*      DynamoDB: bourbon-topic-catalog-tokyo-{stage}
-     PK=TOPIC#{id}  SK=META | PARENT#{parent_id}
-     Wikidata에서 discover→review→apply로 큐레이션. 인메모리 그래프로 캐시(TTL 60s)
+① 카탈로그 (토픽 DAG)        topic/catalog/*      catalog_dist/catalog.json (git 커밋, 이미지 포함)
+     {built_at, dump_version, topics[], edges[[child,parent]]} — 시작 시 1회 로드해 인메모리
+     그래프로. TTL·reload 라우트 없음: 편집은 discover→review→build→커밋→redeploy (#17)
 
 ② 유저 토픽 아이템             topic/user_topics/*  DynamoDB: bourbon-user-topic-tokyo-{stage}
      PK=USER#{uuid}  SK=TOPIC#{id}
@@ -94,8 +97,9 @@ internal은 `AuthorizationPolicy`를 출하하지 않아 메시 내 어느 파�
 `topic_id`는 불투명하다. `topic/catalog/ids.py`에서 생성하며 **표시 이름에서 파생하지 않는다** —
 한 단어가 여러 개념을 가리키므로(커피 버번 / 위스키 버번) 이름 파생 식별자는 먼저 만들어진
 개념이 이름을 독점하게 만든다. Wikidata 출처가 있으면 `uuid5(고정namespace, "wikidata:{qid}")`
-로 **결정적**이고, 그룹 자체 토픽은 `uuid5(ns, "group:{key}")`, 운영자 수동 생성만
-`uuid4().hex` **랜덤**이다.
+로 **결정적**이고, 그룹 자체 토픽은 `uuid5(ns, "group:{key}")`다. **#17부터 모든 id가 파생이다**
+— 운영자 수동 생성 라우트와 함께 `uuid4` 랜덤 경로가 제거됐다("Every identifier is derived;
+there is no random path").
 
 `topic_visibility = {topic_id}#{visibility}`는 GSI 파티션 키이며 `visibility`를 쓰는 모든 곳에서
 같이 쓴다. 파생을 `topic/dynamodb/keys.py` 한 곳에만 두는 이유는 **둘이 어긋나면 랭킹이 조용히
@@ -111,7 +115,8 @@ internal은 `AuthorizationPolicy`를 출하하지 않아 메시 내 어느 파�
 |---|---|---|
 | `discover` | `groups.yaml`, knowledge API(bourbon-memory-api-v2 `/knowledge/*`), LLM 프록시 | `reviewed/{group_key}.yaml` |
 | `review` | `reviewed/*.yaml` | 같은 파일 제자리 |
-| `apply` | `groups.yaml`, `reviewed/*.yaml`, 카탈로그 테이블 | `--execute`에서 테이블 |
+| `build` (#17 — 舊 `apply` 대체) | `groups.yaml`, `reviewed/*.yaml`, `merges.yaml` | `catalog_dist/catalog.json` — **working tree에만** 쓴다. 테이블 접근 없음 |
+| `merge` / `migrate-items` (#17) | 아래 | merge=파일(ledger+산출물 재빌드), migrate-items=**라이브 user topic 테이블**(dry-run 기본, `--execute`) |
 
 - seed qid에서 **아래로만**(`narrower`) 확장한다. seed 서브트리 밖은 후보에 들어오지 않는다.
 - 값싼 카드 필터 → 상세 조회 → LLM 배치 분류(기본 `openai/gpt-5.6-luna`, confidence 임계 0.8).
@@ -120,8 +125,14 @@ internal은 `AuthorizationPolicy`를 출하하지 않아 메시 내 어느 파�
 - 동음이의 의심·중복 라벨·`min_importance` ±10% 경계·LLM parent와 기계적 parent 불일치는
   **항상 사람에게** 넘어간다.
 - 재실행 안전: 사람의 결정은 다음 discover에서도 살아남는다. 캐시는 `dump_version`으로 스코프.
-- `apply`는 `source.qid` 매칭으로 중복 대신 패치한다. **수동 생성 토픽은 qid가 없어 이 보호를
-  받지 못한다** — 같은 개념이 나중에 import되면 topic_id가 둘이 되고, 정리 수단은 `merge`뿐이다.
+- id가 qid에서 파생되고 산출물이 통째로 재빌드되므로 "패치 vs 신규" 매칭 문제 자체가 없다.
+  초판이 지적한 수동 생성 토픽의 중복 위험은 **랜덤 id 경로와 함께 #17에서 소멸**했다.
+- merge는 두 단계로 갈라졌다: `merge`가 `merges.yaml` ledger에 기록하고 산출물을 재빌드
+  (파일만 — 커밋·redeploy로 반영), `migrate-items`가 옛 토픽의 유저 아이템을 3개 tier 전부
+  쓸어 새 토픽으로 옮긴다(비원자적·멱등, 재실행이 복구 경로, dry-run 기본). 빌드는 dangling
+  merge·자기참조·`MAX_MERGE_HOPS` 초과 체인을 **읽기가 아니라 배포 전에** 거부한다.
+  두 명령 사이의 간극은 명시적으로 수용됐다: 아이템은 먼저 옮겨지고 merged 마크는 다음
+  배포에 착지 — 그 사이 옛 토픽 검색은 "카탈로그가 설명하기 전에 빈 결과"가 된다.
 
 ### 1.5 페르소나 → 토픽 추출 (현재는 임시 형태)
 
@@ -196,8 +207,8 @@ for item in self._topics.values():           # 2,605개 선형 순회 (dict 삽�
     if len(found) >= limit: break             # limit = SEARCH_MAX_NAME_MATCHES(20)
 ```
 
-토크나이저·형태소 분석·stemming·점수·순위가 **전부 없다.** 카탈로그 전체를 워커마다 메모리에
-들고 `grep -i`를 돌린다.
+토크나이저·형태소 분석·stemming·점수·순위가 **전부 없다.** 시작 시 1회 로드한 카탈로그 전체를
+메모리에 들고 `grep -i`를 돌린다(#17 전에는 60초 TTL 재적재였다 — §5.3).
 
 작동하는 이유는 **Wikidata alias가 동의어 사전 역할을 하기 때문**이다. 실측: 그래프 2,605개에
 **alias 66,349개**(토픽당 평균 25.5개). `programming language` 하나에 `computer language`,
@@ -299,8 +310,11 @@ rollup 경로는 강한 일관성 테이블 읽기에서 다시 필터하므로 
 
 ## §3 카탈로그의 실체 (실측)
 
-정본은 `catalog_seeds/reviewed/*.yaml` 27개 파일이며 git에 커밋돼 있다. `apply`가 topic_id를
-qid에서 파생하므로 **DB를 보지 않아도 이 파일들이 곧 카탈로그다.**
+정본은 `catalog_seeds/reviewed/*.yaml` 27개 파일이며 git에 커밋돼 있다. `build`가 topic_id를
+qid에서 파생해 `catalog_dist/catalog.json`으로 재빌드하므로 **이 파일들이 곧 카탈로그다** —
+#17 이후로는 서빙되는 형태(산출물)까지 git에 있어, 실측 스크립트와 서빙 데이터가 같은 커밋에서
+대조된다(실제로 산출물 실측: topics 2,605 · edges 2,479 · 전부 active · dump 20260802 — §3의
+시드 집계와 정확히 일치).
 
 ```
 그룹 27  ·  채택 행 2,617  ·  고유 qid 2,605  ·  탈락 10,151  ·  pending 0
@@ -390,13 +404,16 @@ finance 1. 실무 어휘(세무·조직·HR·프로덕트)는 없다.
 
 | 경로 | id | 성격 |
 |---|---|---|
-| seed 추가 → discover → review → apply | `uuid5(ns,"wikidata:{qid}")` **결정적** | 정규 경로. 재실행 안전, 캐시 TTL 후 반영 |
-| `POST /internal/topic/catalog/topics` | `uuid4().hex` **랜덤** | qid 없음, `origin=curated`, 루트 생성 가능, 중복 이름 검사 없음 |
+| seed 추가 → discover → review → **build → 커밋 → redeploy** | `uuid5(ns,"wikidata:{qid}")` **결정적** | 유일한 정규 경로. 재실행 안전, 반영 단위 = 배포 |
 | `groups.yaml`의 `topic:` 블록 | `uuid5(ns,"group:{key}")` | **현재 선언한 그룹 없음** |
+| ~~`POST /internal/topic/catalog/topics`~~ | ~~`uuid4` 랜덤~~ | **#17에서 제거** — 운영자 수동 생성·patch·parent 편집·merge 라우트 전부. 랜덤 id 경로도 함께 소멸 |
 
 **없는 경로: 유저/에이전트가 토픽을 제안하는 길.** `TopicOrigin.user`에
 "No route writes this any more: the user proposal endpoint is gone"이 남아 있다 —
-있었고 **의도적으로 제거**됐다. 카탈로그 확장은 전부 사람이 도는 오프라인 루프다.
+있었고 **의도적으로 제거**됐다. #17이 운영자 라우트까지 제거하면서 이제 **카탈로그의 유일한
+쓰기 경로는 git 커밋**이다. 확장은 전부 사람이 도는 오프라인 루프이고, 반영 단위는 배포다 —
+우리 입장에서는 "카탈로그가 요청 사이에 변하지 않는다"가 사실상 보장된다(§13-8의 캐시 질문이
+쉬워진다).
 
 ---
 
@@ -452,7 +469,8 @@ owner당 추가 호출(N+1)이 된다. **internal 역할 한정으로 랭킹 응
 **min 2 indexing + 2 search OCU / max 16+16**(`iac terraform/env/dev/main.tf:352-376`), type SEARCH.
 topic-api 상한: `SEARCH_MAX_GSI_ITEMS=20000`, `SEARCH_MAX_USER_QUERIES=2000`,
 `SEARCH_MAX_DESCENDANTS=50`, `SEARCH_MAX_DEPTH=3`, `SEARCH_MAX_NAME_MATCHES=20`,
-`_QUERY_CONCURRENCY=16`, `_STREAM_PAGE_FACTOR=4`, `CATALOG_CACHE_TTL=60`.
+`_QUERY_CONCURRENCY=16`, `_STREAM_PAGE_FACTOR=4`. (`CATALOG_CACHE_TTL`은 #17에서 제거 —
+카탈로그는 시작 시 1회 파일 로드.)
 워커는 pod당 1개(`WEB_CONCURRENCY=limits.cpu=1000m`), prod HPA 2–5.
 
 **가정**: user topic 아이템 ≈0.5KB, 유저당 topic 20개(파티션 ≈10KB), GSI KEYS_ONLY 행 ≈0.14KB,
@@ -485,11 +503,12 @@ rollup의 `top_k`는 **한 번에 한 스트림, 한 페이지씩 순차로** �
 
 **leaf의 3 RCU는 우리가 상상했던 어떤 구조보다 싸다** — 이 비교의 가장 중요한 발견.
 
-트래픽과 무관한 고정 읽기: 카탈로그 캐시가 60초마다 **테이블 전체 Scan**
-(`topic/catalog/repository.py:52-70`), 워커마다 독립. ~5,000 아이템 ≈2.5MB → ~313 RCU/워커/분.
-달러로는 미미하지만 **재적재가 락 아래 블로킹**(`topic/catalog/cache.py:44-70`)이라
-**60초마다 규칙적인 p99 스파이크**가 있다. stale-while-revalidate가 아니다.
-(적재 실패 시에는 stale을 서빙하고 다음 시도를 한 TTL 뒤로 미룬다 — 이 부분은 올바르다.)
+~~트래픽과 무관한 고정 읽기(60초 카탈로그 Scan ~313 RCU/워커/분 + 락 아래 블로킹 재적재의
+p99 스파이크)~~ — **#17에서 통째로 소멸.** 카탈로그는 이미지 안 파일이라 시작 시 1회 읽고
+끝이며, DynamoDB에는 user topic 테이블 요청만 남는다. 초판의 이 비용·스파이크 지적과 §11-13
+(stale-while-revalidate 요청)은 구조 변경으로 해소됐다. 대신 성격이 하나 바뀐다: 카탈로그
+freshness의 단위가 TTL(60초)에서 **배포**로 커졌다 — 토픽 편집·이미지 업로드가 응답에 닿으려면
+redeploy가 필요하다(reload 라우트도 제거됨).
 
 ### 5.4 LLM 비용 — 결정적 축
 
@@ -610,8 +629,8 @@ Alpha는 내부 대상이므로 **내부 코호트에게 토글을 요청하는 
 
 | # | 갭 | 근거 | 소관 |
 |---|---|---|---|
-| 1 | **iac에 테이블이 없다** — `bourbon-user-topic-*`, `bourbon-topic-catalog-*`, `topic-score-index` 어디에도 없음. dev configmap은 존재하지 않는 테이블을 가리킴 → 전 호출 `ResourceNotFoundException` | iac origin/main `d364d3c` 전수 grep | 인프라 |
-| 2 | **IRSA 권한 2중 부족** — `bourbon-app`의 DynamoDB 문장은 `bourbon-agent` 테이블 ARN 1개 + `/index/*`로 한정. 액션 목록에 **`dynamodb:Scan`이 없고** 카탈로그 로드는 Scan | `iac terraform/modules/iam/service/service_roles.tf:116-132` / `topic/catalog/repository.py:52-70` | 인프라 |
+| 1 | **iac에 테이블이 없다** — 필요한 것이 #17로 **user topic 테이블 1개 + `topic-score-index`로 줄었다**(카탈로그 테이블은 더 이상 존재하지 않음). 그 1개도 iac에 없고, dev configmap은 존재하지 않는 테이블을 가리킴 → 전 호출 `ResourceNotFoundException` | iac origin/main `d364d3c` 전수 grep | 인프라 |
+| 2 | **IRSA 권한 부족** — `bourbon-app`의 DynamoDB 문장은 `bourbon-agent` 테이블 ARN 1개 + `/index/*`로 한정이라 새 테이블 ARN 추가 필요. ~~`dynamodb:Scan` 부재~~는 #17로 **문제 아님**(카탈로그 Scan 소멸 — 기존 액션 목록으로 충분) | `iac terraform/modules/iam/service/service_roles.tf:116-132` | 인프라 |
 | 3 | **게이트웨이 미등록** — bourbon-api dispatch에 `/api/svc/topic/` 블록 없음 → public 워크로드 외부 도달 불가 | bourbon-api origin/main `k8s/base/api-svc-dispatch.yaml` | bourbon-api |
 | 4 | **prod 적재 경로 미구현** — 호출자의 정체는 확정됐다(persona→topic 파이프라인, §1.5). 미구현인 것: ⑴ bourbon-agent의 persona extractor 자체(`save_persona` 호출자 0건) ⑵ persona→topic 파이프라인이 어디서 무슨 트리거로 도는지. 현 CLI는 디스크에만 쓴다 | §1.5 | extractor 체인 |
 | 5 | **internal `AuthorizationPolicy` 없음** — 메시 내 누구나 호출 가능 | README 명시(accepted risk) | topic-api |
@@ -620,9 +639,11 @@ Alpha는 내부 대상이므로 **내부 코호트에게 토글을 요청하는 
 우리는 internal을 호출하므로 3번은 우리 게이트가 아니다. **4번과 6번이 우리 출시의 실질
 게이트**이고, 1·2번은 그보다 먼저 온다.
 
-운영 특성(고장은 아니지만 알아야 할 것): 60초 블로킹 카탈로그 Scan(§5.3), 워커 pod당 1개 +
-CPU 바운드 `find_by_name`(§5.6), rollup 상한이 큼(§5.3), 인덱스 키 누락 아이템이 조용히
-사라짐(§1.3).
+운영 특성(고장은 아니지만 알아야 할 것): 워커 pod당 1개 + CPU 바운드 `find_by_name`(§5.6),
+rollup 상한이 큼(§5.3), 인덱스 키 누락 아이템이 조용히 사라짐(§1.3), 카탈로그·이미지 반영
+단위가 배포(#17 — §5.3). dev 한정: docs가 prefix 아래로 이동해 게이트웨이 경유 + oauth2-proxy
+SSO + edge-auth 이중 게이트를 받는다(#14) — 우리와는 무관, internal 미러의 docs는 여전히
+port-forward 전용.
 
 ---
 
@@ -775,7 +796,7 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 | 10 | **페이징 복귀** — 현재 top-`limit`(≤100) 밖은 존재하지 않는 것으로 취급해야 한다 | topic-api | 낮음 |
 | 11 | **`unmatched_signals` 노출** — 이미 "카탈로그 갭을 드러내기 위해" 만든 필드인데 파일에 갇혀 있다. seed 제안의 근거 데이터 | extractor | 낮음 |
 | 12 | 배포 게이트 §7의 1·2·5 | 인프라 / topic-api | 배포 시점 |
-| 13 | 카탈로그 캐시 stale-while-revalidate (60초 p99 스파이크) | topic-api | 낮음 |
+| 13 | ~~카탈로그 캐시 stale-while-revalidate~~ — **#17에서 구조 변경으로 해소**(시작 시 1회 파일 로드, TTL·Scan·블로킹 재적재 자체가 소멸) | ~~topic-api~~ | **해소** |
 | 14 | **persona→topic 추출의 입력 슬롯.** sharable만인지 private 포함인지(§1.5). private 포함이면 LLM이 쓴 per-topic `description`이 private 서술의 뉘앙스를 실어 나를 수 있다 — §11-1의 description 공개 여부와 **같이** 결정해야 한다. 슬롯 텍스트(3필드)와 현 CLI 입력(풍부한 마크다운)의 밀도 차이로 facets 품질 재검증도 필요 | extractor + 기획 | 높음 |
 | 15 | **expertise 접근 경로**(정렬 파라미터 또는 expertise용 두 번째 GSI) — §9 컷 문제의 (b)안. **(a)안의 컷 경계 계측이 필요를 증명한 뒤에** 꺼낸다 | topic-api | 측정 후 |
 
@@ -842,8 +863,11 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
    그 신호를 무엇으로 측정하는가.
 7. **어댑터 경계.** topic-api 응답 모델을 우리 도메인 타입으로 어디서 변환하는가.
    composition root 규율(real provider만)과 어떻게 맞추는가.
-8. **캐시.** 카탈로그는 하루 몇 번 변한다. `/search/topics` 결과를 우리가 캐시할 수 있는가.
-   할 수 있다면 무효화 신호는 무엇인가.
+8. **캐시.** #17로 질문이 쉬워졌다: 카탈로그 변경의 반영 단위가 topic-api의 **배포**이므로
+   요청 사이 변동이 사실상 없다. `/search/topics` 결과를 우리가 캐시한다면 TTL은 그들의 배포
+   주기보다 짧으면 충분하다. 남는 결정: 캐시 키(질의 정규화 형태)와, 그들의 배포를 우리가
+   감지할 신호가 필요한가(없어도 짧은 TTL로 족한가). 산출물의 `built_at`/`dump_version`은
+   응답에 노출되지 않는다.
 9. **rollup 수용 규칙.** 확장어가 잎이 아닐 때(자손 있는 토픽) rollup을 그대로 쓰는가, 자손
    잎으로 내려가 재질의하는가. 사전 판별은 사실상 불가(§8.3-A — detail `children`은 level-1
    전용)이므로 사후 판별(`matched`의 `distance > 0`)로 무엇을 다르게 처리하는가 —
@@ -856,7 +880,7 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
 
 ## 부록 A — 근거 인덱스
 
-`../bourbon-topic-api` (HEAD `296723d`):
+`../bourbon-topic-api` (초판 HEAD `296723d` → rev 3 HEAD `107f5cd`):
 
 | 주장 | 위치 |
 |---|---|
@@ -866,9 +890,12 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
 | threshold 알고리즘 | `topic/search/threshold.py` |
 | 스트림 bound | `topic/search/streams.py` |
 | `find_by_name` · normalize · descendants | `topic/catalog/graph.py` |
-| 카탈로그 Scan | `topic/catalog/repository.py:52-70` |
-| 카탈로그 캐시(블로킹 재적재·stale 서빙) | `topic/catalog/cache.py:44-70` |
-| id 파생 규칙 | `topic/catalog/ids.py` |
+| 카탈로그 산출물 포맷·로더 (#17) | `topic/catalog/artifact.py` (`catalog_dist/catalog.json`) |
+| 산출물 빌드·merge ledger 검증 (#17) | `topic/catalog_import/build.py` |
+| merge 기록 / 아이템 이송 CLI (#17) | `cli/catalog_import/merge.py`, `topic/user_topics/migration.py` |
+| 시작 시 1회 카탈로그 로드 (#17) | `api/depends/services.py:startup` |
+| id 파생 규칙 (#17부터 전부 파생·랜덤 경로 제거) | `topic/catalog/ids.py` |
+| ~~카탈로그 Scan·캐시~~ | ~~`topic/catalog/repository.py`·`cache.py`~~ — **#17에서 삭제** |
 | GSI 쿼리 · `put_score` · `patch_settings` | `topic/user_topics/repository.py` |
 | `RANKED_TIER` · tier 계열 | `topic/visibility/tiers.py` |
 | facets · `ScoreInputs` · `Visibility` | `topic/structs.py` |
@@ -969,3 +996,15 @@ exact / ancestor-only / 전무 / 캡 오염으로 분류하면 된다. ancestor-
   d1 2,180/d2 267이라 구체 토픽 대부분은 실제 잎. ⑷ §11-14(입력 슬롯 + description 뉘앙스)·
   §11-15(expertise 접근 경로)·§13-9(rollup 수용)·§13-10(cold-start UX) 추가, §12.1 코퍼스
   주의·§12.3 컷 경계 계측 추가. ⑸ best-effort 입력 선언을 §9 승계 목록에 추가(주체 이전).
+- **2026-08-21 rev 3** — HEAD `107f5cd`(+5커밋) 반영. 핵심은 #17 **"카탈로그를 DynamoDB
+  테이블에서 빌드 산출물로 전환"**: 카탈로그 테이블·Scan·60초 TTL 캐시·reload 라우트·internal
+  카탈로그 관리 라우트·`uuid4` 랜덤 id 경로가 전부 삭제되고, `catalog_dist/catalog.json`
+  (git 커밋·이미지 포함)을 시작 시 1회 로드한다. 편집·merge는 `build`/`merge`(파일) +
+  `migrate-items`(라이브 테이블, dry-run 기본)로 갈라졌다. 이 문서에서 바뀐 것: §1 저장 구조,
+  §3.3 확장 경로(유일한 쓰기 경로 = git 커밋), §5.3 고정 읽기·p99 스파이크 지적 **해소**,
+  §7-1(필요 테이블 1개로 축소)·§7-2(`dynamodb:Scan` 요구 소멸), §11-13 **해소**, §13-8 캐시
+  질문 완화(반영 단위 = 그들의 배포), 부록 A 경로 갱신. 초판의 수동 생성 토픽 중복 위험 지적도
+  랜덤 id 경로와 함께 소멸. 그 외 #14(dev docs를 prefix 아래 SSO+edge-auth 이중 게이트로),
+  #13(proxy 헤더 미들웨어), `574a774`(topic 응답 필드 순서 통일 — wire 계약 의미 변화 없음),
+  `ecd4a1b`(dev 이미지 CDN 서빙 활성화). **persona_topics·검색·랭킹·visibility 로직은 5커밋
+  전부에서 무변** — §2·§4·§5.2·§6·§8–§13의 분석·결정은 그대로 유효하고, 테스트는 942/50/0.
