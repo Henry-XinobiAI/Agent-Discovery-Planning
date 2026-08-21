@@ -22,8 +22,9 @@ Wikidata 기반 토픽 카탈로그(2,605개)와 유저별 토픽 점수를 Dyna
 
 **우리 rev 14와의 관계.** rev 14는 "extractor가 bourbon-agent 안에 있고, 우리가 전용 테이블에
 topic/claim을 소유하며, DynamoDB Streams로 AOSS에 색인하고, 요청마다 LLM으로 relevance를
-판정한다"는 그림이었다. 그 전제 중 **어느 것도 현실과 맞지 않는다.** 저장·색인·판정의 주체가
-topic-api로 옮겨갔다.
+판정한다"는 그림이었다. **입력 사슬 전제는 맞았다** — extractor는 bourbon-agent 안이고 입력은
+deferq 이벤트다(오너 확인, 2026-08-21 — §1.5). 틀린 것은 그 다음 전부다: **topic의 저장·색인·
+검색·랭킹의 주체가 우리가 아니라 topic-api다.**
 
 **확정된 방향.** topic-api를 **축(axis)** 으로 삼는다. 폐기가 아니라 **축의 이전**이다.
 rev 14에서 저장소·색인·스트림·동시성 계약은 폐기하고, 규율(실패 의미, gate 직교성,
@@ -127,6 +128,32 @@ internal은 `AuthorizationPolicy`를 출하하지 않아 메시 내 어느 파�
 `cli persona extract`. **이 CLI/마크다운 형태는 persona extractor 계약이 미정이라 임시로
 만들어 둔 것이다**(담당자 확인, 2026-08-21).
 
+**확정된 생산 사슬 (오너 확인, 2026-08-21).** topic의 재료는 기존 그림과 같이 **deferq 이벤트를
+받은 bourbon-agent의 persona extractor가 생성한 것**이다:
+
+```
+bourbon-api deferq 이벤트 (at-most-once)
+ → bourbon-agent persona extractor      ← 아직 없음: user_persona 저장소·CAS 쓰기 경로는 있으나
+                                           레포에 save_persona 호출자가 0건이고, 주석 자신이
+                                           "extraction lands somewhere outside this repo"라고 말한다
+ → user_persona 슬롯 (SHARABLE / PRIVATE × bio·traits·preferences)
+ → topic-api의 persona→topic 파이프라인   ← 아래 임시 CLI가 그 스탠드인
+ → POST /internal/topic/scores/bulk
+```
+
+이 사슬에서 따라 나오는 두 가지:
+
+1. **freshness는 끝까지 best-effort다.** deferq는 at-most-once이고, bourbon-agent의 이벤트
+   ingest는 명시적으로 "logged and dropped + backfill로 보수"다. rev 14 §1-①의 best-effort
+   선언이 주체만 바뀌어 승계된다(§9) — 우리는 topic 데이터의 최신성을 가정하지 않는다.
+2. **생산 입력은 마크다운 파일이 아니라 persona 슬롯 텍스트다.** 어느 슬롯이 추출 입력인지
+   (sharable만? private 포함?)는 열린 질문이다(§11-14). private 포함이면: topic의 공개 자체는
+   유저의 토글 동의를 거치지만, LLM이 쓰는 per-topic `description`이 private 서술의 뉘앙스를
+   실어 나를 수 있다. 슬롯 텍스트는 세 필드짜리 짧은 텍스트라, 현 CLI가 읽는 풍부한 마크다운과
+   **입력 밀도가 다르다** — facets 품질이 슬롯 텍스트에서도 유지되는지는 extractor 쪽 검증 사항.
+
+현 임시 파이프라인:
+
 ```
 persona markdown
  → ①signals   LLM 1회: evidence · 한국어 description · 영어 query_phrases 2~4개 · facets 5개
@@ -139,7 +166,8 @@ persona markdown
 - 출력은 **디스크 JSON**(`.persona_topics/`)뿐이다. 실 테이블 적재 경로는
   `scripts/dynamodb/seed_local.py`(loopback 전용) 하나이고, dev/prod에는
   `POST /internal/topic/scores/bulk`를 부를 주체가 **아직 없다**.
-- 이 서비스는 **deferq/AMQP 의존이 전혀 없다** — 이벤트를 소비하지 않는다.
+- 이 서비스는 **deferq/AMQP 의존이 전혀 없다** — 이벤트 소비는 상류(bourbon-agent)의 몫이고,
+  topic-api는 persona 산출물을 받아 topic을 만드는 자리다.
 - `query_phrases`는 영어 한정이며 프롬프트가 "카탈로그가 라벨링하는 방식의 1–3단어 canonical
   name, 수식어 절대 금지"를 강제한다. `unmatched_signals`(어떤 후보도 살아남지 못한 signal)는
   "카탈로그 갭을 드러내기 위해" 보관되지만 **파일에만 남고 서비스는 읽지 않는다.**
@@ -585,7 +613,7 @@ Alpha는 내부 대상이므로 **내부 코호트에게 토글을 요청하는 
 | 1 | **iac에 테이블이 없다** — `bourbon-user-topic-*`, `bourbon-topic-catalog-*`, `topic-score-index` 어디에도 없음. dev configmap은 존재하지 않는 테이블을 가리킴 → 전 호출 `ResourceNotFoundException` | iac origin/main `d364d3c` 전수 grep | 인프라 |
 | 2 | **IRSA 권한 2중 부족** — `bourbon-app`의 DynamoDB 문장은 `bourbon-agent` 테이블 ARN 1개 + `/index/*`로 한정. 액션 목록에 **`dynamodb:Scan`이 없고** 카탈로그 로드는 Scan | `iac terraform/modules/iam/service/service_roles.tf:116-132` / `topic/catalog/repository.py:52-70` | 인프라 |
 | 3 | **게이트웨이 미등록** — bourbon-api dispatch에 `/api/svc/topic/` 블록 없음 → public 워크로드 외부 도달 불가 | bourbon-api origin/main `k8s/base/api-svc-dispatch.yaml` | bourbon-api |
-| 4 | **prod 적재 호출자 부재** — `cli persona extract`는 디스크에만 쓴다. `POST /internal/topic/scores/bulk`를 부를 주체 미정 | §1.5 | extractor |
+| 4 | **prod 적재 경로 미구현** — 호출자의 정체는 확정됐다(persona→topic 파이프라인, §1.5). 미구현인 것: ⑴ bourbon-agent의 persona extractor 자체(`save_persona` 호출자 0건) ⑵ persona→topic 파이프라인이 어디서 무슨 트리거로 도는지. 현 CLI는 디스크에만 쓴다 | §1.5 | extractor 체인 |
 | 5 | **internal `AuthorizationPolicy` 없음** — 메시 내 누구나 호출 가능 | README 명시(accepted risk) | topic-api |
 | 6 | **공개 토글 UI 없음** — §6.2 | 두 레포 모두 부재 | 앱/클라이언트 |
 
@@ -629,13 +657,24 @@ CPU 바운드 `find_by_name`(§5.6), rollup 상한이 큼(§5.3), 인덱스 키 
 ### 8.3 3단 계획
 
 **A (지금) — 순수 소비, 저장소 0.**
-expansion(작은 LLM 1회) → `GET /internal/topic/search/topics` → **구체 토픽 2–3개를 병렬 leaf
-조회** → 우리 후처리(self-exclusion, eligibility, cap, `matched_topics` 조립, 실패 3분기).
-목적은 기능이 아니라 **측정**(§12).
+expansion(작은 LLM 1회) → `GET /internal/topic/search/topics` → **구체 토픽 2–3개를 병렬
+조회**(`/topics/{id}/users`) → 우리 후처리(self-exclusion, eligibility, cap, `matched_topics`
+조립, 실패 3분기). 목적은 기능이 아니라 **측정**(§12).
 
-넓은 토픽 하나로 rollup을 부르는 것보다 낫다: 싸고(3 RCU×3), 지연이 평탄하고(병렬 2 RTT),
-`exhaustive=True`가 보장되고, 어느 확장어가 맞았는지 귀속이 응답 단위로 남는다 —
+넓은 토픽 하나로 rollup을 부르는 것보다 낫다: 잎에 떨어지면 싸고(3 RCU×3) 지연이 평탄하며
+(병렬 2 RTT) `exhaustive=True`가 보장되고, 어느 확장어가 맞았는지 귀속이 응답 단위로 남는다 —
 rev 14 §3의 "변형별 `_msearch` 독립 검색 + RRF"와 정확히 같은 모양이다. 병합 규칙은 우리가 정한다.
+
+**단, leaf/rollup은 우리가 고르는 게 아니다 (rev 2 정정).** 같은 라우트에서 서비스가 토픽의
+서브트리를 보고 고른다(§2.2 — `if len(weights) == 1`). "구체적인" 토픽도 활성 자손이 있으면
+rollup이 된다 — 실측: `machine learning`은 잎이지만 `database`는 자식 2개(blockchain,
+relational database)로 rollup이다. 그러므로 위의 비용·지연 보장은 **확장어가 실제 잎에 떨어졌을
+때만** 성립하고, 우리 규칙은 "잎 선호, rollup 응답도 정상 경로"다. 완화 근거: 깊이 분포상
+d1이 2,180/2,617이고 d2가 267뿐이라 **구체 토픽의 대부분은 실제로 잎이다.** 사전 판별은
+불가능에 가깝다 — detail의 `children`은 **level-1 토픽에만 채워지고 그 외에는 설계상 빈
+배열**(`topic/catalog/flatten.py`: "Empty for a topic that is not level 1")이므로, d1 토픽이
+d2 자식을 가져도 detail은 빈 children을 답하는데 rollup은 깊은 그래프를 걷는다. 사후 판별은
+쉽다: 응답 `matched`에 `distance > 0`이 있으면 rollup이었다.
 
 **B (측정이 부족하다고 말하면) — 우리 코드가 아니라 카탈로그를 늘린다.**
 computing/science seed 확장 + `min_importance` 하향 제안. `groups.yaml` 한 파일이고 수혜자가
@@ -659,14 +698,15 @@ computing/science seed 확장 + `min_importance` 하향 제안. `groups.yaml` �
 | TOPICSEARCH# projection / 전역 discoverable 계약 | **폐기** | GSI 파티션 `{topic_id}#public`이 같은 일을 함 |
 | §4 2단계 both-strong BatchGet 계약 | **폐기** | 읽기 주체가 topic-api. rollup이 이미 강한 일관 재확인 |
 | 스트림 색인 파이프라인 (Q1·Q2·Q9) | **폐기** | 색인할 우리 데이터가 없음 |
-| extractor 협의 Q5·Q13·Q14 | **폐기** | extractor가 존재하고 우리 소관이 아님 |
+| extractor 협의 Q5·Q13·Q14 | **폐기** | topic 저장·projection의 협의 상대가 사라짐 — 저장은 topic-api 소관. extractor 체인과의 새 협의 항목은 §11이 대체 |
 | AOSS 인덱스 신설 | **유예** | 카탈로그 2,605개 동안 정당화 안 됨. 필요해지면 **카탈로그만** 색인 |
 | §1-⑪ relevance 판정층 | **승계, gate→rerank로 격하** | top-20 재정렬 |
 | 실패 의미 3분기(422 / 200+empty / 503) + 오귀속 금지 | **승계** | topic-api는 매칭 0건도 `200 + 빈 items`로 답한다 → **우리가 구분해야 함** |
 | ordering contract (gate→filter→tiebreak) | **승계, 재해석** | 아래 |
 | self-exclusion · 즐겨찾기=tiebreak only · popularity prior 금지 | **승계** | topic-api에 self-exclusion 없음 |
 | 판정 입력 텍스트 전부 비신뢰 취급 | **승계** | 카탈로그 description·유저 description 모두 대화/LLM 유래 |
-| gate 3종 직교(maturity/safety/privacy) | **승계** | privacy는 §6이 구조로 보장, maturity 입력은 §11-3 미해결 |
+| gate 3종 직교(maturity/safety/privacy) | **승계** | privacy는 §6이 구조로 보장, maturity 입력은 §11-6 미해결 |
+| best-effort 입력 선언(rev 14 §1-①) | **승계 (주체 이전)** | 사슬이 여전히 deferq at-most-once로 시작하고 bourbon-agent ingest는 logged-and-dropped다(§1.5). 우리는 freshness를 가정하지 않고, gate 튜닝은 undercount-robust여야 한다 |
 
 **ordering contract의 재해석 — 그리고 그 위의 정정.**
 우리는 "scalar score 금지"를 잠갔고 topic-api는 scalar를 준다. 그 규율의 실질은 "gate를 점수로
@@ -677,6 +717,27 @@ computing/science seed 확장 + `min_importance` 하향 제안. `groups.yaml` �
 (이 문서 작성 중 "그들의 score를 정렬 키로 쓴다"고 먼저 적었다가 §4.1의 계산으로 철회했다.
 재설계는 철회된 쪽을 되살리지 말 것.)
 → **ordering 키의 소유권은 우리에게 있다.**
+
+**그리고 재가중의 한계 — 컷은 그들의 점수로 일어난다 (rev 2 추가).** GSI 정렬 키가 `score`이고
+(`ScanIndexForward=False`), 응답은 상위 `limit`(≤100)까지이며 페이징이 없다. knowledge 95짜리
+전문가의 저장 score가 47이면, 그 토픽에 score가 더 높은 보유자가 100명 넘게 있을 때 **그
+전문가는 우리 손에 도착하지 않는다.** 재가중은 도착한 것의 순서만 바꾼다. §12.3의 "재가중이
+순위를 바꾸는지" 계측으로는 이 손실이 **보이지 않는다** — 컷 밖은 관측 밖이다. 선택지 셋:
+
+- **(a) Alpha 수용 (권고)**: 항상 `limit=100`으로 받고 재가중. Alpha는 공개 밀도가 낮아(§6.4)
+  토픽당 공개 보유자가 100에 닿을 가능성이 낮다. **만료 조건을 명시한다**: 토픽당 공개 보유자
+  수가 100에 접근하면 이 가정이 깨진다 — §12.3의 컷 경계 계측이 만료를 알린다.
+- **(b) topic-api에 expertise 접근 경로 요청**: 정렬 파라미터 또는 두 번째 GSI. §11-3(응답에
+  필드 하나)과는 크기가 다른 요청이므로 별도 항목(§11-15)이고, (a)의 측정이 필요를 증명한
+  뒤에 꺼낸다.
+- **(c) 주입 점수 공식 변경**: 공식 소유권은 extractor 쪽이고 그 score는 그들 제품 UI
+  (`/me/topics` 트리의 점수 표시)에도 쓰인다. 우리 사정으로 바꾸자기 어렵다 — 가능성만 기록.
+
+정렬 키 자체의 하위 결정 두 개는 §13-3의 몫이다: **`score_inputs`가 null인 아이템의 처우**
+(주입 전 아이템·breakdown 없는 주입이 실존한다 — 뒤로 보내면 주입이 늦은 전문가를 죽이고,
+score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그리고 **`relation`의 처리**
+(extractor는 `related`=인접 분야도 붙인다 — "가장 잘 아는"에게 related 보유는 전문성이 아니라
+인접성 신호이므로 필터 또는 강한 할인. `score_inputs.relation`이 원값으로 남아 있어 가능하다).
 
 ---
 
@@ -694,7 +755,7 @@ computing/science seed 확장 + `min_importance` 하향 제안. `groups.yaml` �
 6. **eligibility (Q12)** — `AllowAllEligibilityProvider`는 여전히 stub. topic-api는 이것을 모른다.
 7. **불완전성 플래그 로깅·게이트** — `exhaustive=false` / `unranked_topics>0` /
    `truncated_descendants>0`를 품질 저하로 다룬다.
-8. **leaf 우선 fan-out + 병합(RRF)** — §8.3-A.
+8. **잎 선호 fan-out + 병합(RRF)** — §8.3-A. leaf 강제는 불가능하므로 rollup 응답도 정상 경로.
 
 ---
 
@@ -704,7 +765,7 @@ computing/science seed 확장 + `min_importance` 하향 제안. `groups.yaml` �
 |---|---|---|---|
 | 1 | **공개 토글 UI의 소유자와 일정.** 그리고 공개 대상에 LLM이 쓴 `description`(그 유저에 대한 한 문장)이 포함되는지, 유저가 편집 가능한지(`PATCH`가 `description`도 받는다) | 앱 + 기획 | **블로커** |
 | 2 | **넓은 토픽 + 좁은 토픽 동시 부착을 계약으로.** 서브트리 걷기는 아래로만 간다(§2.2) — "커피"만 붙은 유저는 "드립커피" 질의에 안 나온다. 지금은 프롬프트가 강제하나 **프롬프트는 계약이 아니다.** 놓치면 우리 코드로 복구 불가 | extractor | **비가역** |
-| 3 | **`score_inputs`를 랭킹 응답(`MatchedTopicResponse`)에 추가 (internal 한정).** 전문성 재가중의 전제. 필드 하나. 아니면 owner당 N+1 호출 | topic-api | 높음 |
+| 3 | **`score_inputs`를 랭킹 응답(`MatchedTopicResponse`)에 추가 (internal 한정).** 전문성 재가중의 전제. 필드 하나. 아니면 owner당 N+1 호출. 단 이것은 재가중의 전제일 뿐 §9의 컷 문제를 풀지는 않는다(그건 §11-15) | topic-api | 높음 |
 | 4 | **leaf 경로 stub이 `user_id`+`score`를 공개하는 문제**(§6.3). 정책상 소속 사실도 보호 대상 | topic-api | 높음 |
 | 5 | **self-exclusion / `exclude_user_ids`를 서버측 cap 앞에.** 편의가 아니라 정확성 — `limit=20`을 받아 우리가 자신을 빼면 19개가 되고 20번째 후보는 애초에 오지 않는다. 일반화하면 in-room 제외도 같은 파라미터로 처리 | topic-api | 높음 |
 | 6 | **maturity gate의 입력.** 우리 gate 입력인 "근거 개수"가 topic-api에 없다. 대용은 `facets.knowledge` + `confidence` + `score_updated_at`인데 "얼마나 깊은가"와 "LLM이 얼마나 확신하나"는 다른 것이다. gate를 무엇 위에 세울지 지금 정해야 뒤집지 않는다 | 우리 + extractor | 중간 |
@@ -715,6 +776,8 @@ computing/science seed 확장 + `min_importance` 하향 제안. `groups.yaml` �
 | 11 | **`unmatched_signals` 노출** — 이미 "카탈로그 갭을 드러내기 위해" 만든 필드인데 파일에 갇혀 있다. seed 제안의 근거 데이터 | extractor | 낮음 |
 | 12 | 배포 게이트 §7의 1·2·5 | 인프라 / topic-api | 배포 시점 |
 | 13 | 카탈로그 캐시 stale-while-revalidate (60초 p99 스파이크) | topic-api | 낮음 |
+| 14 | **persona→topic 추출의 입력 슬롯.** sharable만인지 private 포함인지(§1.5). private 포함이면 LLM이 쓴 per-topic `description`이 private 서술의 뉘앙스를 실어 나를 수 있다 — §11-1의 description 공개 여부와 **같이** 결정해야 한다. 슬롯 텍스트(3필드)와 현 CLI 입력(풍부한 마크다운)의 밀도 차이로 facets 품질 재검증도 필요 | extractor + 기획 | 높음 |
+| 15 | **expertise 접근 경로**(정렬 파라미터 또는 expertise용 두 번째 GSI) — §9 컷 문제의 (b)안. **(a)안의 컷 경계 계측이 필요를 증명한 뒤에** 꺼낸다 | topic-api | 측정 후 |
 
 1·2는 **extractor 계약이 열려 있는 지금만 싸게 들어간다.** 나중에 바꾸려면 재추출과 데이터
 마이그레이션이다.
@@ -734,6 +797,10 @@ eval 코퍼스의 질의·앵커를 2,605개 카탈로그에 대조해 다음을
 
 이것이 "1차에 적당한가"를 감이 아니라 수치로 답한다. 재현 스크립트는 부록 B.
 
+**코퍼스 선정 주의 (rev 2)**: 기존 eval 코퍼스의 질의·앵커는 memory-api 앵커 세계에서 설계됐다.
+그대로 대조하면 "옛 시스템의 어휘가 새 카탈로그에 있는가"를 재게 된다. Discovery 실사용 질의
+표본(또는 그에 가까운 재작성)을 별도로 정의하고, **무엇을 재는 코퍼스인지를 결과에 명시**한다.
+
 ### 12.2 아직 잴 수 없는 것 — 공개 밀도
 
 prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수용 기준을 지금 정의한다**:
@@ -748,6 +815,8 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
 - 매칭됐으나 공개 보유자 0 비율 = **공개 밀도 지표**
 - `exhaustive` / `unranked_topics` / `truncated_descendants` 분포
 - 우리 ordering 키와 topic-api `score` 순위의 불일치도(전문성 재가중이 실제로 순위를 바꾸는지)
+- **컷 경계 계측 (§9-(a)의 만료 감시)**: 토픽당 공개 보유자 수 분포, 그리고 `limit=100` 응답
+  마지막 행 부근의 knowledge 분포 — 컷 밖 손실이 시작되는 순간을 잡는다
 
 ---
 
@@ -761,8 +830,10 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
 2. **병합 규칙.** 여러 leaf 결과를 owner 단위로 합칠 때 RRF인가 다른 것인가. topic별 기여도를
    어떻게 `matched_topics`로 축약하는가(대표 topic 선택 규율 — rev 14가 ranking 단계로 잠근 것).
 3. **ordering 키의 정확한 식.** facets 5개에서 전문성 키를 어떻게 만드는가.
-   `knowledge` 단독? 가중합? `confidence`를 곱하는가? relation 할인을 유지하는가?
-   그리고 그 식이 **gate와 섞이지 않는다**는 것을 어떻게 구조로 보장하는가.
+   `knowledge` 단독? 가중합? `confidence`를 곱하는가? **`relation=related`는 필터인가 할인인가?**
+   **`score_inputs`가 null인 아이템은 어디에 놓는가?** §9 컷 문제의 (a)/(b) 중 무엇으로
+   시작하고 만료 조건은 무엇인가. 그리고 그 식이 **gate와 섞이지 않는다**는 것을 어떻게
+   구조로 보장하는가.
 4. **실패 3분기의 판정 지점.** `/search/topics` 0건 → 422를 어디서 판정하는가.
    expansion이 여러 변형을 냈고 일부만 0건일 때의 규칙.
 5. **eligibility(Q12)의 결합 지점.** topic-api는 eligibility를 모른다. leaf 결과를 받은 뒤
@@ -773,6 +844,13 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
    composition root 규율(real provider만)과 어떻게 맞추는가.
 8. **캐시.** 카탈로그는 하루 몇 번 변한다. `/search/topics` 결과를 우리가 캐시할 수 있는가.
    할 수 있다면 무효화 신호는 무엇인가.
+9. **rollup 수용 규칙.** 확장어가 잎이 아닐 때(자손 있는 토픽) rollup을 그대로 쓰는가, 자손
+   잎으로 내려가 재질의하는가. 사전 판별은 사실상 불가(§8.3-A — detail `children`은 level-1
+   전용)이므로 사후 판별(`matched`의 `distance > 0`)로 무엇을 다르게 처리하는가 —
+   불완전성 플래그·비용 게이트가 rollup 응답에서만 켜진다.
+10. **cold-start UX.** 공개 보유자가 임계(§12.2) 미달일 때 recommend가 무엇을 답하고,
+   bourbon-agent의 recommend_agents tool이 그것을 유저에게 어떻게 말하는가(현 mock은 모든
+   실패를 "unavailable"로 뭉갠다 — §1-⑩ 위반). 정직한 empty의 wire 표현.
 
 ---
 
@@ -881,3 +959,13 @@ exact / ancestor-only / 전무 / 캡 오염으로 분류하면 된다. ancestor-
   리뷰 파일 행(2,617)을 순회해 중복 qid를 이중 계산했으므로, `TopicGraph`와 동일하게
   dedupe한 2,605개 기준으로 다시 측정했다(`ai` 562→560, `database` 6→5). §9의 ordering 키 항목도
   작성 중 "topic-api score를 정렬 키로" → "facets에서 우리가 만든다"로 철회·정정했다.
+- **2026-08-21 rev 2** — 직접 재검토 + 오너 확인 반영. ⑴ **생산 사슬 확정**: deferq →
+  bourbon-agent persona extractor(미구현 — `save_persona` 호출자 0건) → persona 슬롯 →
+  topic-api 파이프라인(§1.5·§7-4). §0의 "전제 중 어느 것도 맞지 않는다"를 정정 — **입력 사슬
+  전제는 맞았다.** ⑵ **재가중의 컷 한계**를 §9에 추가: 후보 컷이 그들 score로 일어나므로
+  재가중은 도착한 것만 구제한다 — 선택지 3개((a) limit=100 수용+만료 조건 권고), 하위 결정
+  2개(null fallback·relation)를 §13-3으로. ⑶ §8.3-A "leaf 조회" 표현 정정 — leaf/rollup은
+  서비스가 고르고, 사전 판별은 불가(detail `children`은 level-1 전용 — flatten.py 실측),
+  d1 2,180/d2 267이라 구체 토픽 대부분은 실제 잎. ⑷ §11-14(입력 슬롯 + description 뉘앙스)·
+  §11-15(expertise 접근 경로)·§13-9(rollup 수용)·§13-10(cold-start UX) 추가, §12.1 코퍼스
+  주의·§12.3 컷 경계 계측 추가. ⑸ best-effort 입력 선언을 §9 승계 목록에 추가(주체 이전).
