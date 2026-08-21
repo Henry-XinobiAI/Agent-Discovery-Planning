@@ -6,7 +6,7 @@
 
 > 개인이 자기 agent와 대화하며 **지식·관점(persona: topic·claim)**을 쌓는다 → 그중 **공개 가능한 것**이 검색 가능해진다 → 다른 유저가 정답 문서가 아니라 **그 topic을 잘 아는 agent를 발견하고 대화하며 소비**한다.
 
-> **프레이밍 메모 (3차, 2026-08-20 확정):** ⑴ 초기 SKL(Topic Space + Perspective Index) → ⑵ `Agent_Memory_Vision.md`의 4계층 지식그래프 + **Wikidata anchor**(memory-api 소스) → ⑶ **persona extractor 체인**(bourbon-agent 추출 → DynamoDB → AOSS 색인 → 2단계 검색). 앞 두 프레이밍의 문서는 전부 `archive/`에 있고, 현재 방향의 정본은 `persona_topic_search_design.md`다. **단, ⑵ 기반의 shipped 시스템은 전환 완료 전까지 계속 가동**되며 그 구현 계약은 `impl/`이 소유한다.
+> **프레이밍 메모 (4차, 2026-08-21):** ⑴ 초기 SKL(Topic Space + Perspective Index) → ⑵ `Agent_Memory_Vision.md`의 4계층 지식그래프 + **Wikidata anchor**(memory-api 소스) → ⑶ **persona extractor 체인**(우리가 topic/claim을 소유하고 AOSS에 색인) → ⑷ **`bourbon-topic-api`로 축 이전**(2026-08-21 확정) — 토픽 저장·검색·랭킹의 주체가 이미 구현된 별도 서비스이고, 우리는 소비자 + 얇은 보정층이 된다. 앞 두 프레이밍의 문서는 `archive/`에 있고, ⑷의 근거·결정 기록은 `topic_api_analysis.md`, ⑶의 문서(`persona_topic_search_design.md`)는 **재설계 대기 상태**다. **⑵ 기반의 shipped 시스템은 전환 완료 전까지 계속 가동**되며 그 구현 계약은 `impl/`이 소유한다.
 
 ---
 
@@ -14,11 +14,13 @@
 
 | 문서 | 레이어 | 다루는 것 | 핵심 단위 |
 |---|---|---|---|
-| **`persona_topic_search_design.md`** | **확정된 방향 (design of record, 2026-08-20)** | persona extractor(bourbon-agent) → DynamoDB(TOPIC/TOPICSEARCH/TOPICSTAT/TOPICJUDGE) → AOSS 색인 → 2단계 검색 + relevance 판정. 열린 결정은 그 문서 §5 Q1–Q15 | (owner, topic) 아이템 / AOSS 문서 |
+| **`topic_api_analysis.md`** | **분석 + 방향 결정 기록 (2026-08-21)** | `bourbon-topic-api` 전수 분석(검색 메커니즘·카탈로그 실측·성능/비용·프라이버시 모델) + **축 이전 결정** + rev 14 폐기/승계 목록 + 열린 질문. **재설계의 입력이며 설계 문서가 아니다** | 사실/결정/열린 질문 |
+| `persona_topic_search_design.md` | ⚠️ **재설계 대기 (2026-08-21 축 이전으로 전제 무효)** | rev 14까지의 그림: 우리가 전용 테이블에 topic/claim을 소유하고 스트림으로 AOSS에 색인 + 요청마다 relevance 판정. **저장·색인·판정의 주체가 topic-api로 이전**되어 §2·§4와 Q1·Q2·Q5·Q9·Q13·Q14는 무효다. 승계되는 규율은 `topic_api_analysis.md` §9 | (owner, topic) 아이템 / AOSS 문서 |
 | **`impl/` (README + `01`–`11`)** | **현행 shipped 시스템의 구현 계약 (전환 전까지 유효)** | memory-api 기반의 실제 가동 중 시스템: 데이터 계약·provider 경계·grounding·gate/ranking·serving·eval. 전환 시 삭제 패스의 기준선이기도 하다 | typed struct / phase |
 | `bourbon_api_discovery_open_requests.md` | 활성 요청 레지스터 (bourbon-api B1–B2) | owner→agent 파생 계약·신뢰된 requester identity — **소스 전환과 무관하게 새 체인에서도 필요**(hydration·self-exclusion의 전제) | B# |
 
-> **설계 방향은 `persona_topic_search_design.md`, 가동 중인 것의 계약은 `impl/`.** 이전 프레이밍의
+> **방향 근거는 `topic_api_analysis.md`, 가동 중인 것의 계약은 `impl/`.** 새 설계 문서가 나오면
+> `persona_topic_search_design.md`는 `archive/`로 옮긴다(3차 프레이밍 기록). 이전 프레이밍의
 > 설계 근거 문서들(directions·implementation·Agent_Memory_Vision·technology_selection_evidence)은
 > 2026-08-20에 `archive/`(§2d)로 이동했다 — 현행 시스템이 *왜 그렇게 지어졌는지*가 궁금할 때만
 > 연다. 구현 형태(wiring) 요약은 §5(현행 시스템 기준).
