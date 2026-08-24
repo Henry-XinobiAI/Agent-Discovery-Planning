@@ -373,14 +373,26 @@ Fagin TA 계열 알고리즘:
 **오너 확인(전언), 2026-08-24 (rev 5):** ⑴ `search/users`의 `item=null` 노드는 "그
 유저(agent)가 그 토픽 아이템을 보유하지 않음"이다(트리 표시용 조상 또는 보유물이 아래에
 있는 지명 토픽 — 위 목록의 서술과 일치). ⑵ 트리는 **root + depth 2 수준까지의 토픽으로
-구성하고, 그 아래 토픽 보유는 rollup으로 접어 올려 준다.** 코드로 정확히 하면: 매치·보유
-토픽 **자신은 깊이와 무관하게 항상 제 노드로 나온다**(`build_tree`가
-`ancestor_path[:depth-1] + [topic_id]`로 경로를 만든다) — depth 2가 접는 것은 그 위의
-**조상 사슬**(중간 조상 생략, root 바로 아래에 걸림)과, 랭킹에서 지명 토픽 아래 보유가
-감쇠 합산되는 rollup이다. 추천 설계 함의: ⓐ 근거 표시의 계층 문맥은 2단(root→토픽)으로
-평평해지므로 "어느 분야의 어느 세부인가"는 노드 위치가 아니라 `distance`로 복원한다.
-ⓑ 지명 토픽보다 깊은 보유는 라벨이 아니라 `distance>0` 자손 노드 + `contribution`으로
-도착한다 — 우리 `matched_topics` 축약(§13-2)이 이 두 신호를 소비해야 한다.
+구성하고, 그 아래 토픽 보유는 rollup으로 접어 올려 준다.**
+
+⑵는 코드·실물 아티팩트로 재검증했다(**검증됨** — rev 5.1, 서비스 자신의
+`read_artifact`+`TopicGraph`+`build_tree`를 그대로 실행):
+
+- 매치·보유 토픽 **자신은 깊이와 무관하게 항상 제 노드로 나온다** — `build_tree`가
+  `ancestor_path[:depth-1] + [topic_id]`로 경로를 만들므로 잘리는 것은 조상 사슬뿐이다.
+  실측: `intelligent dance music`(조상 3단 music→electronic music→electronic dance music)은
+  depth=2에서 `[music → intelligent dance music]` — **중간 조상 2개가 생략되고 root 바로
+  아래에 걸리며, 토픽 자신은 살아 있다.** 같은 root의 깊은 매치 2개는 root 노드를 공유한다.
+  `shown_ancestry(depth=2)`는 `[(music, hops=3)]` — 표시 레벨이 접혀도 hop 거리는 원값이다.
+- rollup은 **아래로만**: `descendants(AI)`는 ChatGPT를 distance 1(weight 0.6)로 포함하지만
+  `descendants(ChatGPT)`는 자기 자신뿐이다(§2.2 방향성 재확인). 이 접기 규칙은
+  `topic/catalog/flatten.py` 한 곳에 살고 랭킹·프로필 트리·카탈로그 detail이 공유한다.
+- 조상 사슬 ≥2단인 토픽은 2,605개 중 **560개** — 접힘이 실제로 일어나는 범위.
+
+추천 설계 함의: ⓐ 근거 표시의 계층 문맥은 2단(root→토픽)으로 평평해지므로 "어느 분야의
+어느 세부인가"는 노드 위치가 아니라 `distance`로 복원한다. ⓑ 지명 토픽보다 깊은 보유는
+라벨이 아니라 `distance>0` 자손 노드 + `contribution`으로 도착한다 — 우리 `matched_topics`
+축약(§13-2)이 이 두 신호를 소비해야 한다.
 
 **페이징이 없다.** 양쪽 경로가 같은 resume 계약을 못 내서 일단 뺐다(README 명시). 즉
 top-`limit`(≤100) 밖은 존재하지 않는 것으로 취급해야 한다.
@@ -1181,3 +1193,8 @@ exact / ancestor-only / 전무 / 캡 오염으로 분류하면 된다. ancestor-
   접는 것은 조상 사슬과 랭킹의 감쇠 합산이다(작성 중 "세밀도가 2로 캡"이라 먼저 적었다가
   build_tree 경로식 확인으로 정정). 추천 설계 함의를 §2.2에 기록: 계층 문맥은 distance로,
   깊은 보유는 distance>0 자손 노드 + contribution으로 복원한다.
+- **2026-08-24 rev 5.1** — ⑶을 전언에서 **검증됨(실측)**으로 승격: 서비스 자신의 모듈
+  (`read_artifact`+`TopicGraph`+`build_tree`+`shown_ancestry`+`descendants`)을 실물
+  아티팩트에 실행. IDM(조상 3단) → depth=2에서 `[music → IDM]`(중간 조상 생략·토픽 생존),
+  shown_ancestry hops=3(거리 원값 유지), descendants(AI)∋ChatGPT@1(weight 0.6) /
+  descendants(ChatGPT)={자신}(하향 전용), 조상 ≥2단 토픽 560/2,605. §2.2에 실측 기록.
