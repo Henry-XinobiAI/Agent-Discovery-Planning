@@ -1,14 +1,15 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 정본 (rev 5.2, 외부 리뷰 2회 반영). 입력 = `topic_api_analysis.md` **rev 7**
+> **문서 지위**: 설계 정본 (rev 5.3, 외부 리뷰 2회 반영). 입력 = `topic_api_analysis.md` **rev 7**
 > (2026-08-24, topic-api HEAD `80c650f`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
 > 대체하는 정본이 됐다(열린 결정은 §9에 잔존).
 >
 > **범위**: 큰 그림의 파이프라인 — bourbon-agent의 요청을 받아 topic-api의 어느 endpoint에서
-> 어떤 값을 가져와 추천 소스로 쓰는지, 각 단계의 동작·흐름·산출물. 구현 상세(코드 배치,
-> 테스트 계획)는 확정 후 코드 repo `tasks/todo.md`로 간다.
+> 어떤 값을 가져와 추천 소스로 쓰는지, 각 단계의 동작·흐름·산출물. **노출 표면**(internal-only·
+> edge-auth 관례·배포 델타·surface 테스트)은 `serving_surface_design.md`가 소유한다.
+> 구현은 `project-template-python`에서 신규 시작한다(2026-08-24 오너 결정 — 같은 문서 §1-4).
 >
 > **표기**: 분석 문서와 동일 — `검증됨`/`가정`/`미확인`. 이 문서 고유의 **`결정`**(이 문서가
 > 확정하려는 것)과 **`열린 결정`**(§9, 리뷰 안건)을 추가로 쓴다.
@@ -413,6 +414,10 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 
 ## §7 기존 discovery/ 코드와의 매핑
 
+> **2026-08-24 재해석 (rev 5.3)**: 구현은 `project-template-python`에서 **신규 시작**한다
+> (오너 결정 — `serving_surface_design.md` §1-4). 아래 표의 "유지"는 "신규 구현으로 포팅",
+> "삭제"는 "포팅하지 않음"으로 읽는다 — 신규 구현에는 삭제 패스가 없다.
+
 | 현행 | 처분 |
 |---|---|
 | `api/` 라우터·에러 매핑·request_id | **유지** (요청 wire에서 need_type·proposition 삭제) |
@@ -428,7 +433,7 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 | `serving.py`·`decision_log*`·`observability/`·`llm/` | **유지** |
 | eval 코퍼스 | **재작성** — 기존 질의·앵커는 memory 앵커 세계의 어휘(분석 §12.1 주의) |
 
-삭제·교체의 실행 순서는 구현 계획(`tasks/todo.md`)에서.
+포팅의 실행 순서는 신규 구현의 계획에서 정한다(그릇 결정 = `serving_surface_design.md` §7-③).
 
 ---
 
@@ -520,6 +525,10 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 - **2026-08-24 rev 5.1** — 지위 갱신(설계 내용 불변). `persona_topic_search_design.md`(rev 14)를
   `archive/`로 보내며 이 문서를 정본으로 승격. 헤더의 입력 표기를 분석 rev 7로 동기화(rev 5와
   같은 커밋 `93e819d`에서 함께 개정된 문서라 내용상 이미 rev 7 기준이었다).
+- **2026-08-24 rev 5.3** — 노출 표면 소유권 분리: internal-only·edge-auth 관례 채택·배포
+  델타는 신설 `serving_surface_design.md`로. 구현을 `project-template-python`에서 신규
+  시작한다는 오너 결정에 따라 §7 처분표를 "포팅한다/포팅하지 않는다"로 재해석(범위 문구의
+  "코드 repo tasks/todo.md" 행선도 이 결정에 종속 — 그릇 결정은 같은 문서 §7-③).
 - **2026-08-24 rev 5.2** — S6-0을 **고정 계약 명문화**로 승격: owner→agent uuid5 파생은
   bourbon-api 지정 fixed 계약(namespace 상수값·known vector·세 repo 재검증·우리 쪽 pin
   테스트 경로 명기). 구 레지스터 B1(bourbon-api producer-side pin 요청)은 발신하지 않기로
