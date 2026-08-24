@@ -912,7 +912,8 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
    보유자 0"(→200+empty)을 우리가 갈라야 한다. topic-api는 둘 다 200+빈 items로 답한다.
 4. **ordering 키** — facets 기반 전문성 가중(§9). 단 facets 계약 확정(§11-18) 전에는 식을
    잠그지 않고, 어댑터는 facet 이름에 하드바인딩하지 않는다(§4.2).
-5. **self-exclusion** — topic-api에 없다. 서버측이 아니면 정확성 손실(§11-5).
+5. **self-exclusion·제외 집합** — 우리 후처리로 확정(2026-08-24 결정, §11-5 철회).
+   fan-out 100 대비 countable 제외 목록이라 정확성 손실 논거 소멸.
 6. **eligibility (Q12)** — `AllowAllEligibilityProvider`는 여전히 stub. topic-api는 이것을 모른다.
 7. **불완전성 플래그 로깅·게이트** — `exhaustive=false` / `unranked_topics>0` /
    `truncated_descendants>0`를 품질 저하로 다룬다.
@@ -931,7 +932,7 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 | 2 | **넓은 토픽 + 좁은 토픽 동시 부착을 계약으로.** 서브트리 걷기는 아래로만 간다(§2.2) — "커피"만 붙은 유저는 "드립커피" 질의에 안 나온다. 지금은 프롬프트가 강제하나 **프롬프트는 계약이 아니다.** 놓치면 우리 코드로 복구 불가 | extractor | **비가역** |
 | 3 | ~~`score_inputs`를 랭킹 응답에 추가~~ — **rev 4에서 해소.** `score_detail`로 개명돼 `matched[].item.blocks[]`에 블록으로 실린다(§4.2). N+1 소멸. 컷 문제(§11-15)는 별개로 남음 | ~~topic-api~~ | **해소** |
 | 4 | **leaf 경로 stub이 `user_id`+`score`를 공개하는 문제**(§6.3). rev 4에서도 유지(stub이 행의 tier까지 명시하는 형태로 정리됐을 뿐 노출은 동일). 정책상 소속 사실도 보호 대상 | topic-api | 높음 |
-| 5 | **self-exclusion / `exclude_user_ids`를 서버측 cap 앞에.** 편의가 아니라 정확성 — `limit=20`을 받아 우리가 자신을 빼면 19개가 되고 20번째 후보는 애초에 오지 않는다. 일반화하면 in-room 제외도 같은 파라미터로 처리 | topic-api | 높음 |
+| 5 | ~~self-exclusion / `exclude_user_ids`를 서버측 cap 앞에~~ — **철회, 우리 후처리로 확정(2026-08-24 결정).** 원 논거(limit=20에서 1명 빼면 20번째 후보가 안 옴)는 설계가 fan-out `limit=100`·최종 `max_results=3`으로 잡히며 실질 소멸했고, 제외 목록(requester+추후 room_members)은 countable이라 후처리 오버헤드가 무시 가능. 제외 집합 인터페이스는 설계 문서 S4 | ~~topic-api~~ | **철회** |
 | 6 | **maturity gate의 입력.** 우리 gate 입력인 "근거 개수"가 topic-api에 없다. 대용은 `facets.knowledge` + `confidence` + `updated_at`(rev 4에서 `score_updated_at`은 속성째 삭제)인데 "얼마나 깊은가"와 "LLM이 얼마나 확신하나"는 다른 것이다. gate를 무엇 위에 세울지 지금 정해야 뒤집지 않는다 | 우리 + extractor | 중간 |
 | 7 | **철회 경로.** 유저가 다시 private으로 내리면 GSI에서 빠지므로 절반은 정책이 해결한다. 남는 것은 "관심이 식었는데 유저가 안 내린 경우"를 extractor가 어떻게 다루는가(score 0 주입? `removed_topics` 반영?) | extractor | 중간 |
 | 8 | **`find_by_name` 정렬 근거.** 20개 캡 통과 순서가 dict 삽입 순이다. exact label 일치 우선 + `importance` 내림차순만으로도 크게 달라진다. README도 "this service has none to give"로 인정 | topic-api | 중간 |
@@ -942,7 +943,7 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 | 13 | ~~카탈로그 캐시 stale-while-revalidate~~ — **#17에서 구조 변경으로 해소**(시작 시 1회 파일 로드, TTL·Scan·블로킹 재적재 자체가 소멸) | ~~topic-api~~ | **해소** |
 | 14 | **persona→topic 추출의 입력 슬롯.** sharable만인지 private 포함인지(§1.5). private 포함이면 LLM이 쓴 per-topic `descriptions`가 private 서술의 뉘앙스를 실어 나를 수 있다 — §11-1의 description 공개 여부와 **같이** 결정해야 한다. 슬롯 텍스트(3필드)와 현 CLI 입력(풍부한 마크다운)의 밀도 차이로 facets 품질 재검증도 필요 | extractor + 기획 | 높음 |
 | 15 | **expertise 접근 경로**(정렬 파라미터 또는 expertise용 두 번째 GSI) — §9 컷 문제의 (b)안. **(a)안의 컷 경계 계측이 필요를 증명한 뒤에** 꺼낸다 | topic-api | 측정 후 |
-| 16 | **id 리스트 랭킹 라우트 (rev 4 신설).** `SearchQuery.topic_ids`는 서비스 층에 이미 리스트인데, 라우트는 이름 검색(`/search/users?q=`)만 리스트 경로를 탄다. expansion→선별 결과를 threshold 병합(감쇠 합산 총점)으로 물으려면 topic_ids를 받는 internal 라우트 하나가 필요 — **도메인 코드는 있고 라우트만 없다.** 그 전까지는 id별 fan-out + 우리 RRF(§8.3-A) | topic-api | 높음 |
+| 16 | **id 리스트 랭킹 라우트 (rev 4 신설 → rev 6에서 우선순위 하향).** `SearchQuery.topic_ids`는 서비스 층에 이미 리스트고 라우트만 없다. 그러나 재평가 결과 A단계에서는 **써도 안 쓸 라우트**: ⑴ 다중 id 병합 총점 = Σ weight×score라 그들 score(관심 편향)가 cross-topic 가중에 재유입 — RRF는 순위만 융합해 이를 차단 ⑵ 병합 후 top-100 컷이라 per-topic 100×N보다 후보 풀이 좁음 ⑶ 다중 id는 무조건 rollup 경로(threshold·예산·exhaustive 불확실) vs per-topic leaf는 2 RTT·exhaustive=True. **발동 조건**: 확정 topic 수 증가로 fan-out 비용이 실측 문제 될 때, 또는 expertise 정렬(§11-15) 이후 그들 병합 의미를 원하게 될 때 | topic-api | 조건부 (측정 후) |
 | 17 | **friends tier 사용 여부 (rev 4 신설).** friends가 랭킹 가능해졌고 자격 판정은 호출자 몫(spec §7). "추천 서빙이 friends를 물어도 되는가"는 제품 결정이고 관계 정보가 우리에게 없다 — Alpha는 public 단독(§10-9) | 기획 + 우리 | 중간 |
 | 18 | **facets 계약 확정 (rev 5 신설 — 오너 전언 2026-08-24).** 현재 facets는 dummy이고 **필드 집합·값 의미가 모두 변경될 수 있다.** 확정해야 할 것: ⑴ 최종 필드 집합과 각 필드의 의미(특히 전문성 축이 어느 필드에 남는가) ⑵ 실데이터 주입 시점 ⑶ 변경 통지 채널(우리 ordering 키 식이 이 계약에 결합된다 — §4.2·§13-3). **이 계약 확정 전에는 키 식을 잠그지 않는다** | extractor + topic-api | **높음 (키 식의 선행 조건)** |
 
@@ -1193,6 +1194,12 @@ exact / ancestor-only / 전무 / 캡 오염으로 분류하면 된다. ancestor-
   접는 것은 조상 사슬과 랭킹의 감쇠 합산이다(작성 중 "세밀도가 2로 캡"이라 먼저 적었다가
   build_tree 경로식 확인으로 정정). 추천 설계 함의를 §2.2에 기록: 계층 문맥은 distance로,
   깊은 보유는 distance>0 자손 노드 + contribution으로 복원한다.
+- **2026-08-24 rev 6** — 협의·재평가 2건. ⑴ **§11-5 철회**: `exclude_user_ids` 서버측 요청을
+  접고 우리 후처리로 확정(사용자 결정) — 설계가 fan-out 100·max_results 3으로 잡히며 cap 손실
+  논거가 소멸했고 제외 목록은 countable. ⑵ **§11-16 우선순위 하향**: 다중 id 라우트는 그들
+  score의 cross-topic 재유입·병합 후 컷·rollup 경로 강제라는 대가가 있어 A단계 per-topic
+  fan-out + RRF가 우월 — 발동 조건 2개를 명시하고 "높음"에서 "조건부"로. (rev 4에서 이
+  라우트의 가치를 과대평가했던 서술을 정정.)
 - **2026-08-24 rev 5.1** — ⑶을 전언에서 **검증됨(실측)**으로 승격: 서비스 자신의 모듈
   (`read_artifact`+`TopicGraph`+`build_tree`+`shown_ancestry`+`descendants`)을 실물
   아티팩트에 실행. IDM(조상 3단) → depth=2에서 `[music → IDM]`(중간 조상 생략·토픽 생존),
