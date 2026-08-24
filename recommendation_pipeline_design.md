@@ -83,18 +83,22 @@ read-time 판정 gate 없음(C단계 rerank는 dormant 슬롯).
 | `context: str \| None` | S1 확장의 보조 문맥 (단일 문자열) | 구 context_messages(리스트)를 대체. 원문은 S1 밖으로 비전달(기존 규율 유지) |
 | `max_results: int = 3` | 최종 응답 개수 (구 limit) | 모델이 못 고름 — 그쪽 handler가 고정. S3 fan-out limit(100)과 무관 |
 | `requester_user_id: UUID` | S4 self-exclusion 대상 (구 requester_owner_id) | handler가 task payload에서 채움 — 모델 공급 신원 비신뢰(그쪽 규율, 우리 규율과 일치) |
-| `room_id: UUID` | 지금은 로깅만, 미래 in-room 제외 입력 | 구 설계의 dormant 예비 필드가 실물로 옴 |
+| `room_id: UUID` | 지금은 로깅만 | 오너 의도(협의 2026-08-24): "방 관련 정보를 더 요청할 수 있는 키". **in-room 제외는 defer 합의** — OBT까지는 내 에이전트가 추천하는 구조라 같은 방 상황이 사실상 없음. 단 추후 `room_members`가 오면 requester와 **같은 제외 집합**으로 처리하도록 S4를 집합 인터페이스로 설계해 둔다 |
 
 **삭제**: `need_type`·`proposition`(1차 유형 단일화·stance 폐기), **`lang`**(불필요해짐 —
 S6에서 matched_topics에 ko·en 라벨을 병기해 보내면 최종 발화는 bourbon-agent 모델이 대화
 언어로 렌더한다). `eligibility_context`는 wire에서 빼고 우리 내부에서 room_id·requester로
 구성(Q12 stub 유지).
 
-**응답 쪽 간극 — 협의 필요(§9-⑨)**: 그들의 `RecommendedAgent`는 렌더된 agent 카드
-`{id, name, description, expertise[], match_reason}`를 기대하는데 agent의 name/description은
-우리 데이터가 아니다. 제안: **hydration은 bourbon-agent가 id로 수행**(agent 프로필 소유자가
-그쪽), 우리는 `id`(owner) + `expertise` 재료(matched topic 라벨들) + `match_reason` 재료
-(대표 topic·contribution)를 보낸다.
+**응답 쪽 간극 — 협의 결과(2026-08-24, §9-⑨)**: 그들의 `RecommendedAgent`
+`{id, name, description, expertise[], match_reason}`에서 `name` = 추천되는 user(owner)의
+이름, `description` = personal agent에서는 **현재 항상 NULL**(추후 채워질 수 있고, 기획이
+노출하지 않기로 하면 응답에는 불필요 — 단 "추천 판단에만 필요한 정보"가 될 수는 있다).
+**hydration 책임은 기획(어떤 데이터를 보여줄지)에 따라 추후 결정**으로 합의:
+(a) 우리가 채우는 경우 → **bourbon-api를 우리가 직접 호출**하는 의존성이 신설된다,
+(b) bourbon-agent가 채우는 경우 → 그쪽이 id로 조회. 이 문서의 설계는 어느 쪽이 되든
+성립하도록 우리 산출물을 `id`(owner) + `expertise` 재료(matched topic 라벨 ko·en) +
+`match_reason` 재료(대표 topic·contribution)로 고정해 둔다.
 
 ---
 
@@ -209,8 +213,12 @@ flags: {exhaustive, descendants_dropped, topics_dropped}, was_rollup: bool }`
    여러 topic에 걸린 owner가 자연히 위로 온다.
 2. **evidence 병합**: owner별로 topic마다 {topic_id, contribution, distance, score_detail?,
    descriptions?}를 모은다 — S6의 재료.
-3. **self-exclusion**: `requester_user_id` 제거(기존 구현 승계). fan-out이 100이라 cap 손실
-   문제는 실질 완화되지만 서버측 `exclude_user_ids`(분석 §11-5)는 계속 요청한다.
+3. **exclusion — 집합 인터페이스로 설계**(협의 2026-08-24 반영): 제외는 단일 id가 아니라
+   `excluded: set[UUID]`로 받는다. 지금 채워지는 것은 `{requester_user_id}` 하나지만,
+   in-room 제외가 defer에서 풀려 bourbon-agent가 `room_members`를 보내게 되면 **같은
+   집합에 합류**시키는 것으로 끝난다 — 새 단계·새 분기 없이. fan-out이 100이라 cap 손실
+   문제는 실질 완화되지만 서버측 `exclude_user_ids`(분석 §11-5)는 계속 요청하며, 그
+   파라미터가 생기면 이 집합을 그대로 넘긴다.
 4. **eligibility**: `EligibilityProvider.check`(현 AllowAll stub 유지, Q12).
 
 **topic-api 호출**: 없음.
@@ -375,11 +383,11 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
    비율을 측정한 뒤 켠다. (판정층 §13-6과는 별개 — 이것은 topic 선별, 그것은 후보 재정렬.)
 7. **/search/topics 캐시 TTL** — 제안 5분 (그들 배포 주기 대비 충분히 짧음).
 8. **200+empty의 사유 코드 체계** — "no_public_holders" / "degraded" 구분을 wire에 실을지.
-9. **응답 카드 hydration 책임** (rev 2) — bourbon-agent의 `RecommendedAgent`는 렌더된 카드
-   `{id, name, description, expertise[], match_reason}`를 기대하나 name/description은 우리
-   데이터가 아니다. 제안: hydration은 bourbon-agent(agent 프로필 소유자), 우리는 id +
-   expertise 재료(matched topic 라벨 ko·en) + match_reason 재료(대표 topic·contribution).
-   그들 mock의 응답 스키마를 누가 어디까지 채우는지 협의로 확정해야 한다.
+9. **응답 카드 hydration 책임** (rev 3 — 협의로 "기획 의존·추후 결정" 확인) — name=owner
+   이름·description=personal agent 현재 NULL. 경로 (a) 우리가 채움 → bourbon-api 직접 호출
+   의존성 신설, (b) bourbon-agent가 채움. 우리 산출물(id + expertise 재료 + match_reason
+   재료)은 어느 쪽에서도 성립 — 기획 확정 시 wire만 잠근다. description이 "추천 판단
+   입력"이 될 가능성(오너 언급)은 열어 둔다.
 10. **probe 언어 배분(원문1+en3+ko2)** (rev 2) — 실측 12쌍 기준 제안값. S1 계측(언어별 히트
    기여)으로 조정.
 
@@ -400,3 +408,11 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
   안정적·어휘만 배포 단위 변동이라 정적 프롬프트로 안전), 언어 배분 = en 우선·ko 보조
   (12쌍 실측: 4쌍에서 ko가 en이 놓친 topic을 잡음 — hiking 0 vs 등산 2 등), 상한 6 =
   원문1+en3+ko2. ⑷ S6 라벨은 ko·en 병기로 변경(렌더는 bourbon-agent 모델).
+- **2026-08-24 rev 3** — bourbon-agent 오너와의 계약 협의 반영(전언). ⑴ `room_id`의 의도 =
+  "방 관련 정보를 더 요청할 수 있는 키". ⑵ **in-room 제외는 defer 합의**(OBT까지 같은 방
+  상황 희박) — 단 S4의 제외를 `excluded: set[UUID]` 인터페이스로 설계해, 추후 bourbon-agent가
+  `room_members`를 보내면 requester와 같은 집합에 합류시키는 것으로 끝나게 함(서버측
+  `exclude_user_ids` 요청과도 같은 모양). ⑶ **카드 hydration은 기획 의존·추후 결정**으로
+  확인 — name=owner 이름, description=personal agent 현재 항상 NULL(채워질 수 있음, "추천
+  판단에만 필요한 정보"일 가능성 포함). (a) 우리가 채우면 bourbon-api 직접 호출 의존성
+  신설 / (b) bourbon-agent가 채움 — 우리 산출물은 양쪽에서 성립하도록 고정(§9-⑨).
