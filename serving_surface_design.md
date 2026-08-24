@@ -1,14 +1,15 @@
 # Agent 추천 API — 노출 표면(serving surface) 설계: internal-only + edge-auth 관례
 
-> **구현 상태 (rev 3.2, 2026-08-24)**: §3 델타와 §4 이디엄이 새 repo
+> **구현 상태 (rev 3.3, 2026-08-24)**: §3 델타와 §4 이디엄이 새 repo
 > `bourbon-agent-discovery-api`에 **반영됨** — `4176b0a`(k8s: label·vs 삭제·docs 게이트
 > retarget·API_TOKENS 제거), `05ec707`(app: `INTERNAL_PREFIX` 마운트·surfaces 명부·bearer
 > 토큰 층 삭제·surface 테스트 4종), `d861b5f`(§4-5 표면 밖 관례 정합: configmap·빈 secret·
-> ErrorResponse·테스트 배치·잔차). 남은 것은 §7-④(bourbon-api dispatch 등록 PR)뿐이고,
-> 그것 없이는 dev **진단 경로만** 닫혀 있다(in-cluster 직행은 registry를 타지 않는다).
+> ErrorResponse·테스트 배치·잔차). §7 열린 결정은 **전부 해소** — dispatch 등록 PR도
+> 준비됐고(bourbon-api `0eb55b6`) 순서 제약이 없다는 판단까지 §7-④에 기록했다. 미구현으로
+> 남은 것은 §4-2 항목 2(클라이언트 prefix 등가 단정)와 §4-5의 `EnvSettings` 보류 2건뿐이다.
 > 이 문서는 여전히 "무엇을 왜 그렇게 하는가"의 정본이고, 구현 상태는 이 블록만 갱신한다.
 
-> **문서 지위**: 설계 rev 3.2 (2026-08-24). 입력 = bourbon-api `docs/microservice-edge-auth.md`
+> **문서 지위**: 설계 rev 3.3 (2026-08-24). 입력 = bourbon-api `docs/microservice-edge-auth.md`
 > (관례 정본) + bourbon-topic-api의 레퍼런스 구현(2026-08-24 소스 확인) +
 > `recommendation_pipeline_design.md` rev 5.3(파이프라인 정본 — 이 문서는 그 파이프라인이
 > **어떤 표면 위에서 서빙되는가**만 소유한다).
@@ -131,7 +132,7 @@ may read one"). 따라서:
 | 호출 URL (우리 → topic-api) | `http://bourbon-topic-api/api/internal/svc/topic/...` — 같은 원리로 직행. 파이프라인 설계 §6의 base URL 계약 |
 | dev 진단 경로 | `https://dev-bourbon.xinobi.net/api/internal/svc/agent-discovery/...` — office IP만 edge gate 통과(dev). **e2e-recommend CLI가 in-process라 못 타는 인증·HTTP 층을 실제로 타는 acceptance 지점** |
 | 신원 | body `requester_user_id` 단독. `x-user-id` 금지(§1-3) |
-| docs | `INTERNAL_PREFIX` 아래, dev-only (§7-② 게이트 형태 미정) |
+| docs | `INTERNAL_PREFIX` 아래, dev-only. 게이트 = gateway IP 게이트 + oauth2-proxy SSO 이중(§7-② 해소) |
 
 ## §3 template 대비 델타 (관례 문서 step 1–5의 internal-only 적용)
 
@@ -140,7 +141,7 @@ may read one"). 따라서:
 | step | 관례 문서 | 우리 |
 |---|---|---|
 | 1. label | 붙인다 | **동일** — topic-api처럼 label 옆에 사유 주석("removing the label makes every route unauthenticated") |
-| 2. 호스트/vs 삭제 | per-service host 삭제, docs용 oauth2-proxy 유지 | 동일하게 vs 없음. oauth2-proxy는 §7-② |
+| 2. 호스트/vs 삭제 | per-service host 삭제, docs용 oauth2-proxy 유지 | 동일하게 vs 없음. oauth2-proxy는 유지·retarget(§7-② 해소) |
 | 3. dispatch 등록 | `/api/svc/agent-discovery/` 블록 | **internal 블록 1개만** PR(`/api/internal/svc/agent-discovery/`) — topic-api는 두 블록(bourbon-api `k8s/base/api-svc-dispatch.yaml:16,24` 검증됨), 우리는 하나. **Service 포트는 `name: http` 필수** — 무명 포트는 plain TCP 취급이라 L7 정책(namespace fence 포함)이 아예 안 돈다 |
 | 4. prefix 마운트 | `API_PREFIX` | `INTERNAL_PREFIX`만. docs URL도 그 아래 dev-only |
 | 5. CORS | bourbon-api ConfigMap에서 origin 목록 | **전부 생략** — 브라우저 호출자 없음. ConfigMap 참조·preflight 미들웨어 순서 규칙 모두 해당 없음 |
@@ -251,10 +252,16 @@ logger 이름을 전 모듈 `__name__`으로 통일, lifespan의 무의미한 `g
 | ① | ~~`<name>`~~ | **해소(2026-08-24, §1-5)** — repo/서비스명 `bourbon-agent-discovery-api`, `<name>` = `agent-discovery`, package `agent_discovery` |
 | ② | ~~dev docs 게이트~~ | **해소(2026-08-24, rev 3.1 — 권고대로 구현)**: `authz-oauth2-proxy.yaml`을 `dev-bourbon.xinobi.net` + internal prefix 아래 docs 4경로로 retarget해 유지(`4176b0a`). dev host는 public이므로 IP 허용 목록 하나에 기대지 않는다 |
 | ③ | ~~신규 구현의 그릇~~ | **해소(2026-08-24, §1-5)** — 새 repo scaffold. 기존 repo는 전환 완료까지 가동하는 참조용 동결, 삭제 패스 없음 |
-| ④ | dispatch PR 시점 | 등록은 bourbon-api 배포를 타므로(관례 문서 step 3), dev 첫 배포 전에 PR이 머지·배포돼 있어야 gateway 진단 경로가 열린다 |
+| ④ | ~~dispatch PR 시점~~ | **해소(2026-08-24, rev 3.3 — 오너 판단): 순서 제약 없음.** 등록 PR은 준비됨(bourbon-api `feat/dispatch-agent-discovery`, `0eb55b6` — internal 블록 1개, 404 fallback 위). 적용은 머지가 아니라 **bourbon-api의 다음 `deploy.sh <stage>`**를 탄다(자동 배포 워크플로 없음 — 검증됨). ⑴ 우리 워크로드가 없어도 안전하다: 그 prefix는 지금도 fallback 404를 받고, 등록 후 워크로드가 없으면 **404 대신 503**(Envoy에 upstream cluster 없음)이 될 뿐 다른 라우트에 영향 없다 — 단 진단 시 503의 의미가 "authorizer 불통/ready pod 0"에 "Service 부재"까지 겹친다는 점 주의. ⑵ 우리 dev 배포도 서두를 필요 없다: gateway 경로의 유일한 소비자는 진단하는 사람이고, 열어볼 값이 생기는 시점은 `/recommend` 구현 후다(지금 배포하면 health·echo만 확인된다). **별도 선행 조건**: 첫 배포 전 ECR 저장소 `bourbon/agent-discovery-api` 존재 확인(`deploy.sh`가 그 경로로 push) |
 
 ## 변경 이력
 
+- **2026-08-24 rev 3.3** — §7-④ 해소(오너 판단): **순서 제약 없음**. 등록 PR은 준비됨
+  (bourbon-api `feat/dispatch-agent-discovery` `0eb55b6`), 적용은 머지가 아니라 그쪽
+  `deploy.sh <stage>`를 탄다(자동 배포 워크플로 부재 — 검증됨). 워크로드 없이 등록해도
+  안전하나 그 prefix가 404→**503**으로 바뀐다(503 의미가 하나 더 겹침). 우리 dev 배포도
+  `/recommend` 이후로 미룬다 — gateway 경로의 소비자는 진단하는 사람뿐이므로 지금 열면
+  health·echo만 확인된다. 첫 배포의 실제 선행 조건은 ECR 저장소 존재 확인으로 이관.
 - **2026-08-24 rev 3.2** — bourbon-topic-api와 1:1 대조(§4-5 신설, 코드 `d861b5f`).
   표면 구조는 일치했고, public 표면 유무로 설명되지 않는 차이 4건을 그쪽으로 맞췄다:
   ConfigMap+`envFrom`(★`LOG_LEVEL` 기본 DEBUG가 k8s에 미설정 — 준비가 아니라 결함
