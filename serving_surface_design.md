@@ -1,6 +1,6 @@
 # Agent 추천 API — 노출 표면(serving surface) 설계: internal-only + edge-auth 관례
 
-> **문서 지위**: 설계 rev 1 (2026-08-24). 입력 = bourbon-api `docs/microservice-edge-auth.md`
+> **문서 지위**: 설계 rev 2 (2026-08-24). 입력 = bourbon-api `docs/microservice-edge-auth.md`
 > (관례 정본) + bourbon-topic-api의 레퍼런스 구현(2026-08-24 소스 확인) +
 > `recommendation_pipeline_design.md` rev 5.3(파이프라인 정본 — 이 문서는 그 파이프라인이
 > **어떤 표면 위에서 서빙되는가**만 소유한다).
@@ -16,16 +16,16 @@
 ## §0 한 페이지 요약
 
 ```
-bourbon-agent ──in-cluster 직행──▶ http://<service>/api/internal/svc/<name>/recommend
+bourbon-agent ──in-cluster 직행──▶ http://bourbon-agent-discovery-api/api/internal/svc/agent-discovery/recommend
                                      │  edge-auth 정책의 notPaths로 check skip
                                      │  (신원은 body requester_user_id — 헤더 아님)
-우리 ──in-cluster 직행──▶ http://<topic-service>/api/internal/svc/topic/...
+우리 ──in-cluster 직행──▶ http://bourbon-topic-api/api/internal/svc/topic/...
                                      │
-dev 진단(사람) ──office IP──▶ https://dev-bourbon.xinobi.net/api/internal/svc/<name>/...
+dev 진단(사람) ──office IP──▶ https://dev-bourbon.xinobi.net/api/internal/svc/agent-discovery/...
                                      (gateway edge gate 통과, dispatch registry 경유)
 ```
 
-- 모든 라우트는 `INTERNAL_PREFIX = /api/internal/svc/<name>` 아래. 예외는 root `/health` 하나.
+- 모든 라우트는 `INTERNAL_PREFIX = /api/internal/svc/agent-discovery` 아래. 예외는 root `/health` 하나.
 - pod에 edge-auth label을 **붙인다** — public 라우트가 없어도.
 - `x-user-id` 헤더는 이 서비스의 어떤 라우트도 읽지 않는다. 신원은 body의
   `requester_user_id`뿐.
@@ -75,17 +75,33 @@ may read one"). 따라서:
 구현으로 포팅할 대상**이고, "삭제"로 분류된 것(stance 파이프라인 등)은 **포팅하지 않는
 것**으로 실현된다 — 신규 구현에서는 삭제 패스가 필요 없다.
 
+### 1-5. 이름 (2026-08-24 오너 확정 — §7-①·③ 해소)
+
+- **Git repo / 배포 서비스명 = `bourbon-agent-discovery-api`** — `project-template-python`
+  기반의 **새 repo**로 시작한다(§7-③도 이 결정으로 해소).
+- dispatch `<name>` = **`agent-discovery`** → prefix `/api/internal/svc/agent-discovery`.
+- Python package = `agent_discovery`.
+- endpoint = `POST /recommend` 유지 — 호출자 계약(bourbon-agent `recommend_agents`)의 것.
+  서비스명과 라우트명이 다른 것은 topic-api와 같은 정상 패턴이다.
+- 기존 `bourbon-agent-recommendation-api`는 전환 완료까지 가동 후 archive. 이름이 달라
+  **공존(k8s Service·dispatch 충돌 없음)·컷오버(bourbon-agent client URL 교체 한 번)·롤백
+  (URL 원복)**이 리네임 없이 성립한다 — `-v2` 접미도, canonical 이름 이관 댄스도 불필요.
+- **용어 주의**: repo 이름의 "discovery"는 업계 우산 의미다 — 사용자가 몰랐던 agent를 알게
+  되는 경험 전체(search+recommendation+browse)를 가리킨다. 파이프라인 어휘의 **Discovery
+  단계**(Recommendation 단계와 직교)와는 **같은 단어·다른 주어**이므로, 문서에서 단계를
+  말할 때는 항상 "Discovery 단계"로 풀어 쓴다.
+
 ## §2 표면 계약
 
 | 항목 | 값 |
 |---|---|
-| prefix | `INTERNAL_PREFIX = "/api/internal/svc/<name>"` (`<name>`은 §7-① 미정) |
+| prefix | `INTERNAL_PREFIX = "/api/internal/svc/agent-discovery"` (§1-5 확정) |
 | 라우트 마운트 | 전 라우터를 `include_router(router, prefix=INTERNAL_PREFIX)` — **rewrite 금지**(절대 URL이 전부 깨진다, 관례 문서 step 4) |
 | health | root `/health` — kubelet이 pod 직행, prefix 밖의 유일한 라우트 |
-| public 표면 | 없음. `/api/svc/<name>` 아래 라우트 0개를 테스트로 단정(§4-2) |
-| 호출 URL (bourbon-agent → 우리) | `http://<k8s-service>/api/internal/svc/<name>/recommend` — in-cluster 직행. gateway 경유는 hop만 추가(registry는 gateway 트래픽만 라우팅) |
-| 호출 URL (우리 → topic-api) | `http://<topic-service>/api/internal/svc/topic/...` — 같은 원리로 직행. 파이프라인 설계 §6의 base URL 계약 |
-| dev 진단 경로 | `https://dev-bourbon.xinobi.net/api/internal/svc/<name>/...` — office IP만 edge gate 통과(dev). **e2e-recommend CLI가 in-process라 못 타는 인증·HTTP 층을 실제로 타는 acceptance 지점** |
+| public 표면 | 없음. `/api/svc/agent-discovery` 아래 라우트 0개를 테스트로 단정(§4-2) |
+| 호출 URL (bourbon-agent → 우리) | `http://bourbon-agent-discovery-api/api/internal/svc/agent-discovery/recommend` — in-cluster 직행. gateway 경유는 hop만 추가(registry는 gateway 트래픽만 라우팅) |
+| 호출 URL (우리 → topic-api) | `http://bourbon-topic-api/api/internal/svc/topic/...` — 같은 원리로 직행. 파이프라인 설계 §6의 base URL 계약 |
+| dev 진단 경로 | `https://dev-bourbon.xinobi.net/api/internal/svc/agent-discovery/...` — office IP만 edge gate 통과(dev). **e2e-recommend CLI가 in-process라 못 타는 인증·HTTP 층을 실제로 타는 acceptance 지점** |
 | 신원 | body `requester_user_id` 단독. `x-user-id` 금지(§1-3) |
 | docs | `INTERNAL_PREFIX` 아래, dev-only (§7-② 게이트 형태 미정) |
 
@@ -97,7 +113,7 @@ may read one"). 따라서:
 |---|---|---|
 | 1. label | 붙인다 | **동일** — topic-api처럼 label 옆에 사유 주석("removing the label makes every route unauthenticated") |
 | 2. 호스트/vs 삭제 | per-service host 삭제, docs용 oauth2-proxy 유지 | 동일하게 vs 없음. oauth2-proxy는 §7-② |
-| 3. dispatch 등록 | `/api/svc/<name>/` 블록 | **internal 블록 1개만** PR(`/api/internal/svc/<name>/`) — topic-api는 두 블록(bourbon-api `k8s/base/api-svc-dispatch.yaml:16,24` 검증됨), 우리는 하나. **Service 포트는 `name: http` 필수** — 무명 포트는 plain TCP 취급이라 L7 정책(namespace fence 포함)이 아예 안 돈다 |
+| 3. dispatch 등록 | `/api/svc/agent-discovery/` 블록 | **internal 블록 1개만** PR(`/api/internal/svc/agent-discovery/`) — topic-api는 두 블록(bourbon-api `k8s/base/api-svc-dispatch.yaml:16,24` 검증됨), 우리는 하나. **Service 포트는 `name: http` 필수** — 무명 포트는 plain TCP 취급이라 L7 정책(namespace fence 포함)이 아예 안 돈다 |
 | 4. prefix 마운트 | `API_PREFIX` | `INTERNAL_PREFIX`만. docs URL도 그 아래 dev-only |
 | 5. CORS | bourbon-api ConfigMap에서 origin 목록 | **전부 생략** — 브라우저 호출자 없음. ConfigMap 참조·preflight 미들웨어 순서 규칙 모두 해당 없음 |
 
@@ -164,13 +180,17 @@ directory's requests") + 명시 테스트(`test_internal_search_takes_no_caller_
 
 | # | 항목 | 내용 |
 |---|---|---|
-| ① | `<name>` | dispatch prefix·정책 경로·상수에 다 들어가는 짧은 이름. topic-api는 서비스명(`bourbon-topic-api`)과 별개로 `topic`을 쓴다 — 우리 후보: `agent-recommendation`(명시적) vs `recommendation`(짧음). k8s Service 이름과는 별개 |
+| ① | ~~`<name>`~~ | **해소(2026-08-24, §1-5)** — repo/서비스명 `bourbon-agent-discovery-api`, `<name>` = `agent-discovery`, package `agent_discovery` |
 | ② | dev docs 게이트 | internal prefix 아래 docs는 dev에서 edge gate(office IP)가 이미 막는다. 기존 `authz-oauth2-proxy.yaml`을 internal 경로로 retarget해 SSO 이중 게이트로 둘지, 제거할지. **권고 = 유지·retarget**: dev host는 public이고(관례 문서의 httpbin 경고와 같은 이유), IP 허용 목록 하나에 기대지 않는다 |
-| ③ | 신규 구현의 그릇 | 신규 template 시작이 **새 repo scaffold**인지 **기존 repo를 template 구조로 재편**인지. 새 repo면 기존 repo는 참조용 동결; 재편이면 삭제 패스가 부활한다. 구현 착수 전 확정 필요 |
+| ③ | ~~신규 구현의 그릇~~ | **해소(2026-08-24, §1-5)** — 새 repo scaffold. 기존 repo는 전환 완료까지 가동하는 참조용 동결, 삭제 패스 없음 |
 | ④ | dispatch PR 시점 | 등록은 bourbon-api 배포를 타므로(관례 문서 step 3), dev 첫 배포 전에 PR이 머지·배포돼 있어야 gateway 진단 경로가 열린다 |
 
 ## 변경 이력
 
+- **2026-08-24 rev 2** — §7-①·③ 해소(오너 확정): repo = **`bourbon-agent-discovery-api`**
+  (새 repo scaffold), `<name>` = `agent-discovery`, package = `agent_discovery`, endpoint =
+  `/recommend` 유지, 기존 repo는 전환 후 archive. §1-5 신설(공존·컷오버 근거 + "discovery"
+  용어의 우산 의미 vs Discovery 단계 구분 명시), 본문 `<name>` placeholder 전부 실명으로 치환.
 - **2026-08-24 rev 1** — 최초 작성. 입력 = bourbon-api `docs/microservice-edge-auth.md` +
   topic-api 레퍼런스 구현 소스 확인(main.py 표면 상수·surfaces 명부·surface boundary
   테스트·identity dependency·k8s label/port·dispatch 두 블록) + 오너 결정 2건(internal-only,
