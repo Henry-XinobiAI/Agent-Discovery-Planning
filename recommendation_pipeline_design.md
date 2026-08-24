@@ -1,6 +1,6 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 정본 (rev 5.3, 외부 리뷰 2회 반영). 입력 = `topic_api_analysis.md` **rev 7**
+> **문서 지위**: 설계 정본 (rev 5.4, 외부 리뷰 2회 반영). 입력 = `topic_api_analysis.md` **rev 7**
 > (2026-08-24, topic-api HEAD `80c650f`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
@@ -479,6 +479,46 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 
 ---
 
+## §10 구조 원칙 — 파이프라인은 조립, 단계는 부품 (rev 5.4)
+
+이 문서의 S1–S6은 **현재 목표하는 추천 형태 하나**의 파이프라인이다. 새로운 추천 형태
+(로드맵상 후보: for/against, push 모드, orthogonal 서빙)가 들어오면 다른 파이프라인을 탈 수
+있고, 그때 단계 일부는 공유될 것이다. 아직 어느 것도 결정되지 않았으므로, 신규 구현
+(`bourbon-agent-discovery-api`)은 **그 가능성이 싸게 열리는 구조까지만** 지금 만들고
+그 이상의 추상화는 만들지 않는다.
+
+**규칙 (결정):**
+
+1. **단계 = typed 입출력의 순수 부품.** §5의 단계별 산출물 타입이 곧 모듈 경계다 —
+   단계끼리 내부를 import하지 않고 산출물 타입으로만 대화한다.
+2. **파이프라인 = 명시적 조립 함수 하나.** 흐름 제어(재grounding 1회, fail-closed 분기,
+   §4 귀속 판정)는 전부 조립 함수에 두고 단계 안에 흩어놓지 않는다. 새 추천 형태 =
+   `pipelines/`에 조립 함수 하나 추가.
+3. **wire 계약은 파이프라인 소속.** S0 요청·S6 응답 모델은 조립 쪽에 붙이고 단계 산출물
+   타입과 분리한다 — 새 파이프라인이 다른 wire를 가져도 부품이 흔들리지 않는다.
+4. **배선은 composition root에서만**(기존 phase5 규율 승계). provider 주입도 파이프라인
+   단위로 한다.
+5. **decision log·계측은 단계 키로** 남긴다 — 새 파이프라인이 관측을 공짜로 얻는다.
+
+```
+agent_discovery/
+  stages/          # 부품: expansion, grounding, retrieval, merge, ranking, assembly
+  pipelines/       # 조립: topic_recommend.py (= 이 문서의 S1–S6 배선)
+  providers/       # topic-api client, LLM 등 외부 의존
+api/               # wire ↔ domain 변환만 — 단계는 FastAPI를 모른다(기존 규율 승계)
+```
+
+**안 하는 것 (anti-goal, 결정):** pipeline registry · 추상 `Pipeline` base class · 추천
+형태에 대한 strategy dispatch · wire의 `pipeline_id`/`recommendation_type` 필드 · config로
+단계 순서를 조립하는 DAG. 두 번째 파이프라인이 실물로 없을 때 만든 추상화는 변주 축을
+틀리게 찍는다("예약 hook은 같은 질문이 유지될 때만 additive" — stance normalizer를 구현
+후 제거한 전례).
+
+**재검토 조건:** 이 절의 결정은 "두 번째 파이프라인이 아직 없다"는 전제 위에서만 유효하다.
+두 번째 추천 형태가 **제품으로 확정되는 시점**에 이 절을 다시 열어, 실물 두 개를 놓고
+공유 부품 목록과 분기 지점을 다시 긋는다. 그 전에 "미래 대비"를 이유로 한 선제 추상화는
+이 절이 거절 근거다.
+
 ## 변경 이력
 
 - **2026-08-24 rev 1** — 최초 작성. 입력 = `topic_api_analysis.md` rev 5.1. 큰 그림
@@ -525,6 +565,11 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 - **2026-08-24 rev 5.1** — 지위 갱신(설계 내용 불변). `persona_topic_search_design.md`(rev 14)를
   `archive/`로 보내며 이 문서를 정본으로 승격. 헤더의 입력 표기를 분석 rev 7로 동기화(rev 5와
   같은 커밋 `93e819d`에서 함께 개정된 문서라 내용상 이미 rev 7 기준이었다).
+- **2026-08-24 rev 5.4** — §10 신설(구조 원칙): 파이프라인=명시적 조립 함수·단계=typed
+  순수 부품·wire는 파이프라인 소속·composition root 배선·단계 키 계측. anti-goal(registry·
+  추상 base·wire 형태 필드·config DAG)과 재검토 조건(두 번째 추천 형태의 제품 확정 시)을
+  함께 잠금 — 새로운 추천 형태가 다른 파이프라인을 탈 가능성을 싸게 열어두되 프레임워크는
+  만들지 않는다.
 - **2026-08-24 rev 5.3** — 노출 표면 소유권 분리: internal-only·edge-auth 관례 채택·배포
   델타는 신설 `serving_surface_design.md`로. 구현을 `project-template-python`에서 신규
   시작한다는 오너 결정에 따라 §7 처분표를 "포팅한다/포팅하지 않는다"로 재해석(범위 문구의
