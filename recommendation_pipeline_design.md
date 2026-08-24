@@ -55,7 +55,7 @@ rev 14에서 승계한 규율(분석 §9의 승계 목록, 이 파이프라인�
 |---|---|
 | 실패 의미 3분기 (422 / 200+empty / 503) + 오귀속 금지 | §4 — 판정 지점을 단계에 고정 |
 | ordering = lexicographic 계약, scalar 단일 점수 노출 금지 | S5 |
-| self-exclusion 서버측 원칙 (지금은 우리 층) | S4 |
+| self-exclusion·제외 집합 = **우리 후처리로 확정**(2026-08-24 결정 — countable 목록·fan-out 100이라 오버헤드 무시 가능) | S4 |
 | 즐겨찾기 = tiebreak only, gate 우회 금지 | S5 |
 | popularity prior 금지 | S5 (RRF는 topic별 순위 융합 — 전역 인기 항 없음) |
 | 판정 입력 텍스트 전부 비신뢰 | S1·S2의 LLM 프롬프트 (카탈로그 라벨·유저 서술 모두) |
@@ -187,8 +187,10 @@ topic-api 5xx/timeout → `unavailable` → **503**.
 - 불완전성 플래그: `exhaustive`, `descendants_dropped`, `topics_dropped`
 
 **topic-api 호출**: `GET /api/internal/svc/topic/topics/{topic_id}/users?limit=100&visibility=public`
-× 확정 topic 수(≤3). (id 리스트 라우트가 생기면 — 분석 §11-16 — 이 단계만 1호출로 교체된다.
-그때까지 병합은 S4의 우리 RRF.)
+× 확정 topic 수(≤3). (id 리스트 라우트는 **A단계에서 쓰지 않기로 재평가** — 분석 §11-16
+rev 6: 다중 id 병합은 그들 score를 cross-topic 가중에 재유입시키고, 병합 후 top-100 컷이라
+per-topic 100×N보다 후보 풀이 좁으며, rollup 경로를 강제한다. per-topic fan-out + S4 RRF가
+의미·후보 풀·비용·exhaustive 전부에서 우월. 재검토 조건은 분석 §11-16.)
 
 **산출물**: `TopicCandidates { topic_id, users: [...위 보존 필드...],
 flags: {exhaustive, descendants_dropped, topics_dropped}, was_rollup: bool }`
@@ -216,9 +218,10 @@ flags: {exhaustive, descendants_dropped, topics_dropped}, was_rollup: bool }`
 3. **exclusion — 집합 인터페이스로 설계**(협의 2026-08-24 반영): 제외는 단일 id가 아니라
    `excluded: set[UUID]`로 받는다. 지금 채워지는 것은 `{requester_user_id}` 하나지만,
    in-room 제외가 defer에서 풀려 bourbon-agent가 `room_members`를 보내게 되면 **같은
-   집합에 합류**시키는 것으로 끝난다 — 새 단계·새 분기 없이. fan-out이 100이라 cap 손실
-   문제는 실질 완화되지만 서버측 `exclude_user_ids`(분석 §11-5)는 계속 요청하며, 그
-   파라미터가 생기면 이 집합을 그대로 넘긴다.
+   집합에 합류**시키는 것으로 끝난다 — 새 단계·새 분기 없이. **서버측 `exclude_user_ids`
+   요청은 철회**(2026-08-24 결정, 분석 §11-5 철회): fan-out 100 대비 최종 max_results 3이라
+   cap 손실 논거가 소멸했고, 제외 목록은 countable이라 후처리 오버헤드가 무시 가능하다.
+   제외는 전적으로 이 단계(우리 층)의 일이다.
 4. **eligibility**: `EligibilityProvider.check`(현 AllowAll stub 유지, Q12).
 
 **topic-api 호출**: 없음.
@@ -360,7 +363,7 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 | 2 병합 규칙·대표 topic | S4 RRF(순위만) · S6 대표=contribution 최대 |
 | 3 ordering 키 식 | **부분** — 슬롯 계약만(S5). 식은 §11-18 확정 후 |
 | 4 실패 3분기 판정 지점 | §4 (probe 일부만 0건 = 나머지로 진행, 전부 0건만 422) |
-| 5 eligibility 결합 지점 | S4 사후 필터 + fan-out 100으로 cap 손실 완화 (서버측 파라미터는 계속 요청) |
+| 5 eligibility 결합 지점 | S4 사후 필터 — exclusion과 함께 전부 우리 후처리로 확정(서버측 파라미터 요청 철회, 분석 §11-5) |
 | 6 rerank 진입 조건 | **미정** — C단계 dormant 슬롯만 (§9-⑥와 별개) |
 | 7 어댑터 경계 | §6 |
 | 8 캐시 | §6 — /search/topics만, 짧은 TTL |
@@ -416,3 +419,9 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
   확인 — name=owner 이름, description=personal agent 현재 항상 NULL(채워질 수 있음, "추천
   판단에만 필요한 정보"일 가능성 포함). (a) 우리가 채우면 bourbon-api 직접 호출 의존성
   신설 / (b) bourbon-agent가 채움 — 우리 산출물은 양쪽에서 성립하도록 고정(§9-⑨).
+- **2026-08-24 rev 4** — exclusion·라우트 결정 2건. ⑴ **`exclude_user_ids` 서버측 요청 철회**
+  (사용자 결정): 제외는 S4 우리 후처리로 확정 — fan-out 100·max_results 3이라 cap 손실
+  논거 소멸, 제외 목록은 countable. 집합 인터페이스(rev 3)는 그대로. ⑵ **id 리스트 랭킹
+  라우트는 A단계 불사용으로 재평가**(분석 §11-16 rev 6과 동기화): 그들 score의 cross-topic
+  재유입·병합 후 컷·rollup 경로 강제 — per-topic fan-out + RRF 유지, S3의 "생기면 교체"
+  문구 삭제.
