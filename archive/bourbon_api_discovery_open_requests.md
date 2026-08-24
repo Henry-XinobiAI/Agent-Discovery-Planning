@@ -1,5 +1,14 @@
 # bourbon-api 요청 목록 — Agent Discovery 미해결 항목
 
+> **📦 종결·보관 (2026-08-24) — 미발신 초안인 채 종결.** 두 항목 모두 요청 발신 없이 닫혔다.
+> **B1**(owner→agent uuid5 파생의 producer-side pin): **발신하지 않기로 결정**(오너 확인) — 파생은
+> bourbon-api가 지정한 고정 계약이고 기존 memory-api 체인 버전도 같은 방식으로 구현했다. 변환
+> 규칙의 명문화(namespace 상수·known vector·세 repo 재검증)는 `../recommendation_pipeline_design.md`
+> S6-0이 갖는다. **B2**(신뢰된 requester identity): 호출자가 bourbon-api가 아니라 **bourbon-agent**로
+> 바뀐 새 wire 계약에서 `requester_user_id`로 들어온다 — 신뢰 규율(handler가 task payload에서 채움,
+> 모델 공급 신원 비신뢰)은 같은 문서 §2. 본문의 `persona_topic_search_design.md` 참조는 같은 날
+> 함께 보관된 문서다(같은 디렉토리).
+
 - **상태**: DRAFT rev 1 (2026-07-28) — 발신 전 오너 확인 대기.
 - **요청 주체**: Agent Discovery (`bourbon-agent-recommendation-api`)
 - **대상**: `bourbon-api`

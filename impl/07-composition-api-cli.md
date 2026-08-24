@@ -187,8 +187,10 @@ finally:
 - **phantom agent 처리 정책** — fail loud vs 후보 drop, 미정.
 - **memory-api R1–R6** — 비활성 owner가 후보로 남는 문제, join 완전성, stale competence. R1은 "비프로덕션
   tenant는 seed 데이터뿐"이라는 전제로 연기됐고, **그 전제는 프로덕션으로 확장되지 않습니다.**
-- **producer-side derivation pin (B1)** — 값 일치는 bourbon-api 소스 복사로 확인됐고 규칙도 불변으로
-  확정돼, correctness unknown이 아니라 **drift 보험**입니다. 보상 탐지기가 없어서 목록에 남습니다.
+- **producer-side derivation pin (구 B1)** — **종결(2026-08-24, 오너 결정)**. 값 일치는
+  bourbon-api 소스 복사로 확인됐고 규칙도 불변으로 확정. pin 요청은 발신하지 않기로 결정 —
+  파생은 bourbon-api 지정 고정 계약이며, 명문화(namespace 상수·known vector·세 repo 재검증)는
+  `../recommendation_pipeline_design.md` S6-0. drift 보험 미보유는 알려진 잔여 사실로만 남습니다.
 
 **문서 경고는 config 한 줄을 못 막으므로** 현재 코드는 client가 하나라도 만들어지기 **전에**
 `ValueError`로 부팅을 차단합니다(그래서 막힌 부팅은 치울 자원이 없습니다). 예외 타입은 Guard 0/1과 같은

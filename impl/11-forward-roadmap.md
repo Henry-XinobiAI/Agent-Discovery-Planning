@@ -213,8 +213,8 @@ Alpha가 결정성을 위해 우회했던 [LLM 레이어](08-llm-layer.md)를 �
 >
 > | 게이트 | 무엇이 없나 | 소유 |
 > |---|---|---|
-> | requester self-exclusion | **구현·시행됨**(코드 PR #34) — pre-gate 단계가 요청자 agent를 제거하고 `requester_owner_id` 누락은 422로 거부. 남은 건 **호출자 적용 + 비프로덕션 acceptance**이며, 실배포 호출자가 0개라 마이그레이션 대상은 없음 | discovery + bourbon-api (요청 B2: 신뢰 가능한 requester identity 전달) |
-> | producer-side derivation pin | discovery가 UUID5 파생을 **복제**했고 upstream drift를 탐지 못 함 | bourbon-api (요청 B1) |
+> | requester self-exclusion | **구현·시행됨**(코드 PR #34) — pre-gate 단계가 요청자 agent를 제거하고 `requester_owner_id` 누락은 422로 거부. 남은 건 **호출자 적용 + 비프로덕션 acceptance**이며, 실배포 호출자가 0개라 마이그레이션 대상은 없음 | discovery + 호출자 (구 요청 B2는 2026-08-24 종결 — 새 체인에서는 wire 계약의 `requester_user_id`를 bourbon-agent가 task payload에서 채움) |
+> | producer-side derivation pin | **종결(2026-08-24, 오너 결정)** — pin 요청은 발신하지 않기로 결정. 파생은 bourbon-api 지정 고정 계약(명문화 `../recommendation_pipeline_design.md` S6-0); upstream drift 미탐지는 알려진 잔여 사실 | 종결 — 구 요청 B1, `../archive/bourbon_api_discovery_open_requests.md` |
 > | phantom agent 정책 | 파생 agent ID가 실제 카탈로그에 있는지 미확인, 없을 때 처리(loud-fail vs drop) 미정 | 미정 |
 > | memory-api R1–R6 | 비활성 owner가 후보로 남음(R1) 외 5건 | memory-api |
 >

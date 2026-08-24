@@ -107,8 +107,10 @@ routing이 먼저 정렬된 뒤, lifespan turn-on 배선 자체가 discovery 파
 - `AllowAllEligibilityProvider`는 stance 단계를 포함해 **승인된 임시 production 정책**입니다. real
   eligibility는 turn-on 블로커에서 **제외**됐고(Open Beta 몫), 그래서 composition root에도 이걸 막는
   가드가 없습니다.
-- `DerivedOwnerIdentityResolver` 쪽만 게이트를 붙들고 있습니다 — producer-side pin 부재(B1)와
-  phantom-agent 검증·정책 미정 둘 다 이 파생 복제에서 나옵니다.
+- `DerivedOwnerIdentityResolver` 쪽만 게이트를 붙들고 있습니다 — phantom-agent 검증·정책
+  미정이 이 파생 복제에서 나옵니다. (구 B1 producer-side pin 요청은 **2026-08-24 종결**:
+  발신하지 않기로 결정 — 파생은 bourbon-api 지정 고정 계약, 명문화는
+  `../recommendation_pipeline_design.md` S6-0.)
 
 ### real edge는 provider 하나가 아니라 **세 겹**입니다
 
@@ -132,7 +134,9 @@ GET /{prefix}/personal/entities/{qid}     (owner_id 생략 → 전 owner = cross
 - **identity 해소가 데코레이터로 분리된 이유** — projection provider는 identity를 아예 모릅니다.
   파생 규칙이 bourbon-api 소유라 언젠가 실제 조회로 갈아끼워야 하고, resolver를 주입받게 해두면 그게
   배선 변경으로 끝납니다. 지금 resolver는 bourbon-api의 UUID5 파생을 **복제**하고 알려진 vector로 고정한
-  것이지, upstream drift를 탐지하지는 **못합니다**(turn-on 요청 B1).
+  것이지, upstream drift를 탐지하지는 **못합니다**(구 B1 — 2026-08-24 종결: producer-side pin
+  요청은 발신하지 않기로 결정, 파생은 bourbon-api 지정 고정 계약으로 취급.
+  `../recommendation_pipeline_design.md` S6-0).
 - **exact-mapping 강제** — 누락·초과·충돌·invalid가 전부 loud-fail(`UnresolvedOwnerIdentityError`).
   resolver 장애를 "등록 안 된 owner"로 오해하지 않기 위해서입니다.
 - **one-owner/QID 불변식은 두 겹 모두에서 재확인** — Protocol이 임의의 projection source를 허용하므로

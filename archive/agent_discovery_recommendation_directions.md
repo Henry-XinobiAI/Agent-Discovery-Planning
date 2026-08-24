@@ -1,6 +1,6 @@
 # Agent Discovery & Recommendation - 방향 정리 (working base)
 
-> **📦 보관됨 (2026-08-20) — superseded.** 이 문서가 전제한 그림 — `Agent_Memory_Vision.md`의 4계층 + **Wikidata anchor 정렬**, need 6유형, stance descriptor, memory-api 데이터 소스 — 은 2026-08-19 아키텍처 재변경으로 폐기됐다. **전방 방향의 정본은 `../persona_topic_search_design.md`**(1차 = "이 topic을 가장 잘 아는 agent" 단일 추천 유형; need 체계·stance는 2차 재설계 — 그쪽 Q8). 전환 전까지 가동되는 현행 shipped 시스템의 구현 계약은 계속 `../impl/`이 소유하며, 이 문서는 그 시스템의 설계 근거 **기록**으로만 남는다.
+> **📦 보관됨 (2026-08-20) — superseded.** 이 문서가 전제한 그림 — `Agent_Memory_Vision.md`의 4계층 + **Wikidata anchor 정렬**, need 6유형, stance descriptor, memory-api 데이터 소스 — 은 2026-08-19 아키텍처 재변경으로 폐기됐다. **전방 방향의 정본은 `../recommendation_pipeline_design.md`**(2026-08-24; 그 앞 3차 프레이밍 기록은 `persona_topic_search_design.md` — 1차 = "이 topic을 가장 잘 아는 agent" 단일 추천 유형; need 체계·stance는 2차 재설계 — 그쪽 Q8). 전환 전까지 가동되는 현행 shipped 시스템의 구현 계약은 계속 `../impl/`이 소유하며, 이 문서는 그 시스템의 설계 근거 **기록**으로만 남는다.
 
 > 이 문서는 Agent Discovery & Recommendation의 설계 기준 베이스다. 아직 확정 스펙은 아니며, 단계별(Alpha/Open Beta) 범위와 컴포넌트 간 계약을 맞추기 위한 working document다.
 >
