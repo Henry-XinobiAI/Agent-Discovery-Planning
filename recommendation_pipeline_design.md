@@ -1,8 +1,9 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 초안 (rev 1, 리뷰 대기). 입력 = `topic_api_analysis.md` **rev 5.1**
-> (2026-08-24, topic-api HEAD `80c650f`). 이 문서가 확정되면
-> `persona_topic_search_design.md`(rev 14)를 대체하는 새 정본이 된다.
+> **문서 지위**: 설계 초안 (rev 2, 리뷰 진행 중). 입력 = `topic_api_analysis.md` **rev 5.1**
+> (2026-08-24, topic-api HEAD `80c650f`) + bourbon-agent의 기왕 계약
+> (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
+> 이 문서가 확정되면 `persona_topic_search_design.md`(rev 14)를 대체하는 새 정본이 된다.
 >
 > **범위**: 큰 그림의 파이프라인 — bourbon-agent의 요청을 받아 topic-api의 어느 endpoint에서
 > 어떤 값을 가져와 추천 소스로 쓰는지, 각 단계의 동작·흐름·산출물. 구현 상세(코드 배치,
@@ -17,9 +18,9 @@
 
 ```
 bourbon-agent (recommend_agents tool)
-   │  POST /recommend  {topic_text, lang, limit, requester_owner_id, …}
+   │  POST /recommend  {topic(en canonical), context, max_results, requester_user_id, room_id}
    ▼
-S1 Expansion        자유 텍스트 → probe 목록 (작은 LLM 1회, 규칙 R1–R7)
+S1 Expansion        topic 원문 = 기본 probe + topic·context 기반 확장 (작은 LLM 1회, R1–R7)
    ▼                산출물: ExpansionResult
 S2 Grounding        probe별 GET …/search/topics → is_match 트리 → 선별 → topic_id 1~3개 확정
    ▼                산출물: GroundingResult (outcome 4종)          [0건 → 422]
@@ -71,21 +72,29 @@ read-time 판정 gate 없음(C단계 rerank는 dormant 슬롯).
 
 ## §2 S0 — 요청 계약 (bourbon-agent → 우리)
 
-현행 `Query`(코드 repo `discovery/structs/recommend.py`, 검증됨)에서 출발해 두 필드를 뺀다:
+`결정`(rev 2): **wire를 bourbon-agent가 이미 잡아놓은 계약에 맞춘다** — 그쪽 mock client가
+이 계약을 지키고 있고 "real API가 생기면 tool 배선은 그대로, client 구현만 교체"가 명시
+의도다(`recommendation/client.py` docstring, 검증됨). 어차피 우리 wire는 need_type·proposition
+삭제로 깨지므로, 필드명까지 옮기는 비용이 지금이 가장 싸다.
 
-| 필드 | 처분 | 근거 |
+| 필드 (bourbon-agent 계약) | 의미·우리 단계 | 비고 |
 |---|---|---|
-| `topic_text` (min 1) | **유지** — S1의 입력 | |
-| `need_type` | **삭제** | 1차 유형 단일화(분석 §13-1, rev 14 폐기 목록) |
-| `proposition` | **삭제** | stance 파이프라인 폐기 |
-| `lang` (기본 ko) | **유지** — S6에서 라벨 언어 선택에 사용 | internal 응답은 언어 맵이라 선택이 우리 몫(분석 §1.2) |
-| `limit` (1–50, 기본 10) | **유지** — 최종 응답 개수. S3의 fan-out limit(100)과 무관 | |
-| `eligibility_context` | **유지** — S4의 EligibilityProvider 입력 | Q12 stub 유지 |
-| `context_messages` | **유지(선택)** — S1 expansion의 보조 문맥 | 원문은 파이프라인에 비전달(기존 규율) |
-| `requester_owner_id` | **유지** — S4 self-exclusion의 대상 | real-edge 배포는 필수(기존 계약) |
+| `topic: str` | **en canonical noun phrase 기본** — S1의 기본 probe이자 확장의 축 | 모델이 추출·번역. tool 스키마 설명에 "English canonical noun phrase" 명시(그쪽 프롬프트 1줄). 근거: en label 2,605/2,605(100%)·alias 77%가 라틴·topic-api 자신의 extractor도 query_phrases를 영어 한정으로 못 박음(분석 §1.5) — 전부 실측/검증됨 |
+| `context: str \| None` | S1 확장의 보조 문맥 (단일 문자열) | 구 context_messages(리스트)를 대체. 원문은 S1 밖으로 비전달(기존 규율 유지) |
+| `max_results: int = 3` | 최종 응답 개수 (구 limit) | 모델이 못 고름 — 그쪽 handler가 고정. S3 fan-out limit(100)과 무관 |
+| `requester_user_id: UUID` | S4 self-exclusion 대상 (구 requester_owner_id) | handler가 task payload에서 채움 — 모델 공급 신원 비신뢰(그쪽 규율, 우리 규율과 일치) |
+| `room_id: UUID` | 지금은 로깅만, 미래 in-room 제외 입력 | 구 설계의 dormant 예비 필드가 실물로 옴 |
 
-`결정`: 요청 wire의 이름·모양은 위 삭제 2건 외 바꾸지 않는다 — bourbon-agent 쪽 변경을
-최소화한다. 삭제 2건은 breaking이므로 스키마 버전 표기와 함께 bourbon-agent에 통지.
+**삭제**: `need_type`·`proposition`(1차 유형 단일화·stance 폐기), **`lang`**(불필요해짐 —
+S6에서 matched_topics에 ko·en 라벨을 병기해 보내면 최종 발화는 bourbon-agent 모델이 대화
+언어로 렌더한다). `eligibility_context`는 wire에서 빼고 우리 내부에서 room_id·requester로
+구성(Q12 stub 유지).
+
+**응답 쪽 간극 — 협의 필요(§9-⑨)**: 그들의 `RecommendedAgent`는 렌더된 agent 카드
+`{id, name, description, expertise[], match_reason}`를 기대하는데 agent의 name/description은
+우리 데이터가 아니다. 제안: **hydration은 bourbon-agent가 id로 수행**(agent 프로필 소유자가
+그쪽), 우리는 `id`(owner) + `expertise` 재료(matched topic 라벨들) + `match_reason` 재료
+(대표 topic·contribution)를 보낸다.
 
 ---
 
@@ -94,25 +103,41 @@ read-time 판정 gate 없음(C단계 rerank는 dormant 슬롯).
 각 단계는 `동작 → topic-api 호출 → 산출물 → 실패 → 계측` 순으로 쓴다. 산출물 타입 이름은
 제안이며 코드 배치는 구현 계획의 몫.
 
-### S1 Expansion — 자유 텍스트를 probe로
+### S1 Expansion — topic을 축으로 probe 만들기
 
-**동작**: `topic_text`(+선택적으로 `context_messages` 요약)를 작은 LLM 1회에 넣어
-**probe 목록**을 만든다. 프롬프트 제약은 분석 §10-2의 R1–R7을 그대로 옮긴다:
+**동작** (rev 2 재서술):
 
-- 명사구만, 긴 형태부터 점진 축소(R1), 조사·활용 제거(R2)
-- ko·en 병렬 생성 + 한자어 동의어(R3) — 같은 개념의 언어 변형은 한 그룹으로 묶어 귀속 유지
-- "Wikidata 항목명처럼 써라"(R4)
-- 최소 길이: 영문 4자+/한글 2자+(R5), 공백 변형 생성 금지(R6)
-- probe 수 상한: **6** (개념 최대 3 × 언어 최대 2 — `열린 결정` ②)
+1. **`topic` 원문은 항상 probe다** — LLM 산출과 무관하게 probe 목록에 무조건 포함한다.
+   topic이 en canonical로 오는 계약(§2)이므로 원문 자체가 이미 좋은 probe이고, LLM 실패
+   fallback과 같은 경로가 된다(별도 fallback 분기 불필요).
+2. 작은 LLM 1회가 **`topic` + `context`**를 입력으로 확장 probe를 만든다. context는 topic의
+   중의성 해소와 구체화에만 쓴다(예: topic "python" + context가 뱀 이야기면 동물 쪽으로).
+3. **프롬프트에 topic-api가 topic을 만들고 매핑하는 방식을 설명 블록으로 내장한다** —
+   규칙을 아는 자만 쓸 수 있는 레버(분석 §2.1)를 LLM에게 그대로 준다:
+   - 카탈로그 = 큐레이션된 Wikidata 항목 집합. 각 topic은 ko/en/ja label + Wikidata alias
+     (≤50, 77%가 영어)를 가진다
+   - 매칭 = 정규화(소문자화+공백 제거) 후 **probe가 label/alias의 substring**이어야 한다 —
+     probe가 label보다 길면 절대 못 맞는다
+   - 관련도 순위 없음·매치 캡 20 — 짧고 범용인 probe는 노이즈로 캡을 채운다
+   - 따라서: Wikidata 항목명처럼 쓸 것(R4), 명사구만·긴 형태부터 축소(R1), 조사·활용
+     제거(R2), 영문 4자+/한글 2자+(R5), 공백 변형 금지(R6)
+   이 설명은 정적 프롬프트로 안전하다 — 매칭 **규칙**은 안정적이고 배포마다 움직이는 것은
+   **어휘**뿐이다(분석 §2.1).
+4. **언어 배분 = en 우선·ko 보조**(R3 재서술, 실측 근거): en ⊇ ko가 다수지만 12쌍 중 4쌍은
+   ko가 en이 놓치는 topic을 잡았다(hiking 0 vs 등산 2, cooking, investment, 기계학습 —
+   실물 카탈로그 실측). probe는 인메모리 검색+캐시라 한계 비용이 0에 가까우므로 ko를
+   버리지 않는다. 상한 6 = **원문 1 + en 확장 ≤3 + ko 변형 ≤2**, 결과는 S2에서 qid union.
 
 **topic-api 호출**: 없음 (LLM proxy만).
 
-**산출물**: `ExpansionResult { probes: [{text, lang, concept_group, rank}], source: llm | fallback }`
+**산출물**: `ExpansionResult { probes: [{text, lang, concept_group, rank,
+origin: verbatim | llm}], degraded: bool }` — 원문 probe는 `origin=verbatim`.
 
-**실패**: LLM 실패/timeout → **fallback = 정규화한 원문 1 probe**. 원문이 길면 S2에서 0건이
-나고 422로 흐른다 — 이것이 올바른 의미다(expansion 실패를 500으로 오귀속하지 않는다).
+**실패**: LLM 실패/timeout → probe = 원문 1개로 진행(`degraded=true`). 원문마저 0건이면
+S2에서 422로 흐른다 — expansion 실패를 500으로 오귀속하지 않는다.
 
-**계측**: probe 수 분포, LLM 지연, fallback 비율.
+**계측**: probe 수 분포, 언어별 히트 기여(en/ko probe 각각이 확정 topic을 몇 번 맞췄나 —
+배분 6=1+3+2의 조정 근거), LLM 지연, degraded 비율.
 
 ### S2 Grounding — probe를 topic_id로
 
@@ -124,8 +149,8 @@ read-time 판정 gate 없음(C단계 rerank는 dormant 슬롯).
 
 1. **rule pass**: probe별 매치 수가 캡(20)에 닿았으면 그 probe의 매치는 신뢰 하향(분석 §2.1
    `ai` 사례 — 캡 도달은 노이즈 신호). exact-label 일치(정규화 기준 라벨==probe)는 신뢰 상향.
-2. **LLM rerank 1회**: 후보 topic들의 {labels, is_match 트리의 조상 문맥}을 주고 `topic_text`
-   원문과의 관련도로 상위 1~3개 선별. **exact-label winner 명시 가드** 승계(기존
+2. **LLM rerank 1회**: 후보 topic들의 {labels, is_match 트리의 조상 문맥}을 주고 `topic`
+   원문(+context)과의 관련도로 상위 1~3개 선별. **exact-label winner 명시 가드** 승계(기존
    grounding-mode 규율) — exact 일치가 있으면 LLM이 뒤집지 못한다.
    (`열린 결정` ⑥: A단계 초기에 이 LLM 호출을 켤지, rule pass만으로 시작할지.)
 
@@ -184,7 +209,7 @@ flags: {exhaustive, descendants_dropped, topics_dropped}, was_rollup: bool }`
    여러 topic에 걸린 owner가 자연히 위로 온다.
 2. **evidence 병합**: owner별로 topic마다 {topic_id, contribution, distance, score_detail?,
    descriptions?}를 모은다 — S6의 재료.
-3. **self-exclusion**: `requester_owner_id` 제거(기존 구현 승계). fan-out이 100이라 cap 손실
+3. **self-exclusion**: `requester_user_id` 제거(기존 구현 승계). fan-out이 100이라 cap 손실
    문제는 실질 완화되지만 서버측 `exclude_user_ids`(분석 §11-5)는 계속 요청한다.
 4. **eligibility**: `EligibilityProvider.check`(현 AllowAll stub 유지, Q12).
 
@@ -215,7 +240,7 @@ score_detail 포함), 출력은 전순서(total order), **facet 필드 이름에
 facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3). 기본 전략(RRF)은 facets를
 전혀 읽지 않으므로 dummy 기간에도 안전하다.
 
-**산출물**: `OrderedCandidates` (상위 `limit`개로 절단).
+**산출물**: `OrderedCandidates` (상위 `max_results`개로 절단).
 
 **계측**: 전략 교체 시 A/B 근거용 — 기본 전략과 후보 전략의 순위 불일치도(단, **실데이터
 주입 후에만 의미** — 분석 §12.3 주의).
@@ -227,9 +252,10 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
 1. **matched_topics 축약**(분석 §13-2의 답): owner별 **대표 topic = contribution 최대**인
    evidence. 대표 외 topic은 개수와 라벨만 요약. 계층 문맥은 matched 트리의 `distance`로
    복원한다 — 노드 위치가 아니라(분석 §2.2 rev 5.1: depth 2는 조상 사슬만 접는다).
-2. **라벨 언어 선택**: internal 응답은 3언어 맵이므로 `lang` 요청값으로 우리가 고른다.
-   fallback 규칙은 topic-api의 `pick`과 동일(요청어 → en → 없음)로 맞춘다 — 유저가 프로필
-   화면에서 보는 라벨과 추천 이유의 라벨이 갈라지지 않게(축 이전의 근거 1).
+2. **라벨 언어**: `lang` 필드는 wire에서 빠졌다(§2). matched_topics에 **ko·en 라벨을
+   병기**해 보내고, 최종 발화 언어는 bourbon-agent 모델이 대화 언어로 고른다 — 유저가
+   프로필 화면에서 보는 라벨(topic-api의 pick 규칙)과 갈라지지 않도록 라벨 원문은
+   topic-api의 것을 그대로 쓴다(축 이전의 근거 1).
 3. **signals**: always-on 승계(플래그·rollup 여부·degraded를 내부 신호로). reason generator는
    OFF 유지(기존).
 4. **응답 wire**: 후보별 {owner_id, matched_topics(대표+요약), signals}. **scalar 점수
@@ -331,7 +357,7 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 | 7 어댑터 경계 | §6 |
 | 8 캐시 | §6 — /search/topics만, 짧은 TTL |
 | 9 rollup 수용 | S3 — 그대로 수용, `was_rollup` 사후 판별은 계측 전용 |
-| 10 cold-start UX | **부분** — 200+empty의 wire는 정직한 빈 배열 + 사유 코드. tool 발화는 bourbon-agent 협의 필요 |
+| 10 cold-start UX | **부분** — 200+empty의 wire는 정직한 빈 배열 + 사유 코드. tool 발화·카드 hydration은 bourbon-agent 협의(§9-⑨) |
 
 ---
 
@@ -349,6 +375,13 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
    비율을 측정한 뒤 켠다. (판정층 §13-6과는 별개 — 이것은 topic 선별, 그것은 후보 재정렬.)
 7. **/search/topics 캐시 TTL** — 제안 5분 (그들 배포 주기 대비 충분히 짧음).
 8. **200+empty의 사유 코드 체계** — "no_public_holders" / "degraded" 구분을 wire에 실을지.
+9. **응답 카드 hydration 책임** (rev 2) — bourbon-agent의 `RecommendedAgent`는 렌더된 카드
+   `{id, name, description, expertise[], match_reason}`를 기대하나 name/description은 우리
+   데이터가 아니다. 제안: hydration은 bourbon-agent(agent 프로필 소유자), 우리는 id +
+   expertise 재료(matched topic 라벨 ko·en) + match_reason 재료(대표 topic·contribution).
+   그들 mock의 응답 스키마를 누가 어디까지 채우는지 협의로 확정해야 한다.
+10. **probe 언어 배분(원문1+en3+ko2)** (rev 2) — 실측 12쌍 기준 제안값. S1 계측(언어별 히트
+   기여)으로 조정.
 
 ---
 
@@ -357,3 +390,13 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 - **2026-08-24 rev 1** — 최초 작성. 입력 = `topic_api_analysis.md` rev 5.1. 큰 그림
   파이프라인(S1–S6)·단계별 topic-api endpoint·산출물·실패 3분기 판정 지점·§13 질문 대응을
   담고, expertise 키 식·friends tier·C단계 rerank는 슬롯으로 비워 둠. 리뷰 대기.
+- **2026-08-24 rev 2** — 리뷰 1차 반영. ⑴ **S0를 bourbon-agent의 기왕 계약으로 교체**
+  (`topic`/`context`/`max_results=3`/`requester_user_id`/`room_id` — 그쪽 mock client가 지키는
+  계약이고 "tool 배선 불변·client만 교체"가 명시 의도). `lang`·`eligibility_context`를
+  wire에서 제거. 응답 카드 hydration 간극을 §9-⑨로. ⑵ **topic은 en canonical 기본** —
+  실측 근거(en label 100%·alias 77% 라틴·topic-api extractor의 영어 한정 query_phrases).
+  ⑶ **S1 재서술**: topic 원문은 항상 probe(origin=verbatim, fallback 분기 통합), 확장 입력 =
+  topic+context, **프롬프트에 topic-api의 topic 생성·매핑 방식 설명 블록 내장**(규칙은
+  안정적·어휘만 배포 단위 변동이라 정적 프롬프트로 안전), 언어 배분 = en 우선·ko 보조
+  (12쌍 실측: 4쌍에서 ko가 en이 놓친 topic을 잡음 — hiking 0 vs 등산 2 등), 상한 6 =
+  원문1+en3+ko2. ⑷ S6 라벨은 ko·en 병기로 변경(렌더는 bourbon-agent 모델).
