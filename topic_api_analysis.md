@@ -706,9 +706,11 @@ topic-api가 판정하지 않는다(spec §7 — 호출자 몫). 우리에게는
 **아는 것 + 응할 의사**의 결합이다. facets에서 짜내려던 competence 신호보다 오히려 정직한 축이고,
 후보 풀 자체가 이미 걸러진 상태로 온다.
 
-**부수 효과**: 우리 응답의 `matched_topics`는 구조적으로 공개된 것만 담는다. rev 14가
-TOPICSEARCH#·visibility 재확인·TOCTOU에 많은 지면을 쓴 이유가 이 보장이었는데, GSI 파티션이
-그것을 구조로 준다. 우리 쪽 걱정 항목 하나가 사라진다.
+**부수 효과**: 우리 응답의 `matched_topics`는 **대체로** 공개된 것만 담는다 — rev 14가
+TOPICSEARCH#·visibility 재확인·TOCTOU에 많은 지면을 쓴 일을 GSI 파티션이 구조로 대신한다.
+단 "구조적으로 보장"은 아니다: leaf 경로의 stub(§6.3)이 반례이고, 그것이 닫히기 전까지는
+보장이 아니라 "짧은 창의 예외가 있는 기본 동작"이다(rev 7 정정 — 외부 리뷰가 §6.2와
+§6.3의 자기모순을 지적).
 
 ### 6.3 leaf 경로의 구멍 (정책이므로 지적 대상)
 
@@ -724,7 +726,15 @@ leaf(`topic/search/single.py:_ranked`)는 다르다. 인덱스 행은 남았고 
 private이 단순 기본값이면 GSI 전파 지연 동안의 사소한 staleness다. 그러나 **공개가 유저의
 명시적 행위인 정책**이라면 "이 유저가 이 토픽을 보유하고 점수가 S다"라는 **소속 사실 자체가
 보호 대상**이다. 고치는 방법은 간단하다 — stub을 만들지 말고 그 행을 결과에서 제외
-(rollup이 이미 그렇게 한다). → §11-4
+(rollup이 이미 그렇게 한다). → §11-4 (**rev 7에서 블로커 승격**)
+
+소비자 쪽 임시 방어(rev 7): stub은 `created_at`/`updated_at`이 **null**로 나간다 — 세
+writer 전부가 timestamps를 심으므로(검증됨) null은 인덱스 유래 stub의 강한 신호다. 단
+모델은 nullable을 허용하고 테스트도 unstamped를 유효로 취급하므로 이것은 **계약이 아니라
+휴리스틱**이다: 보안 보장은 topic-api 수정뿐이고, 소비자 필터는 그때까지의 fail-closed
+방어이며 정상 legacy item 오탈락 가능성이 있어 telemetry를 동반해야 한다. 또 하나(rev 7):
+철회 전파(GSI·rollup의 eventual read)에 **지연 상한 계약이 없다** — "짧을 것"은 예상이지
+보장이 아니므로, 공개 철회의 즉시 반영이 제품 요구인지가 별도 기획 질문이다(§11-20).
 
 ### 6.4 서빙 가능성은 곱셈이다
 
@@ -931,7 +941,7 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 | 1 | **공개 토글 UI의 소유자와 일정.** 그리고 공개 대상에 LLM이 쓴 `descriptions`(그 유저에 대한 한 문장, rev 4부터 3언어)가 포함되는지. **유저 편집 경로는 rev 4에서 사라졌다** — `PATCH /me/topics`는 visibility만 받고 descriptions는 extraction 소유 속성이 됐다(#18·#20). 유저가 자기 서술을 고칠 수 없는 채 공개 여부만 고르는 구조가 제품 의도인지 확인 필요 | 앱 + 기획 | **블로커** |
 | 2 | **넓은 토픽 + 좁은 토픽 동시 부착을 계약으로.** 서브트리 걷기는 아래로만 간다(§2.2) — "커피"만 붙은 유저는 "드립커피" 질의에 안 나온다. 지금은 프롬프트가 강제하나 **프롬프트는 계약이 아니다.** 놓치면 우리 코드로 복구 불가 | extractor | **비가역** |
 | 3 | ~~`score_inputs`를 랭킹 응답에 추가~~ — **rev 4에서 해소.** `score_detail`로 개명돼 `matched[].item.blocks[]`에 블록으로 실린다(§4.2). N+1 소멸. 컷 문제(§11-15)는 별개로 남음 | ~~topic-api~~ | **해소** |
-| 4 | **leaf 경로 stub이 `user_id`+`score`를 공개하는 문제**(§6.3). rev 4에서도 유지(stub이 행의 tier까지 명시하는 형태로 정리됐을 뿐 노출은 동일). 정책상 소속 사실도 보호 대상 | topic-api | 높음 |
+| 4 | **leaf 경로 stub이 `user_id`+`score`를 공개하는 문제**(§6.3). rev 4에서도 유지(stub이 행의 tier까지 명시하는 형태로 정리됐을 뿐 노출은 동일). 정책상 소속 사실도 보호 대상. **rev 7에서 블로커 승격**(외부 리뷰 수용): 유저가 토글할 수 있게 되는 순간 = 우리 출시 시점에 창이 열리므로 user-facing 출시 게이트에 연동. 소비자 임시 방어(timestamps-null 필터)는 §6.3 — 계약 아님 | topic-api | **블로커** |
 | 5 | ~~self-exclusion / `exclude_user_ids`를 서버측 cap 앞에~~ — **철회, 우리 후처리로 확정(2026-08-24 결정).** 원 논거(limit=20에서 1명 빼면 20번째 후보가 안 옴)는 설계가 fan-out `limit=100`·최종 `max_results=3`으로 잡히며 실질 소멸했고, 제외 목록(requester+추후 room_members)은 countable이라 후처리 오버헤드가 무시 가능. 제외 집합 인터페이스는 설계 문서 S4 | ~~topic-api~~ | **철회** |
 | 6 | **maturity gate의 입력.** 우리 gate 입력인 "근거 개수"가 topic-api에 없다. 대용은 `facets.knowledge` + `confidence` + `updated_at`(rev 4에서 `score_updated_at`은 속성째 삭제)인데 "얼마나 깊은가"와 "LLM이 얼마나 확신하나"는 다른 것이다. gate를 무엇 위에 세울지 지금 정해야 뒤집지 않는다 | 우리 + extractor | 중간 |
 | 7 | **철회 경로.** 유저가 다시 private으로 내리면 GSI에서 빠지므로 절반은 정책이 해결한다. 남는 것은 "관심이 식었는데 유저가 안 내린 경우"를 extractor가 어떻게 다루는가(score 0 주입? `removed_topics` 반영?) | extractor | 중간 |
@@ -946,6 +956,8 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 | 16 | **id 리스트 랭킹 라우트 (rev 4 신설 → rev 6에서 우선순위 하향).** `SearchQuery.topic_ids`는 서비스 층에 이미 리스트고 라우트만 없다. 그러나 재평가 결과 A단계에서는 **써도 안 쓸 라우트**: ⑴ 다중 id 병합 총점 = Σ weight×score라 그들 score(관심 편향)가 cross-topic 가중에 재유입 — RRF는 순위만 융합해 이를 차단 ⑵ 병합 후 top-100 컷이라 per-topic 100×N보다 후보 풀이 좁음 ⑶ 다중 id는 무조건 rollup 경로(threshold·예산·exhaustive 불확실) vs per-topic leaf는 2 RTT·exhaustive=True. **발동 조건**: 확정 topic 수 증가로 fan-out 비용이 실측 문제 될 때, 또는 expertise 정렬(§11-15) 이후 그들 병합 의미를 원하게 될 때 | topic-api | 조건부 (측정 후) |
 | 17 | **friends tier 사용 여부 (rev 4 신설).** friends가 랭킹 가능해졌고 자격 판정은 호출자 몫(spec §7). "추천 서빙이 friends를 물어도 되는가"는 제품 결정이고 관계 정보가 우리에게 없다 — Alpha는 public 단독(§10-9) | 기획 + 우리 | 중간 |
 | 18 | **facets 계약 확정 (rev 5 신설 — 오너 전언 2026-08-24).** 현재 facets는 dummy이고 **필드 집합·값 의미가 모두 변경될 수 있다.** 확정해야 할 것: ⑴ 최종 필드 집합과 각 필드의 의미(특히 전문성 축이 어느 필드에 남는가) ⑵ 실데이터 주입 시점 ⑶ 변경 통지 채널(우리 ordering 키 식이 이 계약에 결합된다 — §4.2·§13-3). **이 계약 확정 전에는 키 식을 잠그지 않는다** | extractor + topic-api | **높음 (키 식의 선행 조건)** |
+| 19 | **랭킹 응답에 `strategy`(leaf\|rollup) 필드 (rev 7 신설).** 소비자의 경로 판별은 `distance>0` 관측뿐인데 이는 충분조건이라(root만 보유한 유저·빈 결과에서 판별 불가) 정확한 계측·비용 귀속이 안 된다. 응답 1필드 | topic-api | 낮음 |
+| 20 | **공개 철회의 즉시성 요구 (rev 7 신설).** 철회 전파(GSI 제거·rollup eventual read)에 지연 상한 계약이 없다(§6.3). "철회가 즉시 반영돼야 하는가"가 제품 요구면 topic-api 쪽 별도 해결 필요, 아니면 "짧은 창 수용"을 정책으로 명문화 | 기획 + topic-api | 중간 |
 
 1·2는 **extractor 계약이 열려 있는 지금만 싸게 들어간다.** 나중에 바꾸려면 재추출과 데이터
 마이그레이션이다.
@@ -1194,6 +1206,13 @@ exact / ancestor-only / 전무 / 캡 오염으로 분류하면 된다. ancestor-
   접는 것은 조상 사슬과 랭킹의 감쇠 합산이다(작성 중 "세밀도가 2로 캡"이라 먼저 적었다가
   build_tree 경로식 확인으로 정정). 추천 설계 함의를 §2.2에 기록: 계층 문맥은 distance로,
   깊은 보유는 distance>0 자손 노드 + contribution으로 복원한다.
+- **2026-08-24 rev 7** — 외부 리뷰 수용분 반영. ⑴ **§11-4 블로커 승격**: leaf stub의
+  user_id+score 노출은 유저가 토글 가능해지는 순간(=우리 출시)에 열리는 창이므로 user-facing
+  출시 게이트에 연동. §6.2의 "구조적으로 공개된 것만 담는다"를 약화(§6.3과의 자기모순 정정).
+  §6.3에 소비자 임시 방어(timestamps-null 휴리스틱 — 계약 아님·telemetry 동반)와 "철회 전파
+  지연에 상한 계약 없음"을 추가. ⑵ §11-19(strategy 응답 필드, 낮음)·§11-20(철회 즉시성 기획
+  질문, 중간) 신설. 설계 문서 rev 5(concept_group 계약 승격·fail-closed·owner→agent 변환
+  등)와 동기.
 - **2026-08-24 rev 6** — 협의·재평가 2건. ⑴ **§11-5 철회**: `exclude_user_ids` 서버측 요청을
   접고 우리 후처리로 확정(사용자 결정) — 설계가 fan-out 100·max_results 3으로 잡히며 cap 손실
   논거가 소멸했고 제외 목록은 countable. ⑵ **§11-16 우선순위 하향**: 다중 id 라우트는 그들

@@ -1,6 +1,6 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 초안 (rev 2, 리뷰 진행 중). 입력 = `topic_api_analysis.md` **rev 5.1**
+> **문서 지위**: 설계 초안 (rev 5, 외부 리뷰 2회 반영). 입력 = `topic_api_analysis.md` **rev 5.1**
 > (2026-08-24, topic-api HEAD `80c650f`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > 이 문서가 확정되면 `persona_topic_search_design.md`(rev 14)를 대체하는 새 정본이 된다.
@@ -21,17 +21,19 @@ bourbon-agent (recommend_agents tool)
    │  POST /recommend  {topic(en canonical), context, max_results, requester_user_id, room_id}
    ▼
 S1 Expansion        topic 원문 = 기본 probe + topic·context 기반 확장 (작은 LLM 1회, R1–R7)
-   ▼                산출물: ExpansionResult
-S2 Grounding        probe별 GET …/search/topics → is_match 트리 → 선별 → topic_id 1~3개 확정
-   ▼                산출물: GroundingResult (outcome 4종)          [0건 → 422]
+   ▼                산출물: ExpansionResult (probe마다 concept_group 소속)
+S2 Grounding        probe별 GET …/search/topics → is_match 트리 → **concept_group당 정확히
+   ▼                1 topic 확정** (못 고르면 ambiguous)
+                    산출물: GroundingResult (outcome 4종)
+                    [expansion 정상+전체 0건 → 422 / expansion 실패+fallback 0건 → 503]
 S3 Retrieval        topic_id별 GET …/topics/{id}/users?limit=100&visibility=public (병렬)
    ▼                산출물: TopicCandidates[] (matched 트리·score_detail·불완전성 플래그 원형 보존)
-S4 Merge/Filter     owner 단위 RRF 병합 → self-exclusion → eligibility
+S4 Merge/Filter     독립 concept group 간 RRF 병합 → stub 방어 필터 → exclusion → eligibility
    ▼                산출물: CandidatePool                           [0명 → 200+empty]
 S5 Ordering         gate → lexicographic 정렬 키 → 결정적 tiebreak (scalar 노출 없음)
    ▼                산출물: OrderedCandidates
-S6 Assembly         matched_topics 축약(distance·contribution 소비) + signals + 플래그 게이트
-   │                산출물: RecommendResponse
+S6 Assembly         owner→agent id 변환(uuid5) + matched_topics 축약 + 플래그 게이트
+   │                산출물: RecommendResponse (signals는 wire가 아니라 decision log)
    ▼
 bourbon-agent      [topic-api 불능 → 503 / 정직한 empty → 200]
 ```
@@ -56,10 +58,10 @@ rev 14에서 승계한 규율(분석 §9의 승계 목록, 이 파이프라인�
 | 실패 의미 3분기 (422 / 200+empty / 503) + 오귀속 금지 | §4 — 판정 지점을 단계에 고정 |
 | ordering = lexicographic 계약, scalar 단일 점수 노출 금지 | S5 |
 | self-exclusion·제외 집합 = **우리 후처리로 확정**(2026-08-24 결정 — countable 목록·fan-out 100이라 오버헤드 무시 가능) | S4 |
-| 즐겨찾기 = tiebreak only, gate 우회 금지 | S5 |
+| 즐겨찾기 = tiebreak only, gate 우회 금지 | S5 — 단 **dormant 슬롯**: 현 파이프라인에 즐겨찾기 데이터 공급처가 없다. provider가 생길 때까지 이 키는 비활성 |
 | popularity prior 금지 | S5 (RRF는 topic별 순위 융합 — 전역 인기 항 없음) |
 | 판정 입력 텍스트 전부 비신뢰 | S1·S2의 LLM 프롬프트 (카탈로그 라벨·유저 서술 모두) |
-| gate 3종 직교 (maturity / safety / privacy) | privacy는 topic-api 구조가 보장(분석 §6), maturity는 §11-6 대기, safety는 타 팀 |
+| gate 3종 직교 (maturity / safety / privacy) | privacy는 topic-api 구조가 **대부분** 보장하나 leaf stub 구멍이 남아 있다(분석 §6.3 — §11-4 **블로커** 승격). 근본 수정은 topic-api, 우리는 S4의 stub 방어 필터를 임시 방어로 병행. maturity는 §11-6 대기, safety는 타 팀 |
 | best-effort 입력 선언 | 사슬 전체(deferq→extractor→topic-api)가 best-effort — freshness 가정 금지 |
 | wire 계약: 응답 파싱은 실효 계약 기준·계약 테스트 payload를 consumer model에서 유도 금지 | §6 어댑터 |
 
@@ -131,14 +133,22 @@ S6에서 matched_topics에 ko·en 라벨을 병기해 보내면 최종 발화는
    ko가 en이 놓치는 topic을 잡았다(hiking 0 vs 등산 2, cooking, investment, 기계학습 —
    실물 카탈로그 실측). probe는 인메모리 검색+캐시라 한계 비용이 0에 가까우므로 ko를
    버리지 않는다. 상한 6 = **원문 1 + en 확장 ≤3 + ko 변형 ≤2**, 결과는 S2에서 qid union.
+5. **길이 가드 — verbatim도 예외 없음**(rev 5): R5 미달(영문 <4자·한글 <2자) 또는 100자
+   초과(topic-api `NameQuery` max_length=100 — 넘겨 보내면 그쪽 422를 우리가 맞는다)인
+   probe는 **전송하지 않는다.** 원문 probe도 같은 가드를 통과해야 한다 — 원문이라는 이유로
+   R5를 우회하면 topic="AI" 같은 입력이 캡 노이즈를 그대로 부른다. 가드를 통과한 probe가
+   0개면 판단에 도달할 수 없는 상태다(→ §4의 unavailable 경로). 요청 wire 자체에도 상한을
+   둔다: `topic` ≤200자·`context` ≤2,000자(`열린 결정` ⑪).
 
 **topic-api 호출**: 없음 (LLM proxy만).
 
 **산출물**: `ExpansionResult { probes: [{text, lang, concept_group, rank,
 origin: verbatim | llm}], degraded: bool }` — 원문 probe는 `origin=verbatim`.
 
-**실패**: LLM 실패/timeout → probe = 원문 1개로 진행(`degraded=true`). 원문마저 0건이면
-S2에서 422로 흐른다 — expansion 실패를 500으로 오귀속하지 않는다.
+**실패**: LLM 실패/timeout → probe = 원문 1개로 진행(`degraded=true`). **degraded 상태의
+0건은 422가 아니다** — expansion이 살아 있었다면 발견했을 topic일 수 있으므로, 판단에
+도달하지 못한 것으로 보고 §4의 unavailable(503) 경로로 보낸다(C4 규율: 재시도 기준은
+"판단에 도달했는가"). degraded 상태에서 원문 probe가 exact hit를 냈을 때만 degraded 성공.
 
 **계측**: probe 수 분포, 언어별 히트 기여(en/ko probe 각각이 확정 topic을 몇 번 맞췄나 —
 배분 6=1+3+2의 조정 근거), LLM 지연, degraded 비율.
@@ -149,14 +159,24 @@ S2에서 422로 흐른다 — expansion 실패를 500으로 오귀속하지 않�
 후보로 수집한다(조상 scaffolding을 결과로 취급하지 않는다 — topic-api 자신의 후보 조립도
 같은 규칙이다, 분석 §2.2). topic_id 기준 union하되 **어느 probe가 맞췄는지 귀속을 유지**한다.
 
-선별(후보 → 확정 1~3개):
+선별 — **concept_group당 정확히 1 topic**(rev 5, 외부 리뷰 수용):
 
 1. **rule pass**: probe별 매치 수가 캡(20)에 닿았으면 그 probe의 매치는 신뢰 하향(분석 §2.1
-   `ai` 사례 — 캡 도달은 노이즈 신호). exact-label 일치(정규화 기준 라벨==probe)는 신뢰 상향.
-2. **LLM rerank 1회**: 후보 topic들의 {labels, is_match 트리의 조상 문맥}을 주고 `topic`
-   원문(+context)과의 관련도로 상위 1~3개 선별. **exact-label winner 명시 가드** 승계(기존
-   grounding-mode 규율) — exact 일치가 있으면 LLM이 뒤집지 못한다.
-   (`열린 결정` ⑥: A단계 초기에 이 LLM 호출을 켤지, rule pass만으로 시작할지.)
+   `ai` 사례 — 캡 도달은 노이즈 신호). exact-label 일치(정규화 기준 라벨==probe)는 후보
+   집합을 exact/non-exact로 나눈다.
+2. **그룹당 1 확정**: 각 concept_group에서 topic 하나만 확정한다. **exact 후보 집합이
+   non-exact보다 우선하되, exact가 복수면 context로 판별한다(LLM)** — exact 단독 승자
+   가드가 아니다: 같은 label의 동음이의 topic이 실존하고(topic-api id 설계의 근거 자체가
+   "커피 버번 vs 위스키 버번", 우리 real-anchor 이력도 동음이의 tie로 7/25만 grounding),
+   exact라는 이유로 자동 확정하면 그 tie를 그대로 되밟는다.
+3. **그룹 내에서 하나를 못 고르면 그 그룹은 `ambiguous`** — 여러 해석을 섞어 랭킹하지
+   않는다. 같은 그룹의 복수 topic을 유지하는 fallback은 두지 않는다(부모+자식을 함께
+   확정하면 부모 rollup이 자식 보유자를 이미 접어 올린 위에 자식 leaf가 또 잡아 **같은
+   근거를 이중 보상**한다 — 이 규칙 하나가 조상 판별 로직 자체를 불필요하게 만든다.
+   검색 트리의 중첩은 관계의 증거일 뿐, depth 접힘·다중 부모 때문에 비중첩이 무관계의
+   증거가 아니므로 트리로 조상을 판별하려 해서는 안 된다 — 분석 §2.2 rev 5.1).
+4. 확정 topic 수 = 살아남은 그룹 수(≤3).
+   (`열린 결정` ⑥: 2의 context 판별 LLM을 A단계 초기부터 켤지 — ambiguous 비율 측정 후.)
 
 **topic-api 호출**: `GET /api/internal/svc/topic/search/topics?q={probe}&limit=20` × probe 수.
 짧은 TTL 캐시(키 = normalize(probe), TTL은 그들 배포 주기보다 짧게 — 분석 §13-8,
@@ -166,8 +186,11 @@ S2에서 422로 흐른다 — expansion 실패를 500으로 오귀속하지 않�
 exact_label: bool}], outcome: grounded | failed | ambiguous | unavailable }`
 — outcome 4종은 C4 실패 계약을 승계한다.
 
-**실패**: 전 probe 0건 → `failed` → **422** ("카탈로그에 그 topic이 없다" — §4).
-후보는 있으나 선별 신뢰 미달 → `ambiguous` → 422(구분 코드).
+**실패 — expansion 상태와 결합해 귀속**(rev 5): ⑴ expansion 정상 완료 + 전 probe 0건 →
+`failed` → **422**("카탈로그에 그 topic이 없다"고 판단할 자격이 있는 유일한 경우).
+⑵ expansion degraded(LLM 실패) 상태에서 fallback 0건 또는 유효 probe 0개 → `unavailable`
+→ **503**(판단에 도달하지 못함 — 422로 내면 호출자 탓 오귀속). ⑶ 모든 그룹이 ambiguous →
+`ambiguous` → 422(구분 코드).
 topic-api 5xx/timeout → `unavailable` → **503**.
 
 **계측**: probe 0건율(= 카탈로그 커버리지 지표, 분석 §12.3), 후보 수→확정 수, exact-label
@@ -193,14 +216,24 @@ per-topic 100×N보다 후보 풀이 좁으며, rollup 경로를 강제한다. p
 의미·후보 풀·비용·exhaustive 전부에서 우월. 재검토 조건은 분석 §11-16.)
 
 **산출물**: `TopicCandidates { topic_id, users: [...위 보존 필드...],
-flags: {exhaustive, descendants_dropped, topics_dropped}, was_rollup: bool }`
-— `was_rollup`은 사후 판별(응답 matched에 `distance > 0` 존재 — 분석 §8.3-A). 분기용이
-아니라 계측·비용 귀속용.
+flags: {exhaustive, descendants_dropped, topics_dropped}, deep_holdings_observed: bool }`
+— `deep_holdings_observed` = 응답 matched에 `distance > 0` 존재. **rollup 여부의 충분조건일
+뿐 필요조건이 아니다**(rollup을 탔어도 root topic만 보유한 유저들이면 전부 distance 0,
+빈 결과에서는 판별 불가) — 그래서 "was_rollup"이라 부르지 않는다. 정확한 경로 계측이
+필요해지면 topic-api에 `strategy` 응답 필드를 요청한다(분석 §11-19, 낮음). 분기용이 아니라
+계측·비용 귀속용.
 
-**실패**: topic 1개의 404(배포 사이 카탈로그 변경으로 id 소멸 — 드묾) → 그 topic만 탈락,
-로깅. 부분 5xx/timeout → `열린 결정` ①(제안: 성공분으로 진행 + 응답 내부 품질 표시 + 로깅,
-**전부** 실패 시에만 503). `exhaustive=false` → 탈락시키지 않고 로깅 + 품질 표시(A단계는
-게이트 아님 — 분석 §10-7).
+**실패 — 초기엔 fail-closed**(rev 5, 외부 리뷰 수용 — `열린 결정` ① 해소):
+
+- **404**(캐시된 id가 배포 사이 카탈로그에서 소멸 — merge는 resolve가 승계 topic으로
+  따라가므로 드묾, drop/비활성이 남는 경우): 그 probe의 캐시를 무효화하고 **grounding을
+  1회 재실행**한다. 재실행 후에도 해석되지 않으면 아래 규칙.
+- **확정 topic 중 하나라도 최종 실패**(5xx/timeout, 재grounding 후 404) → **503.**
+  topic 하나가 빠진 RRF는 "완전한 결과의 품질 저하"가 아니라 **다른 랭킹**이다. 조용히
+  topic을 버리면 전부 소멸 시 200+empty로 "공개 보유자 없음" 오귀속까지 일어난다.
+  부분 성공("성공분 + degraded 표시")은 concept-group 의미와 bourbon-agent의 degraded
+  wire가 정해진 뒤 재개방할 계약으로 미룬다.
+- `exhaustive=false` → 탈락시키지 않고 로깅 + 품질 표시(A단계는 게이트 아님 — 분석 §10-7).
 
 **계측**: "grounded인데 공개 보유자 0" 비율(= 공개 밀도 지표), 플래그 3종 분포, topic당
 반환 유저 수 분포(100 근접 = 컷 경계 접근 — (a)안 만료 감시), rollup 비율.
@@ -209,19 +242,31 @@ flags: {exhaustive, descendants_dropped, topics_dropped}, was_rollup: bool }`
 
 **동작**:
 
-1. **RRF 병합**: topic별 순위를 `Σ 1/(k + rank_t(u))`(k는 `열린 결정` ③, 표준 60 제안)로
-   owner 단위 융합. topic-api의 `score` 절대값을 섞지 않고 **순위만** 쓴다 — 점수 의미
-   (관심 편향, 분석 §4)와 topic 간 스케일 차이를 우리가 재해석하지 않기 위해서다.
-   여러 topic에 걸린 owner가 자연히 위로 온다.
+1. **RRF 병합 — 독립 concept group 간에만**: 그룹당 topic이 1이므로(S2) 그룹별 순위를
+   `Σ 1/(k + rank_g(u))`(k는 `열린 결정` ③, 표준 60 제안)로 owner 단위 융합. topic-api의
+   `score` 절대값을 섞지 않고 **순위만** 쓴다 — 점수 의미(관심 편향, 분석 §4)와 topic 간
+   스케일 차이를 우리가 재해석하지 않기 위해서다. S2의 그룹당-1 규칙이 지켜져야 이 합산이
+   "여러 **독립** 관심 축에 걸린 owner가 위로 온다"는 의미를 가진다 — 같은 개념의
+   broad+narrow를 둘 다 확정하면 이 단계가 같은 근거를 이중 보상하게 된다(S2-3).
 2. **evidence 병합**: owner별로 topic마다 {topic_id, contribution, distance, score_detail?,
    descriptions?}를 모은다 — S6의 재료.
+2-1. **stub 방어 필터**(rev 5, 임시 방어): 대표 매치 item의 `created_at`/`updated_at`이
+   null이면 그 후보-topic 쌍을 버린다. 세 writer 전부가 timestamps를 심으므로(검증됨)
+   null은 인덱스 유래 stub(= 철회 직후 stale 행)의 강한 신호다. **계약이 아니라
+   휴리스틱이다** — 모델은 nullable을 허용하므로: 보안 보장은 topic-api의 leaf 수정
+   (분석 §11-4 블로커)이고, 이 필터는 그때까지의 fail-closed 방어이며, 정상 legacy
+   item의 오탈락 가능성이 있어 **탈락 건수를 별도 telemetry로 센다.**
 3. **exclusion — 집합 인터페이스로 설계**(협의 2026-08-24 반영): 제외는 단일 id가 아니라
    `excluded: set[UUID]`로 받는다. 지금 채워지는 것은 `{requester_user_id}` 하나지만,
    in-room 제외가 defer에서 풀려 bourbon-agent가 `room_members`를 보내게 되면 **같은
    집합에 합류**시키는 것으로 끝난다 — 새 단계·새 분기 없이. **서버측 `exclude_user_ids`
    요청은 철회**(2026-08-24 결정, 분석 §11-5 철회): fan-out 100 대비 최종 max_results 3이라
    cap 손실 논거가 소멸했고, 제외 목록은 countable이라 후처리 오버헤드가 무시 가능하다.
-   제외는 전적으로 이 단계(우리 층)의 일이다.
+   제외는 전적으로 이 단계(우리 층)의 일이다. **만료 조건**(rev 5): 이 결정은 제외
+   집합이 fan-out(100×그룹 수) 대비 무시 가능한 크기일 때 유효하다 — room_members가 커지
+   거나 real eligibility가 활성화되어 top-100이 대량 소모되기 시작하면(계측: 제외·필터
+   탈락 비율) overfetch 또는 서버측 필터를 재논의한다. eligibility 활성화 gate의 선행
+   조건으로 이 재논의를 건다.
 4. **eligibility**: `EligibilityProvider.check`(현 AllowAll stub 유지, Q12).
 
 **topic-api 호출**: 없음.
@@ -241,7 +286,8 @@ degraded: bool (S3 부분 실패·플래그 반영) }`
 ```
 gate(현 A단계: privacy=구조 보장, maturity=§11-6 대기로 비활성)
   → 1키: 정렬 전략 슬롯 (기본 전략 = RRF 순위)
-  → 2키: 즐겨찾기 tiebreak (승계 — gate 우회 금지, 동순위에서만)
+  → 2키: 즐겨찾기 tiebreak (승계 — gate 우회 금지, 동순위에서만. **dormant**: 공급처가
+        아직 없다 — §1)
   → 3키: user_id bytes (결정적 — topic-api와 같은 규율)
 ```
 
@@ -260,17 +306,33 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
 
 **동작**:
 
-1. **matched_topics 축약**(분석 §13-2의 답): owner별 **대표 topic = contribution 최대**인
-   evidence. 대표 외 topic은 개수와 라벨만 요약. 계층 문맥은 matched 트리의 `distance`로
+0. **owner → agent id 변환**(rev 5): topic-api가 주는 것은 user_id(=owner)이고
+   bourbon-agent가 기대하는 `RecommendedAgent.id`는 agent ID다. 변환은 이미 양쪽 repo에
+   실재하는 deterministic 계약을 재사용한다 —
+   `personal_agent_id(user_id) = uuid5(AGENT_NAMESPACE, f"personal_agent:{user_id}")`
+   (우리 `discovery/providers/identity_uuid5.py` = bourbon-agent `utils/ids.py`, 검증됨).
+   owner_id는 내부(제외·hydration·decision log)에 유지하고 wire에는 agent ID만 나간다.
+   남는 seam은 변환이 아니라 **"그 agent가 실제 존재·활성인가"의 존재 확인**이며 hydration
+   경로(§9-⑨)와 같은 협의 묶음이다.
+1. **matched_topics 축약**(분석 §13-2의 답): owner별 **대표 topic = 최종 RRF 합에 가장
+   크게 기여한 독립 concept group의 topic**(= reciprocal-rank 기여 최대 — 순위 기반이라
+   topic 간 비교 가능). raw `contribution`은 topic 간 선택에 쓰지 않고 **그 topic 내부의
+   점수 설명 표시에만** 쓴다 — "topic 간 score 스케일을 비교하지 않는다"는 RRF 근거와
+   일관되게. 대표 외 그룹은 개수와 라벨만 요약. 계층 문맥은 matched 트리의 `distance`로
    복원한다 — 노드 위치가 아니라(분석 §2.2 rev 5.1: depth 2는 조상 사슬만 접는다).
 2. **라벨 언어**: `lang` 필드는 wire에서 빠졌다(§2). matched_topics에 **ko·en 라벨을
    병기**해 보내고, 최종 발화 언어는 bourbon-agent 모델이 대화 언어로 고른다 — 유저가
    프로필 화면에서 보는 라벨(topic-api의 pick 규칙)과 갈라지지 않도록 라벨 원문은
    topic-api의 것을 그대로 쓴다(축 이전의 근거 1).
-3. **signals**: always-on 승계(플래그·rollup 여부·degraded를 내부 신호로). reason generator는
-   OFF 유지(기존).
-4. **응답 wire**: 후보별 {owner_id, matched_topics(대표+요약), signals}. **scalar 점수
-   비노출**(순위가 곧 응답 순서).
+3. **signals는 wire가 아니다**(rev 5 정정 — rev 1이 wire 정의에 signals를 실어 자기모순).
+   플래그·deep_holdings_observed·degraded는 **decision log 전용** 내부 신호다. reason
+   generator는 OFF 유지(기존).
+4. **응답 wire — bourbon-agent 모델로의 변환표**(rev 5): 후보별로
+   `id` = agent ID(위 0의 uuid5 변환) · `expertise` = 대표+요약 topic 라벨(ko·en) ·
+   `match_reason` 재료 = 대표 topic·기여 요지. `name`·`description`은 hydration 결정(§9-⑨)
+   에 따름 — 단 그들 strict 모델의 `description: str`(non-nullable)은 "현재 항상 NULL"인
+   데이터 현실과 충돌하므로 어느 경로든 그쪽 모델이 한 번 움직여야 한다(nullable 또는
+   빈 문자열 관례). **scalar 점수 비노출**(순위가 곧 응답 순서).
 
 **산출물**: `RecommendResponse`.
 
@@ -285,14 +347,16 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
 
 | 상황 | 판정 단계 | wire |
 |---|---|---|
-| 카탈로그에 topic 없음 (전 probe 0건) | S2 (`failed`) | **422** |
-| grounding 신뢰 미달 | S2 (`ambiguous`) | **422** (구분 코드) |
+| expansion **정상** + 전 probe 0건 (카탈로그에 topic 없음) | S2 (`failed`) | **422** |
+| expansion **degraded** + fallback 0건/유효 probe 0개 | S1→S2 (`unavailable`) | **503** (422 금지 — 판단 미도달) |
+| 모든 concept group이 판별 불가 | S2 (`ambiguous`) | **422** (구분 코드) |
 | topic 있으나 공개 보유자 0 / 필터 후 0 | S4 | **200 + empty** |
-| topic-api 불능 (S2·S3 전면 5xx/timeout) | S2/S3 (`unavailable`) | **503** |
-| S3 부분 실패 | S3→S4 | 200 + degraded 표시 (`열린 결정` ①) |
+| topic-api 불능 (5xx/timeout) | S2/S3 (`unavailable`) | **503** |
+| S3에서 확정 topic 일부 실패 (404 재grounding 후 포함) | S3 | **503** (fail-closed — 부분 RRF는 다른 랭킹) |
 
-오귀속 금지: expansion LLM 실패는 fallback으로 흡수(S1), 어댑터 파싱 실패는 503이 아니라
-계약 위반 로깅 + 503(topic-api 응답이 계약을 깼다는 뜻이므로) — 422로 위장하지 않는다.
+오귀속 금지의 축: **"카탈로그에 없다"고 말할 자격은 expansion이 정상 완료됐을 때만
+생긴다**(C4 규율 — 판단에 도달했는가). 어댑터 파싱 실패는 계약 위반 로깅 + 503 — 422로
+위장하지 않는다.
 
 ---
 
@@ -360,23 +424,22 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 | §13 질문 | 이 문서의 답 |
 |---|---|
 | 1 호출 형태·컴포넌트 소유 | §0·§3·§7 |
-| 2 병합 규칙·대표 topic | S4 RRF(순위만) · S6 대표=contribution 최대 |
+| 2 병합 규칙·대표 topic | S4 RRF(독립 그룹 간, 순위만) · S6 대표=RRF 기여 최대 그룹(contribution은 표시 전용) |
 | 3 ordering 키 식 | **부분** — 슬롯 계약만(S5). 식은 §11-18 확정 후 |
-| 4 실패 3분기 판정 지점 | §4 (probe 일부만 0건 = 나머지로 진행, 전부 0건만 422) |
-| 5 eligibility 결합 지점 | S4 사후 필터 — exclusion과 함께 전부 우리 후처리로 확정(서버측 파라미터 요청 철회, 분석 §11-5) |
+| 4 실패 3분기 판정 지점 | §4 — expansion 상태와 결합(정상+0건만 422, degraded+0건은 503), S3는 fail-closed |
+| 5 eligibility 결합 지점 | S4 사후 필터 — exclusion과 함께 우리 후처리로 확정(분석 §11-5 철회). 단 만료 조건 있음(S4 — eligibility 활성화 gate에 overfetch/서버측 재논의 선행) |
 | 6 rerank 진입 조건 | **미정** — C단계 dormant 슬롯만 (§9-⑥와 별개) |
 | 7 어댑터 경계 | §6 |
 | 8 캐시 | §6 — /search/topics만, 짧은 TTL |
-| 9 rollup 수용 | S3 — 그대로 수용, `was_rollup` 사후 판별은 계측 전용 |
+| 9 rollup 수용 | S3 — 그대로 수용. `deep_holdings_observed`는 충분조건 계측(정확한 경로는 §11-19 strategy 필드 요청 후) |
 | 10 cold-start UX | **부분** — 200+empty의 wire는 정직한 빈 배열 + 사유 코드. tool 발화·카드 hydration은 bourbon-agent 협의(§9-⑨) |
 
 ---
 
 ## §9 열린 결정 (리뷰 안건)
 
-1. **S3 부분 실패 규칙** — 제안: 성공분으로 진행 + degraded 표시, 전면 실패만 503.
-   반론 여지: 부분 결과가 "왜곡된 랭킹"일 수 있음(한 topic이 통째로 빠지면 그 topic 전문가가
-   전부 누락).
+1. ~~S3 부분 실패 규칙~~ — **rev 5에서 해소: 초기 fail-closed 확정**(확정 topic 하나라도
+   실패 → 503). 부분 성공은 degraded wire·concept-group 의미가 자리잡은 뒤 재개방할 계약.
 2. **probe 수 상한(6)·grounding limit(20)·확정 topic 수(1~3)** — 기본값 제안. 측정 후 조정.
 3. **RRF k=60** — 표준값 제안.
 4. **matched_topics wire 모양** — distance 부호를 그대로 노출할지, 우리 wire로 단순화
@@ -386,6 +449,8 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
    비율을 측정한 뒤 켠다. (판정층 §13-6과는 별개 — 이것은 topic 선별, 그것은 후보 재정렬.)
 7. **/search/topics 캐시 TTL** — 제안 5분 (그들 배포 주기 대비 충분히 짧음).
 8. **200+empty의 사유 코드 체계** — "no_public_holders" / "degraded" 구분을 wire에 실을지.
+11. **요청 wire 길이 상한 값** (rev 5) — `topic` ≤200자·`context` ≤2,000자 제안. probe
+   ≤100자는 topic-api `NameQuery`와 동기라 제안이 아니라 제약.
 9. **응답 카드 hydration 책임** (rev 3 — 협의로 "기획 의존·추후 결정" 확인) — name=owner
    이름·description=personal agent 현재 NULL. 경로 (a) 우리가 채움 → bourbon-api 직접 호출
    의존성 신설, (b) bourbon-agent가 채움. 우리 산출물(id + expertise 재료 + match_reason
@@ -425,3 +490,17 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
   라우트는 A단계 불사용으로 재평가**(분석 §11-16 rev 6과 동기화): 그들 score의 cross-topic
   재유입·병합 후 컷·rollup 경로 강제 — per-topic fan-out + RRF 유지, S3의 "생기면 교체"
   문구 삭제.
+- **2026-08-24 rev 5** — 외부 리뷰 2회(P1 5건·P2 6건 + 정밀화 4건) 반영. 핵심 =
+  **concept_group을 파이프라인 전체의 명시 계약으로 승격**: S2는 그룹당 정확히 1 topic
+  (exact 집합 우선·exact 복수는 context 판별 — 단독 승자 가드 철회, 동음이의 이력 근거),
+  못 고르면 ambiguous, 그룹 내 복수 유지 fallback 없음(broad+narrow 이중 보상 차단 —
+  조상 판별 로직 자체가 불필요해짐), S4 RRF는 독립 그룹 간만. 그 외: ⑴ 프라이버시 —
+  §1에서 "구조 보장" 약화(leaf stub, 분석 §11-4 블로커 승격), S4에 stub 방어 필터
+  (timestamps-null 휴리스틱 — 계약 아님·오탈락 telemetry 동반) 신설. ⑵ S6 — owner→agent
+  uuid5 변환(양 repo 동일 공식 검증) + 존재 확인 seam, signals를 wire에서 삭제(rev 1
+  자기모순 정정), bourbon-agent strict 모델로의 변환표와 description nullable 충돌 명기,
+  대표 topic = RRF 기여 최대 그룹(contribution은 표시 전용). ⑶ 귀속 — expansion 상태와
+  결합한 3분기(degraded+0건 = 503, 정상+0건만 422), probe 길이 가드(≤100자·R5를 verbatim에도
+  적용). ⑷ S3 fail-closed 확정(404는 캐시 무효화+재grounding 1회 후) — 열린 결정 ① 해소.
+  ⑸ was_rollup → deep_holdings_observed 개명(충분조건 명기), 즐겨찾기 tiebreak dormant 명기,
+  exclusion 후처리 결정에 만료 조건 부착.
