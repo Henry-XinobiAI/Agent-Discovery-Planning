@@ -1,14 +1,15 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 정본 (rev 5.2, 외부 리뷰 2회 반영). 입력 = `topic_api_analysis.md` **rev 7**
+> **문서 지위**: 설계 정본 (rev 5.5, 외부 리뷰 3회 반영). 입력 = `topic_api_analysis.md` **rev 7**
 > (2026-08-24, topic-api HEAD `80c650f`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
 > 대체하는 정본이 됐다(열린 결정은 §9에 잔존).
 >
 > **범위**: 큰 그림의 파이프라인 — bourbon-agent의 요청을 받아 topic-api의 어느 endpoint에서
-> 어떤 값을 가져와 추천 소스로 쓰는지, 각 단계의 동작·흐름·산출물. 구현 상세(코드 배치,
-> 테스트 계획)는 확정 후 코드 repo `tasks/todo.md`로 간다.
+> 어떤 값을 가져와 추천 소스로 쓰는지, 각 단계의 동작·흐름·산출물. **노출 표면**(internal-only·
+> edge-auth 관례·배포 델타·surface 테스트)은 `serving_surface_design.md`가 소유한다.
+> 구현은 `project-template-python`에서 신규 시작한다(2026-08-24 오너 결정 — 같은 문서 §1-4).
 >
 > **표기**: 분석 문서와 동일 — `검증됨`/`가정`/`미확인`. 이 문서 고유의 **`결정`**(이 문서가
 > 확정하려는 것)과 **`열린 결정`**(§9, 리뷰 안건)을 추가로 쓴다.
@@ -22,7 +23,7 @@ bourbon-agent (recommend_agents tool)
    │  POST /recommend  {topic(en canonical), context, max_results, requester_user_id, room_id}
    ▼
 S1 Expansion        topic 원문 = 기본 probe + topic·context 기반 확장 (작은 LLM 1회, R1–R7)
-   ▼                산출물: ExpansionResult (probe마다 concept_group 소속)
+   ▼                산출물: ExpansionResult (concept group이 probe를 소유 — 일급 객체)
 S2 Grounding        probe별 GET …/search/topics → is_match 트리 → **concept_group당 정확히
    ▼                1 topic 확정** (못 고르면 ambiguous)
                     산출물: GroundingResult (outcome 4종)
@@ -97,11 +98,16 @@ S6에서 matched_topics에 ko·en 라벨을 병기해 보내면 최종 발화는
 `{id, name, description, expertise[], match_reason}`에서 `name` = 추천되는 user(owner)의
 이름, `description` = personal agent에서는 **현재 항상 NULL**(추후 채워질 수 있고, 기획이
 노출하지 않기로 하면 응답에는 불필요 — 단 "추천 판단에만 필요한 정보"가 될 수는 있다).
-**hydration 책임은 기획(어떤 데이터를 보여줄지)에 따라 추후 결정**으로 합의:
-(a) 우리가 채우는 경우 → **bourbon-api를 우리가 직접 호출**하는 의존성이 신설된다,
-(b) bourbon-agent가 채우는 경우 → 그쪽이 id로 조회. 이 문서의 설계는 어느 쪽이 되든
-성립하도록 우리 산출물을 `id`(owner) + `expertise` 재료(matched topic 라벨 ko·en) +
-`match_reason` 재료(대표 topic·contribution)로 고정해 둔다.
+**hydration 책임 — rev 5.5에서 "추후 기획 결정"에서 S6 선행 블로커로 승격**(외부 리뷰
+3차 수용): bourbon-agent의 현재 wire는 strict 모델에 `name: str`·`description: str`이
+**필수**라(`recommendation/structs.py:31-34`, 검증됨), 책임이 정해지기 전에는 S6이 유효한
+응답을 만들 수 없다 — 후속 제품 결정이 아니라 **구현·통합 테스트를 막는 선행 결정**이다.
+옵션과 권고(§9-⑨): **권고 = (b)** bourbon-agent가 agent ID로 hydration + 우리 wire 축소,
+차선 = (c) 그쪽 wire의 name/description nullable화, **배제** = (a) 우리가 bourbon-api를
+직접 호출(hot path 의존 신설)과 `description=""` 채우기(타입만 통과시키는 가짜 계약).
+이 문서의 설계는 (b)/(c) 어느 쪽이 되든 성립하도록 우리 산출물을 `id`(**agent** — S6-0
+변환 후. rev 5.5 정정: 구판의 "owner" 표기는 S6-0과 자기모순) + `expertise` 재료(matched
+topic 라벨 ko·en) + `match_reason` 재료(대표 topic·기여 요지)로 고정해 둔다.
 
 ---
 
@@ -143,8 +149,30 @@ S6에서 matched_topics에 ko·en 라벨을 병기해 보내면 최종 발화는
 
 **topic-api 호출**: 없음 (LLM proxy만).
 
-**산출물**: `ExpansionResult { probes: [{text, lang, concept_group, rank,
-origin: verbatim | llm}], degraded: bool }` — 원문 probe는 `origin=verbatim`.
+**산출물**(rev 5.5 — concept group을 일급 객체로. 구판의 `probe.concept_group` 필드는
+"probe는 정확히 한 그룹"을 검증에 맡겼는데, 그룹을 컨테이너로 두면 구조가 보장한다):
+
+```
+ExpansionResult {
+  groups: [ { group_id, intent,        # intent = 이 그룹이 겨냥하는 의미 축(자유 서술, 로그용)
+              probes: [{text, lang, rank, origin: verbatim | llm}] } ],
+  degraded: bool
+}
+```
+
+**concept group 생성 계약**(rev 5.5 신설 — S2의 그룹당 1 topic과 S4의 그룹 간 RRF가 전부
+이 계약 위에 선다. 이게 틀리면 같은 개념이 독립 신호처럼 이중 가산된다):
+
+- **정의**: 그룹 = **독립적인 의미 축**. 언어·표기·broad/narrow는 그룹 경계가 아니다 —
+  같은 의미의 en/ko/광의/협의 probe는 반드시 **같은** 그룹에 속한다(프롬프트에 명시).
+- **verbatim probe는 주 개념 그룹 소속** — 원문 topic이 겨냥하는 개념의 그룹에 넣는다.
+- **구조 검증**(S1 출력에서 코드로 강제 — LLM 출력을 신뢰하지 않는다): ⑴ probe는 정확히
+  한 그룹(위 shape가 구조로 보장), ⑵ **정규화 기준 동일 probe의 그룹 간 중복 금지**,
+  ⑶ 그룹 수 ≤ 3(`열린 결정` ②의 "확정 topic ≤3"과 같은 값·같은 안건), ⑷ 그룹당 probe ≥ 1.
+- **malformed 출력**(그룹 간 중복 probe·빈 그룹·상한 초과·파싱 불가): 그 LLM 출력을
+  **통째로 버리고** degraded 경로로 진행한다 — 원문 probe 1개짜리 단일 그룹(C4 규율:
+  판단에 도달하지 못한 출력을 고쳐 쓰지 않는다). 부분 구제(살릴 그룹만 살리기)는 하지
+  않는다 — 중복이 있었다는 사실 자체가 그룹 경계 전체를 불신하게 만든다.
 
 **실패**: LLM 실패/timeout → probe = 원문 1개로 진행(`degraded=true`). **degraded 상태의
 0건은 422가 아니다** — expansion이 살아 있었다면 발견했을 topic일 수 있으므로, 판단에
@@ -188,7 +216,9 @@ exact_label: bool}], outcome: grounded | failed | ambiguous | unavailable }`
 — outcome 4종은 C4 실패 계약을 승계한다.
 
 **실패 — expansion 상태와 결합해 귀속**(rev 5): ⑴ expansion 정상 완료 + 전 probe 0건 →
-`failed` → **422**("카탈로그에 그 topic이 없다"고 판단할 자격이 있는 유일한 경우).
+`failed` → **422**, 사유 코드 `grounding_failed`(rev 5.5에서 축소: substring 검색과 유한한
+확장이 증명하는 것은 "유효 probe로 grounding하지 못했다"까지다 — "카탈로그에 그 topic이
+없다"는 주장하지 않는다).
 ⑵ expansion degraded(LLM 실패) 상태에서 fallback 0건 또는 유효 probe 0개 → `unavailable`
 → **503**(판단에 도달하지 못함 — 422로 내면 호출자 탓 오귀속). ⑶ 모든 그룹이 ambiguous →
 `ambiguous` → 422(구분 코드).
@@ -227,17 +257,29 @@ flags: {exhaustive, descendants_dropped, topics_dropped}, deep_holdings_observed
 **실패 — 초기엔 fail-closed**(rev 5, 외부 리뷰 수용 — `열린 결정` ① 해소):
 
 - **404**(캐시된 id가 배포 사이 카탈로그에서 소멸 — merge는 resolve가 승계 topic으로
-  따라가므로 드묾, drop/비활성이 남는 경우): 그 probe의 캐시를 무효화하고 **grounding을
-  1회 재실행**한다. 재실행 후에도 해석되지 않으면 아래 규칙.
+  따라가므로 드묾, drop/비활성이 남는 경우): **카탈로그 시점이 바뀌었다는 신호**로 다룬다
+  (rev 5.5에서 범위 명확화 — key 하나만 갈아끼우면 서로 다른 카탈로그 시점의 결과가 한
+  응답에 섞인다). 관련 캐시를 무효화하고 **S2 전체를 재실행**한 뒤, 이미 받아 둔 S3 결과를
+  **전부 버리고 S3 전체를 1회 재실행**한다. 재실행은 요청당 1회 — 그 뒤에도 실패하면
+  아래 규칙.
 - **확정 topic 중 하나라도 최종 실패**(5xx/timeout, 재grounding 후 404) → **503.**
   topic 하나가 빠진 RRF는 "완전한 결과의 품질 저하"가 아니라 **다른 랭킹**이다. 조용히
   topic을 버리면 전부 소멸 시 200+empty로 "공개 보유자 없음" 오귀속까지 일어난다.
   부분 성공("성공분 + degraded 표시")은 concept-group 의미와 bourbon-agent의 degraded
   wire가 정해진 뒤 재개방할 계약으로 미룬다.
-- `exhaustive=false` → 탈락시키지 않고 로깅 + 품질 표시(A단계는 게이트 아님 — 분석 §10-7).
+- **불완전성 플래그도 같은 규칙이다**(rev 5.5 — 외부 리뷰 3차 수용, 분석 §10-7의 "품질
+  저하 취급"을 초기 정책에서 뒤집음): `exhaustive=false`의 실제 의미는 "원래 결과에
+  들어가야 할 유저가 꼬리에서 빠졌을 수 있음"(그쪽 소스 주석, 검증됨)이고, rank 기반
+  RRF에서 이것도 정확히 **다른 랭킹**이다. `exhaustive=false` 또는
+  `truncated_descendants > 0` → **503**. 단일 id 질의라 `unranked_topics`는 계약상 0 —
+  0이 아니면 계약 위반으로 역시 503. 채널 전체 소실보다 심각도는 낮고(꼬리 불확실성)
+  현 카탈로그 규모에서 드물 것이므로 초기 비용은 작다. 부분 결과 허용은 위와 같은
+  명시적 degraded wire 계약에 묶어 재개방한다 — **decision log에만 남기고 200을 주는
+  것은 정직한 성공이 아니다.**
 
 **계측**: "grounded인데 공개 보유자 0" 비율(= 공개 밀도 지표), 플래그 3종 분포, topic당
-반환 유저 수 분포(100 근접 = 컷 경계 접근 — (a)안 만료 감시), rollup 비율.
+반환 유저 수 분포(100 근접 = 컷 경계 접근 — (a)안 만료 감시), `deep_holdings_observed` 비율
+(rev 5.5 정정 — "rollup 비율"은 바로 위에서 측정 불가로 결론냈다. 정확한 경로 계측은 §11-19).
 
 ### S4 Merge & Filter — owner 단위 병합
 
@@ -272,8 +314,10 @@ flags: {exhaustive, descendants_dropped, topics_dropped}, deep_holdings_observed
 
 **topic-api 호출**: 없음.
 
-**산출물**: `CandidatePool { candidates: [{user_id, rrf_rank, evidences: [...]}],
-degraded: bool (S3 부분 실패·플래그 반영) }`
+**산출물**: `CandidatePool { candidates: [{user_id, rrf_rank, evidences: [...]}] }` —
+`degraded` 필드는 rev 5.5에서 **삭제**: S3의 부분 실패·불완전 플래그가 전부 503이 된 뒤로는
+도달 불가능한 값이다. 품질 신호는 decision log가 소유하고, 필드는 degraded wire 재개방
+결정과 함께 재정의한다.
 
 **실패**: 병합 후 0명 → **200 + empty**("topic은 있으나 공개 보유자 없음" — §4. cold-start의
 정상 경로다, 분석 §6.4).
@@ -285,7 +329,8 @@ degraded: bool (S3 부분 실패·플래그 반영) }`
 **동작**: lexicographic 정렬 키(분석 §9의 ordering 계약 재해석):
 
 ```
-gate(현 A단계: privacy=구조 보장, maturity=§11-6 대기로 비활성)
+gate(현 A단계: privacy=public tier 소비 + S4 stub 방어 — §11-4 해소 전에는 "구조
+     보장"이 아니다(rev 5.5, §1의 약화 서술과 동기화), maturity=§11-6 대기로 비활성)
   → 1키: 정렬 전략 슬롯 (기본 전략 = RRF 순위)
   → 2키: 즐겨찾기 tiebreak (승계 — gate 우회 금지, 동순위에서만. **dormant**: 공급처가
         아직 없다 — §1)
@@ -342,7 +387,7 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
    generator는 OFF 유지(기존).
 4. **응답 wire — bourbon-agent 모델로의 변환표**(rev 5): 후보별로
    `id` = agent ID(위 0의 uuid5 변환) · `expertise` = 대표+요약 topic 라벨(ko·en) ·
-   `match_reason` 재료 = 대표 topic·기여 요지. `name`·`description`은 hydration 결정(§9-⑨)
+   `match_reason` 재료 = 대표 topic·기여 요지. `name`·`description`은 hydration 결정(§9-⑨ — **S6 선행 블로커**: 결정 전에는 strict wire를 채울 수 없어 S6 구현·통합 테스트 불가)
    에 따름 — 단 그들 strict 모델의 `description: str`(non-nullable)은 "현재 항상 NULL"인
    데이터 현실과 충돌하므로 어느 경로든 그쪽 모델이 한 번 움직여야 한다(nullable 또는
    빈 문자열 관례). **scalar 점수 비노출**(순위가 곧 응답 순서).
@@ -377,7 +422,7 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
 
 | 단계 | 산출물 | 소비자 |
 |---|---|---|
-| S1 | `ExpansionResult` (probes + 귀속) | S2, 계측 |
+| S1 | `ExpansionResult` (concept groups ⊃ probes + 귀속) | S2, 계측 |
 | S2 | `GroundingResult` (topic 1~3 + outcome) | S3, §4 판정, 계측 |
 | S3 | `TopicCandidates[]` (유저+matched 트리 원형+플래그) | S4, 계측 |
 | S4 | `CandidatePool` (RRF 순위 + evidence 병합) | S5 |
@@ -413,6 +458,10 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 
 ## §7 기존 discovery/ 코드와의 매핑
 
+> **2026-08-24 재해석 (rev 5.3)**: 구현은 `project-template-python`에서 **신규 시작**한다
+> (오너 결정 — `serving_surface_design.md` §1-4). 아래 표의 "유지"는 "신규 구현으로 포팅",
+> "삭제"는 "포팅하지 않음"으로 읽는다 — 신규 구현에는 삭제 패스가 없다.
+
 | 현행 | 처분 |
 |---|---|
 | `api/` 라우터·에러 매핑·request_id | **유지** (요청 wire에서 need_type·proposition 삭제) |
@@ -428,7 +477,7 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 | `serving.py`·`decision_log*`·`observability/`·`llm/` | **유지** |
 | eval 코퍼스 | **재작성** — 기존 질의·앵커는 memory 앵커 세계의 어휘(분석 §12.1 주의) |
 
-삭제·교체의 실행 순서는 구현 계획(`tasks/todo.md`)에서.
+포팅의 실행 순서는 신규 구현의 계획에서 정한다(그릇 결정 = `serving_surface_design.md` §7-③).
 
 ---
 
@@ -464,15 +513,66 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 8. **200+empty의 사유 코드 체계** — "no_public_holders" / "degraded" 구분을 wire에 실을지.
 11. **요청 wire 길이 상한 값** (rev 5) — `topic` ≤200자·`context` ≤2,000자 제안. probe
    ≤100자는 topic-api `NameQuery`와 동기라 제안이 아니라 제약.
-9. **응답 카드 hydration 책임** (rev 3 — 협의로 "기획 의존·추후 결정" 확인) — name=owner
-   이름·description=personal agent 현재 NULL. 경로 (a) 우리가 채움 → bourbon-api 직접 호출
-   의존성 신설, (b) bourbon-agent가 채움. 우리 산출물(id + expertise 재료 + match_reason
-   재료)은 어느 쪽에서도 성립 — 기획 확정 시 wire만 잠근다. description이 "추천 판단
-   입력"이 될 가능성(오너 언급)은 열어 둔다.
+9. **응답 카드 hydration 책임** (rev 3 협의 → **rev 5.5에서 S6 선행 블로커로 승격**) —
+   bourbon-agent strict wire가 `name`·`description`을 필수로 요구해(§2), 결정 전에는 S6
+   구현·통합 테스트가 불가능하다. name=owner 이름·description=personal agent 현재 NULL.
+   옵션: (a) 우리가 채움 → bourbon-api 직접 호출 의존성 신설 — **배제 권고**,
+   **(b) bourbon-agent가 agent ID로 hydration + 우리 wire 축소 — 권고**, (c) 그쪽 wire
+   nullable화 — 차선. `description=""` 채우기는 가짜 계약이라 금지. **bourbon-agent 오너와
+   협의해 코드 골격 전에 확정할 것.** description이 "추천 판단 입력"이 될 가능성(오너
+   언급)은 열어 둔다.
 10. **probe 언어 배분(원문1+en3+ko2)** (rev 2) — 실측 12쌍 기준 제안값. S1 계측(언어별 히트
    기여)으로 조정.
 
 ---
+
+## §10 구조 원칙 — 파이프라인은 조립, 단계는 부품 (rev 5.4)
+
+이 문서의 S1–S6은 **현재 목표하는 추천 형태 하나**의 파이프라인이다. 새로운 추천 형태
+(로드맵상 후보: for/against, push 모드, orthogonal 서빙)가 들어오면 다른 파이프라인을 탈 수
+있고, 그때 단계 일부는 공유될 것이다. 아직 어느 것도 결정되지 않았으므로, 신규 구현
+(`bourbon-agent-discovery-api`)은 **그 가능성이 싸게 열리는 구조까지만** 지금 만들고
+그 이상의 추상화는 만들지 않는다.
+
+**규칙 (결정):**
+
+1. **단계 = typed 입출력 부품, 외부 의존은 주입된 port로.** §5의 단계별 산출물 타입이 곧
+   모듈 경계다 — 단계끼리 내부를 import하지 않고 산출물 타입으로만 대화한다. S1–S3은
+   LLM·HTTP를 호출하므로 "순수 부품"이 아니다(rev 5.5 정정) — 이들은 **typed component
+   with injected ports**이고, **순수성은 선별·병합·정렬 함수에만 요구**한다(S2 선별 rule
+   pass·S4 RRF 병합·S5 정렬 키 — 이쪽이 단위 테스트의 본체다).
+2. **파이프라인 = 명시적 조립 함수 하나.** 흐름 제어(재grounding 1회, fail-closed 분기,
+   §4 귀속 판정)는 전부 조립 함수에 두고 단계 안에 흩어놓지 않는다. 새 추천 형태 =
+   `pipelines/`에 조립 함수 하나 추가.
+3. **wire 계약은 파이프라인 소속, HTTP 표현은 api/ 소속**(rev 5.5 명확화). 파이프라인은
+   transport 무관 command/result를 소유하고, 실제 Pydantic HTTP wire 모델과 wire ↔ domain
+   변환은 `api/`가 갖는다. 단계 산출물 타입(`domain/`)과는 분리 — 새 파이프라인이 다른
+   wire를 가져도 부품이 흔들리지 않는다.
+4. **배선은 composition root에서만**(기존 phase5 규율 승계). provider 주입도 파이프라인
+   단위로 한다.
+5. **decision log·계측은 단계 키로** 남긴다 — 새 파이프라인이 관측을 공짜로 얻는다.
+
+```
+agent_discovery/
+  domain/          # 단계 공유 타입 (§5 산출물 — transport 무관)
+  stages/          # 부품: expansion, grounding, retrieval, merge, ranking, assembly
+  pipelines/       # 조립: topic_recommend.py (= 이 문서의 S1–S6 배선).
+                   # transport 무관 command/result 소유
+  providers/       # 주입되는 port: topic-api client, LLM 등 외부 의존
+api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
+                   # 단계는 FastAPI를 모른다(기존 규율 승계)
+```
+
+**안 하는 것 (anti-goal, 결정):** pipeline registry · 추상 `Pipeline` base class · 추천
+형태에 대한 strategy dispatch · wire의 `pipeline_id`/`recommendation_type` 필드 · config로
+단계 순서를 조립하는 DAG. 두 번째 파이프라인이 실물로 없을 때 만든 추상화는 변주 축을
+틀리게 찍는다("예약 hook은 같은 질문이 유지될 때만 additive" — stance normalizer를 구현
+후 제거한 전례).
+
+**재검토 조건:** 이 절의 결정은 "두 번째 파이프라인이 아직 없다"는 전제 위에서만 유효하다.
+두 번째 추천 형태가 **제품으로 확정되는 시점**에 이 절을 다시 열어, 실물 두 개를 놓고
+공유 부품 목록과 분기 지점을 다시 긋는다. 그 전에 "미래 대비"를 이유로 한 선제 추상화는
+이 절이 거절 근거다.
 
 ## 변경 이력
 
@@ -520,6 +620,28 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 - **2026-08-24 rev 5.1** — 지위 갱신(설계 내용 불변). `persona_topic_search_design.md`(rev 14)를
   `archive/`로 보내며 이 문서를 정본으로 승격. 헤더의 입력 표기를 분석 rev 7로 동기화(rev 5와
   같은 커밋 `93e819d`에서 함께 개정된 문서라 내용상 이미 rev 7 기준이었다).
+- **2026-08-24 rev 5.5** — 외부 리뷰 3차(P1 4건·P2 6건) 반영. ⑴ **완전성 정책**(P1-1):
+  `exhaustive=false`·`truncated_descendants>0`도 503 — 꼬리 소실도 rank 기반 RRF에선 다른
+  랭킹이며, decision log에만 남는 degraded 200은 정직한 성공이 아니다(분석 §10-7의 초기
+  정책을 뒤집음). 파생: `CandidatePool.degraded` 삭제(도달 불가). ⑵ **hydration을 S6 선행
+  블로커로 승격**(P1-3): bourbon-agent strict wire의 name/description 필수 확인 — 권고 (b)
+  그쪽 hydration + wire 축소, 차선 (c) nullable화, (a)·`""` 배제. §2의 `id`(owner) 오기를
+  agent로 정정. ⑶ **concept group 생성 계약 신설**(P1-4): 그룹=독립 의미 축(언어·광협
+  변형은 경계 아님), 그룹을 일급 객체로(ExpansionResult.groups), 구조 검증 4종(중복
+  금지·상한 3=②·비어있음 금지), malformed는 통째로 degraded. ⑷ 404 재실행 범위 = S2 전체
+  + S3 전체 1회(카탈로그 시점 혼합 금지), 422 사유를 `grounding_failed`로 축소, S5 privacy
+  문구를 §1과 동기화(stale), 계측 "rollup 비율"→`deep_holdings_observed` 비율(stale),
+  §10을 "typed component with injected ports"로 재서술 + `domain/` 추가 + wire/HTTP 소속
+  구분. serving_surface_design.md rev 3(신뢰 경계 threat model)과 동기.
+- **2026-08-24 rev 5.4** — §10 신설(구조 원칙): 파이프라인=명시적 조립 함수·단계=typed
+  순수 부품·wire는 파이프라인 소속·composition root 배선·단계 키 계측. anti-goal(registry·
+  추상 base·wire 형태 필드·config DAG)과 재검토 조건(두 번째 추천 형태의 제품 확정 시)을
+  함께 잠금 — 새로운 추천 형태가 다른 파이프라인을 탈 가능성을 싸게 열어두되 프레임워크는
+  만들지 않는다.
+- **2026-08-24 rev 5.3** — 노출 표면 소유권 분리: internal-only·edge-auth 관례 채택·배포
+  델타는 신설 `serving_surface_design.md`로. 구현을 `project-template-python`에서 신규
+  시작한다는 오너 결정에 따라 §7 처분표를 "포팅한다/포팅하지 않는다"로 재해석(범위 문구의
+  "코드 repo tasks/todo.md" 행선도 이 결정에 종속 — 그릇 결정은 같은 문서 §7-③).
 - **2026-08-24 rev 5.2** — S6-0을 **고정 계약 명문화**로 승격: owner→agent uuid5 파생은
   bourbon-api 지정 fixed 계약(namespace 상수값·known vector·세 repo 재검증·우리 쪽 pin
   테스트 경로 명기). 구 레지스터 B1(bourbon-api producer-side pin 요청)은 발신하지 않기로

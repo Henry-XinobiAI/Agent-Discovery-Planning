@@ -925,8 +925,9 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 5. **self-exclusion·제외 집합** — 우리 후처리로 확정(2026-08-24 결정, §11-5 철회).
    fan-out 100 대비 countable 제외 목록이라 정확성 손실 논거 소멸.
 6. **eligibility (Q12)** — `AllowAllEligibilityProvider`는 여전히 stub. topic-api는 이것을 모른다.
-7. **불완전성 플래그 로깅·게이트** — `exhaustive=false` / `unranked_topics>0` /
-   `truncated_descendants>0`를 품질 저하로 다룬다.
+7. **불완전성 플래그** — `exhaustive=false` / `unranked_topics>0` / `truncated_descendants>0`.
+   ~~품질 저하로 다룬다~~ → **초기 정책은 503**(rev 7.1 — 설계 rev 5.5에서 뒤집음: rank 기반
+   RRF에서 꼬리 소실도 "다른 랭킹"이다). 부분 결과 허용은 명시적 degraded wire와 함께 재개방.
 8. **잎 선호 fan-out + 병합(RRF)** — §8.3-A. leaf 강제는 불가능하므로 rollup 응답도 정상 경로.
 9. **tier 집합 결정** — friends가 랭킹 가능해졌고(#16) 자격 판정은 호출자 몫이다(spec §7).
    우리에게 관계 정보가 없으므로 **public 단독으로 시작**하고, friends 사용은 별도 제품
@@ -1224,3 +1225,6 @@ exact / ancestor-only / 전무 / 캡 오염으로 분류하면 된다. ancestor-
   아티팩트에 실행. IDM(조상 3단) → depth=2에서 `[music → IDM]`(중간 조상 생략·토픽 생존),
   shown_ancestry hops=3(거리 원값 유지), descendants(AI)∋ChatGPT@1(weight 0.6) /
   descendants(ChatGPT)={자신}(하향 전용), 조상 ≥2단 토픽 560/2,605. §2.2에 실측 기록.
+- **2026-08-24 rev 7.1** — §10-7 초기 정책 반전: 불완전성 플래그를 "품질 저하 취급"에서
+  **503**으로(설계 문서 rev 5.5의 완전성 정책과 동기 — 외부 리뷰 3차 수용). 부분 결과
+  허용은 degraded wire 계약과 함께 재개방.
