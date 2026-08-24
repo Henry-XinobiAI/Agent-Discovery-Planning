@@ -14,7 +14,8 @@
 
 | 문서 | 레이어 | 다루는 것 | 핵심 단위 |
 |---|---|---|---|
-| **`topic_api_analysis.md`** | **분석 + 방향 결정 기록 (2026-08-21)** | `bourbon-topic-api` 전수 분석(검색 메커니즘·카탈로그 실측·성능/비용·프라이버시 모델) + **축 이전 결정** + rev 14 폐기/승계 목록 + 열린 질문. **재설계의 입력이며 설계 문서가 아니다** | 사실/결정/열린 질문 |
+| **`topic_api_analysis.md`** | **분석 + 방향 결정 기록 (2026-08-21, rev 5.1)** | `bourbon-topic-api` 전수 분석(검색 메커니즘·카탈로그 실측·성능/비용·프라이버시 모델) + **축 이전 결정** + rev 14 폐기/승계 목록 + 열린 질문. **재설계의 입력이며 설계 문서가 아니다** | 사실/결정/열린 질문 |
+| **`recommendation_pipeline_design.md`** | **설계 초안 rev 1 (2026-08-24, 리뷰 대기)** | topic-api 소비 기반 추천 파이프라인 S1–S6: 단계별 동작·topic-api endpoint·산출물·실패 3분기. 확정되면 `persona_topic_search_design.md`를 대체하는 새 정본 | 파이프라인 단계 산출물 |
 | `persona_topic_search_design.md` | ⚠️ **재설계 대기 (2026-08-21 축 이전으로 전제 무효)** | rev 14까지의 그림: 우리가 전용 테이블에 topic/claim을 소유하고 스트림으로 AOSS에 색인 + 요청마다 relevance 판정. **저장·색인·판정의 주체가 topic-api로 이전**되어 §2·§4와 Q1·Q2·Q5·Q9·Q13·Q14는 무효다. 승계되는 규율은 `topic_api_analysis.md` §9 | (owner, topic) 아이템 / AOSS 문서 |
 | **`impl/` (README + `01`–`11`)** | **현행 shipped 시스템의 구현 계약 (전환 전까지 유효)** | memory-api 기반의 실제 가동 중 시스템: 데이터 계약·provider 경계·grounding·gate/ranking·serving·eval. 전환 시 삭제 패스의 기준선이기도 하다 | typed struct / phase |
 | `bourbon_api_discovery_open_requests.md` | 활성 요청 레지스터 (bourbon-api B1–B2) | owner→agent 파생 계약·신뢰된 requester identity — **소스 전환과 무관하게 새 체인에서도 필요**(hydration·self-exclusion의 전제) | B# |
