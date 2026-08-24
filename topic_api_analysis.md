@@ -8,6 +8,8 @@
 > 실측. 초판은 HEAD `296723d`, rev 3은 HEAD `107f5cd`(#17 카탈로그 산출물 전환),
 > **rev 4는 HEAD `80c650f`(2026-08-24)** — PR #16(인덱스 2분할+tier 집합 랭킹),
 > #18–#25(응답 재구성·internal 표면 통합·3언어 서술·응답 트리·demo persona seed)를 반영했다.
+> **rev 5(2026-08-24)는 오너 전언 3건 반영** — facets는 dummy·계약 미확정, item=null 의미
+> 확인, 트리 depth 2 + 이하 rollup.
 > 대조 대상은 `../../iac`(origin/main `d364d3c`, rev 4에서 `592e34c`로 재확인),
 > `../bourbon-api`(origin/main `943b5f5`), `../bourbon-agent`(HEAD `18fbcac`).
 >
@@ -43,7 +45,10 @@ self-exclusion, 판정 입력 비신뢰)과 얇은 보정층(ordering 키, reran
 가능 tier로 추가됐다(#16). 검색 응답이 설명 트리로 재편됐고(#21–#24), **랭킹 응답에 원
 facets(`score_detail`)가 실리기 시작했다** — §4.2의 걸림돌(N+1)이 해소됐다(§11-3 닫힘).
 internal 표면은 별도 워크로드에서 같은 워크로드의 `/api/internal/svc/topic` prefix로
-통합됐다(#19). **컷 한계(§9)와 공개 밀도 0(§6.4)은 그대로다.**
+통합됐다(#19). **컷 한계(§9)와 공개 밀도 0(§6.4)은 그대로다.** 단 rev 5의 오너 전언:
+**현재 facets는 dummy이고 필드·의미가 모두 바뀔 수 있다** — 재가중 재료의 운반 경로는
+확보됐지만 의미는 아직 계약이 아니며, ordering 키 식은 facets 계약 확정(§11-18) 전에
+잠그지 않는다.
 
 **재설계가 답해야 하는 것**은 §13에 목록으로 있다.
 
@@ -365,6 +370,18 @@ Fagin TA 계열 알고리즘:
 노드마다 **`is_match`**(true=질의가 매치한 토픽, false=걸어두기용 조상)를 실으며(#24),
 `limit`은 매치 수만 센다. persona extraction 자신도 이 트리를 grounding 후보 조립에 쓴다.
 
+**오너 확인(전언), 2026-08-24 (rev 5):** ⑴ `search/users`의 `item=null` 노드는 "그
+유저(agent)가 그 토픽 아이템을 보유하지 않음"이다(트리 표시용 조상 또는 보유물이 아래에
+있는 지명 토픽 — 위 목록의 서술과 일치). ⑵ 트리는 **root + depth 2 수준까지의 토픽으로
+구성하고, 그 아래 토픽 보유는 rollup으로 접어 올려 준다.** 코드로 정확히 하면: 매치·보유
+토픽 **자신은 깊이와 무관하게 항상 제 노드로 나온다**(`build_tree`가
+`ancestor_path[:depth-1] + [topic_id]`로 경로를 만든다) — depth 2가 접는 것은 그 위의
+**조상 사슬**(중간 조상 생략, root 바로 아래에 걸림)과, 랭킹에서 지명 토픽 아래 보유가
+감쇠 합산되는 rollup이다. 추천 설계 함의: ⓐ 근거 표시의 계층 문맥은 2단(root→토픽)으로
+평평해지므로 "어느 분야의 어느 세부인가"는 노드 위치가 아니라 `distance`로 복원한다.
+ⓑ 지명 토픽보다 깊은 보유는 라벨이 아니라 `distance>0` 자손 노드 + `contribution`으로
+도착한다 — 우리 `matched_topics` 축약(§13-2)이 이 두 신호를 소비해야 한다.
+
 **페이징이 없다.** 양쪽 경로가 같은 resume 계약을 못 내서 일단 뺐다(README 명시). 즉
 top-`limit`(≤100) 밖은 존재하지 않는 것으로 취급해야 한다.
 
@@ -497,7 +514,7 @@ finance 1. 실무 어휘(세무·조직·HR·프로덕트)는 없다.
 | 층 | 상태 | 고칠 수 있나 |
 |---|---|---|
 | **어휘** | §3.1–3.2. 관심 도메인 분류. science·AI만 예외적으로 촘촘 | ✅ `groups.yaml` seed 확장. 코드 변경 0 |
-| **점수 공식** | facets 5개 중 **4개가 관심·애착**(engagement/affinity/duration/recency), 전문성은 `knowledge` 하나. **등가중 평균**(`fmean`) × relation할인 × confidence | ✅ `score_detail`(구 score_inputs)에 원 facets가 남고, **rev 4부터 랭킹 응답에도 실린다**(§4.2) |
+| **점수 공식** | facets 5개 중 **4개가 관심·애착**(engagement/affinity/duration/recency), 전문성은 `knowledge` 하나. **등가중 평균**(`fmean`) × relation할인 × confidence | ✅ `score_detail`(구 score_inputs)에 원 facets가 남고, **rev 4부터 랭킹 응답에도 실린다**(§4.2). ⚠️ 단 현재 값은 dummy·필드/의미 변경 가능(오너 전언 — §11-18) |
 | **근거 출처** | persona **자기 서술**. 프롬프트도 "`knowledge` = 문장이 드러내는 전문성의 깊이". 외부 검증(대화 근거·기여·타인 확인) 없음 | ❌ 구조적으로 없음 |
 
 ### 4.1 점수 공식 문제는 1차의 문제다
@@ -526,6 +543,19 @@ finance 1. 실무 어휘(세무·조직·HR·프로덕트)는 없다.
 (`api/structs/user_topic.py:_blocks_of` — 전수 확인). owner당 추가 호출 없이 **검색 한 번으로
 재가중 재료가 도착한다.** §11-3은 닫혔다. 단 이것은 재가중의 전제일 뿐이고, §9의 컷
 한계(도착하지 못한 후보는 재가중이 구제 못 함)는 그대로다.
+
+**새 걸림돌 — facets 계약이 미확정이다 (오너 확인(전언), 2026-08-24, rev 5).** 현재 facets
+값은 **dummy data**이고, **필드 집합 자체가 바뀔 수 있으며 각 값의 의미도 바뀔 수 있다.**
+따라서:
+
+- 재료의 **운반 경로**(랭킹 응답의 score_detail 블록)는 확보됐지만, 재료의 **의미**는 아직
+  계약이 아니다. §4.1의 knowledge/engagement 대비 계산은 "현 코드의 공식이 이런 성질"이라는
+  분석으로는 유효하되, **그 필드들이 그 의미로 존속한다는 가정 위에 키 식을 잠그면 안 된다.**
+- ordering 키 식(§13-3)의 확정은 **facets 계약 확정이 선행 조건**이다 → §11-18.
+- 우리 어댑터는 facet 필드 이름에 하드바인딩하지 않는다: 모르는 facet은 무시하고, 기대한
+  facet의 부재는 null 처우 규칙(§13-3)으로 흘려보내며, 키 계산은 교체 가능한 전략으로 둔다.
+  (topic-api 쪽 `Facets`는 `extra="forbid"`라 필드 추가가 그들 쪽에서는 즉시 드러난다 —
+  우리 쪽 계약 테스트는 wire 규율대로 실제 payload 고정본으로.)
 
 ---
 
@@ -868,7 +898,8 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
      랭킹은 확정 id로 `/topics/{id}/users` fan-out + RRF가 맡는다(§8.3-A).
 3. **실패 의미 3분기** — `/search/topics` 결과로 "토픽이 없다"(→422)와 "토픽은 있으나 공개
    보유자 0"(→200+empty)을 우리가 갈라야 한다. topic-api는 둘 다 200+빈 items로 답한다.
-4. **ordering 키** — facets 기반 전문성 가중(§9).
+4. **ordering 키** — facets 기반 전문성 가중(§9). 단 facets 계약 확정(§11-18) 전에는 식을
+   잠그지 않고, 어댑터는 facet 이름에 하드바인딩하지 않는다(§4.2).
 5. **self-exclusion** — topic-api에 없다. 서버측이 아니면 정확성 손실(§11-5).
 6. **eligibility (Q12)** — `AllowAllEligibilityProvider`는 여전히 stub. topic-api는 이것을 모른다.
 7. **불완전성 플래그 로깅·게이트** — `exhaustive=false` / `unranked_topics>0` /
@@ -901,6 +932,7 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 | 15 | **expertise 접근 경로**(정렬 파라미터 또는 expertise용 두 번째 GSI) — §9 컷 문제의 (b)안. **(a)안의 컷 경계 계측이 필요를 증명한 뒤에** 꺼낸다 | topic-api | 측정 후 |
 | 16 | **id 리스트 랭킹 라우트 (rev 4 신설).** `SearchQuery.topic_ids`는 서비스 층에 이미 리스트인데, 라우트는 이름 검색(`/search/users?q=`)만 리스트 경로를 탄다. expansion→선별 결과를 threshold 병합(감쇠 합산 총점)으로 물으려면 topic_ids를 받는 internal 라우트 하나가 필요 — **도메인 코드는 있고 라우트만 없다.** 그 전까지는 id별 fan-out + 우리 RRF(§8.3-A) | topic-api | 높음 |
 | 17 | **friends tier 사용 여부 (rev 4 신설).** friends가 랭킹 가능해졌고 자격 판정은 호출자 몫(spec §7). "추천 서빙이 friends를 물어도 되는가"는 제품 결정이고 관계 정보가 우리에게 없다 — Alpha는 public 단독(§10-9) | 기획 + 우리 | 중간 |
+| 18 | **facets 계약 확정 (rev 5 신설 — 오너 전언 2026-08-24).** 현재 facets는 dummy이고 **필드 집합·값 의미가 모두 변경될 수 있다.** 확정해야 할 것: ⑴ 최종 필드 집합과 각 필드의 의미(특히 전문성 축이 어느 필드에 남는가) ⑵ 실데이터 주입 시점 ⑶ 변경 통지 채널(우리 ordering 키 식이 이 계약에 결합된다 — §4.2·§13-3). **이 계약 확정 전에는 키 식을 잠그지 않는다** | extractor + topic-api | **높음 (키 식의 선행 조건)** |
 
 1·2는 **extractor 계약이 열려 있는 지금만 싸게 들어간다.** 나중에 바꾸려면 재추출과 데이터
 마이그레이션이다.
@@ -937,7 +969,9 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
 - expansion 결과의 `/search/topics` 0건 비율 = **카탈로그 커버리지 지표**
 - 매칭됐으나 공개 보유자 0 비율 = **공개 밀도 지표**
 - `exhaustive` / `unranked_topics` / `truncated_descendants` 분포
-- 우리 ordering 키와 topic-api `score` 순위의 불일치도(전문성 재가중이 실제로 순위를 바꾸는지)
+- 우리 ordering 키와 topic-api `score` 순위의 불일치도(전문성 재가중이 실제로 순위를 바꾸는지).
+  **단 실데이터 주입 후에만 의미 있다** — 현재 facets는 dummy(§4.2, 오너 전언 2026-08-24)라
+  dummy 위 측정은 공식의 성질이 아니라 dummy 생성기의 성질을 잰다
 - **컷 경계 계측 (§9-(a)의 만료 감시)**: 토픽당 공개 보유자 수 분포, 그리고 `limit=100` 응답
   마지막 행 부근의 knowledge 분포 — 컷 밖 손실이 시작되는 순간을 잡는다
 
@@ -952,7 +986,9 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
    매핑되는가. NeedType·stance 파이프라인은 삭제 대상이다.
 2. **병합 규칙.** 여러 leaf 결과를 owner 단위로 합칠 때 RRF인가 다른 것인가. topic별 기여도를
    어떻게 `matched_topics`로 축약하는가(대표 topic 선택 규율 — rev 14가 ranking 단계로 잠근 것).
-3. **ordering 키의 정확한 식.** facets 5개에서 전문성 키를 어떻게 만드는가.
+3. **ordering 키의 정확한 식.** **선행 조건: facets 계약 확정(§11-18) — 현재 필드·의미가
+   미확정(dummy)이므로 그 전에는 식을 잠그지 않고, 어댑터는 facet 이름에 하드바인딩하지
+   않는 교체 가능한 전략으로 설계한다(§4.2).** 그 위에서: facets에서 전문성 키를 어떻게 만드는가.
    `knowledge` 단독? 가중합? `confidence`를 곱하는가? **`relation=related`는 필터인가 할인인가?**
    **`score_detail`이 null인 아이템은 어디에 놓는가?** §9 컷 문제의 (a)/(b) 중 무엇으로
    시작하고 만료 조건은 무엇인가. 그리고 그 식이 **gate와 섞이지 않는다**는 것을 어떻게
@@ -1134,3 +1170,14 @@ exact / ancestor-only / 전무 / 캡 오염으로 분류하면 된다. ancestor-
   `backfill_index_key.py`는 삭제됐다(§1.3 언급 제거 — 인덱스 명세는 `create_tables.py`가 유일).
   테스트 실측: **1208 passed / 86 skipped / 0 failed.** 검색 어휘층(`find_by_name`·normalize·
   카탈로그 시드)은 rev 4 구간에서도 무변 — §2.1 실측 표·§3 카탈로그 분석은 그대로 유효하다.
+- **2026-08-24 rev 5** — 오너 전언 3건 반영(코드가 아니라 전언이므로 "오너 확인(전언)"으로
+  표기). ⑴ **facets는 현재 dummy이고 필드 집합·값 의미가 모두 변경될 수 있다** → §4.2에 새
+  걸림돌로 기록, §11-18(facets 계약 확정 — 키 식의 선행 조건) 신설, §13-3에 선행 조건 명시,
+  §12.3의 재가중 계측에 "실데이터 주입 후에만 의미" 주의 추가. rev 4의 "재가중 재료 확보"
+  결론은 **운반 경로 확보**로 좁혀 읽어야 한다 — 의미는 아직 계약이 아니다. ⑵ `search/users`의
+  `item=null` = 그 유저가 그 토픽 아이템을 보유하지 않음 — rev 4의 코드 분석과 일치(§2.2에
+  확인 기록). ⑶ 트리는 root + depth 2까지로 구성하고 이하 보유는 rollup으로 접어 올린다 —
+  코드로 정밀화하면 매치·보유 토픽 자신은 항상 제 노드로 나오고(`build_tree`), depth 2가
+  접는 것은 조상 사슬과 랭킹의 감쇠 합산이다(작성 중 "세밀도가 2로 캡"이라 먼저 적었다가
+  build_tree 경로식 확인으로 정정). 추천 설계 함의를 §2.2에 기록: 계층 문맥은 distance로,
+  깊은 보유는 distance>0 자손 노드 + contribution으로 복원한다.
