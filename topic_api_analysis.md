@@ -5,9 +5,10 @@
 > 재설계 결과가 나오면 그 문서가 새 정본이 된다.
 >
 > **작성 근거**: 2026-08-21, `../bourbon-topic-api` 전수 읽기 + 테스트 실행 + 카탈로그 시드
-> 실측. 초판은 HEAD `296723d`, **rev 3은 HEAD `107f5cd`** — 카탈로그가 DynamoDB 테이블에서
-> 이미지 내 빌드 산출물로 바뀐 #17을 포함해 5커밋을 반영했다.
-> 카탈로그 시드 실측. 대조 대상은 `../../iac`(origin/main `d364d3c`),
+> 실측. 초판은 HEAD `296723d`, rev 3은 HEAD `107f5cd`(#17 카탈로그 산출물 전환),
+> **rev 4는 HEAD `80c650f`(2026-08-24)** — PR #16(인덱스 2분할+tier 집합 랭킹),
+> #18–#25(응답 재구성·internal 표면 통합·3언어 서술·응답 트리·demo persona seed)를 반영했다.
+> 대조 대상은 `../../iac`(origin/main `d364d3c`, rev 4에서 `592e34c`로 재확인),
 > `../bourbon-api`(origin/main `943b5f5`), `../bourbon-agent`(HEAD `18fbcac`).
 >
 > **표기 규율**: 모든 주장에 `검증됨`(코드/실측) · `가정`(명시된 추정) · `미확인`(확인 필요) 중
@@ -38,6 +39,12 @@ self-exclusion, 판정 입력 비신뢰)과 얇은 보정층(ordering 키, reran
 유저가 직접 public으로 올려야 한다. 랭킹은 public 파티션만 읽는다. 따라서
 `서빙 가능성 = 카탈로그 커버리지 × 공개 밀도`이고, **두 번째 항이 현재 0이다.**
 
+**rev 4에서 움직인 것 (2026-08-24).** 인덱스가 rank/holder 2개로 갈리고 friends가 랭킹
+가능 tier로 추가됐다(#16). 검색 응답이 설명 트리로 재편됐고(#21–#24), **랭킹 응답에 원
+facets(`score_detail`)가 실리기 시작했다** — §4.2의 걸림돌(N+1)이 해소됐다(§11-3 닫힘).
+internal 표면은 별도 워크로드에서 같은 워크로드의 `/api/internal/svc/topic` prefix로
+통합됐다(#19). **컷 한계(§9)와 공개 밀도 0(§6.4)은 그대로다.**
+
 **재설계가 답해야 하는 것**은 §13에 목록으로 있다.
 
 ---
@@ -53,29 +60,31 @@ self-exclusion, 판정 입력 비신뢰)과 얇은 보정층(ordering 키, reran
 | 문법 | PEP 758(`except A, B:` 괄호 없는 다중 예외) 실사용 — **3.13에서는 컴파일 실패** |
 | 인증 | 코드 0줄. `bourbon.xinobi.ai/edge-auth` 라벨이 붙은 파드의 사이드카가 토큰 검증 후 `x-user-id` 주입, `Authorization`/`Cookie` 제거 |
 | 규모 | Python ~11k줄 |
-| 테스트 | HEAD `107f5cd`에서 재실행: **942 passed / 50 skipped / 0 failed**(`LOG_LEVEL`만 주면 전부 통과). skip 50개는 DynamoDB 로컬 엔드포인트 미설정. 초판 시점(296723d)은 922/62/1이었다 |
+| 테스트 | rev 4 HEAD `80c650f`에서 재실행: **1208 passed / 86 skipped / 0 failed**. skip은 DynamoDB 로컬 엔드포인트 미설정. rev 3(107f5cd)은 942/50/0, 초판(296723d)은 922/62/1이었다 |
 
 `AWS_REGION`은 configmap에 고정(`ap-northeast-1`). botocore가 기본값을 갖지 않아 누락 시
 클라이언트 생성 단계에서 `NoRegionError`로 죽는다.
 
-### 1.2 두 워크로드
+### 1.2 두 표면 — 워크로드 하나, prefix 두 개 (#19에서 재편)
 
-`SERVICE_ROLE`이 프로세스에 존재하는 라우터 집합을 결정한다(`api/depends/role.py`).
+~~`SERVICE_ROLE`이 프로세스에 존재하는 라우터 집합을 결정한다~~ — **rev 4에서 소멸.**
+#19가 역할 분리를 워크로드에서 **마운트 prefix**로 옮겼다. 한 워크로드가 두 표면을 서빙하고,
+`api/depends/surfaces.py`의 두 목록이 어느 라우터가 어느 prefix 아래 붙는지를 정하며, 표면
+테스트가 그 분리를 고정한다("엉뚱한 목록에 있는 엔드포인트는 보안 결정이 잘못된 것").
 
-| 역할 | prefix | edge-auth | 게이트웨이 라우트 | 서비스 |
-|---|---|---|---|---|
-| `public` | `/api/svc/topic` | 있음 | 필요 | 읽기 7개 라우트 |
-| `internal` | `/internal/topic` | **없음** | 없음 | score 주입 · 유저 삭제 · 공개 읽기 미러 (카탈로그 관리 라우트는 #17에서 **전부 제거** — 카탈로그 편집은 seeds→build→redeploy) |
+| 표면 | prefix | edge-auth | 라우터 |
+|---|---|---|---|
+| public | `/api/svc/topic` | 있음 (게이트웨이 라우트 필요) | topics · me · users · search |
+| internal | `/api/internal/svc/topic` | **skip** (bourbon-api 관례 prefix — 게이트웨이가 IP gate 뒤로 라우팅) | internal/topics · internal/search · internal/users(score 주입·extraction 쓰기·유저 삭제·읽기 미러) |
 
-쓰기 라우트는 public 워크로드에 **아예 마운트되지 않는다** — 게이트웨이 오설정으로도 노출
-불가. 이 패턴은 우리가 dev 배포 경계(K1–K4)에서 고민한 것보다 깔끔하다.
+쓰기 라우트는 public 표면에 **아예 마운트되지 않는다** — 게이트웨이 오설정으로도 노출 불가.
+internal 표면에는 검증된 호출자 신원이 없다: `x-user-id`는 보낸 쪽이 넣은 값 그대로이고,
+어느 internal 라우트도 그것을 읽지 않는다. `/me`는 미러하지 않는다(호출자가 없으므로) —
+이 사실이 §6의 프라이버시 결론에서 결정적으로 쓰인다. internal 응답은 한 언어가 아니라
+**언어 맵(ko/en/ja) 전체**를 답한다 — 언어 선택이 우리(호출자) 몫이 된다.
 
-internal 워크로드는 `/me/topics`를 **미러하지 않는다**: 그 라우트는 호출자 자신의 아이템을
-읽는데 internal에는 호출자가 없다. 이 사실이 §6의 프라이버시 결론에서 결정적으로 쓰인다.
-
-internal은 `AuthorizationPolicy`를 출하하지 않아 메시 내 어느 파드나 호출할 수 있다. 그 결과
-`GET /users/{owner_id}/topics?visibility=friends`를 검증된 신원 없이 읽을 수 있고, README가
-이를 "accepted risk"로 명시한다.
+internal용 `AuthorizationPolicy`는 여전히 없어(재확인 — k8s에는 dev docs용 oauth2-proxy
+정책뿐) 메시 내 어느 파드나 호출할 수 있고, README가 이를 "accepted risk"로 유지한다.
 
 ### 1.3 3층 구조
 
@@ -84,10 +93,13 @@ internal은 `AuthorizationPolicy`를 출하하지 않아 메시 내 어느 파�
      {built_at, dump_version, topics[], edges[[child,parent]]} — 시작 시 1회 로드해 인메모리
      그래프로. TTL·reload 라우트 없음: 편집은 discover→review→build→커밋→redeploy (#17)
 
-② 유저 토픽 아이템             topic/user_topics/*  DynamoDB: bourbon-user-topic-tokyo-{stage}
-     PK=USER#{uuid}  SK=TOPIC#{id}
-     score(0-100) · visibility(4단) · description(유저 취향) · score_inputs(facets/relation/confidence)
-     GSI topic-score-index: PK={topic_id}#{visibility}  SK=score  KEYS_ONLY
+② 유저 토픽 아이템             topic/user_topics/* + topic/storage/user_topics.py (#18에서 저장층 분리)
+     DynamoDB: bourbon-user-topic-tokyo-{stage}   PK=USER#{uuid}  SK=TOPIC#{id}
+     score(0-100) · visibility(4단) · descriptions(ko/en/ja — #20에서 3언어화)
+     · blocks(이미지, 구 image_ids) · score_detail(facets/relation/confidence — 구 score_inputs)
+     GSI 2개(#16):
+       topic-rank-index    PK=rank_key={topic_id}#{visibility}#{shard}  SK=score  KEYS_ONLY  ← 랭킹
+       topic-holder-index  PK=SK  SK=PK  KEYS_ONLY  ← tier 무관 전수 보유자(merge 이송·삭제용)
 
 ③ 검색·랭킹                    topic/search/*
      텍스트→토픽: 인메모리 부분문자열 스캔        (§2.1)
@@ -101,11 +113,21 @@ internal은 `AuthorizationPolicy`를 출하하지 않아 메시 내 어느 파�
 — 운영자 수동 생성 라우트와 함께 `uuid4` 랜덤 경로가 제거됐다("Every identifier is derived;
 there is no random path").
 
-`topic_visibility = {topic_id}#{visibility}`는 GSI 파티션 키이며 `visibility`를 쓰는 모든 곳에서
-같이 쓴다. 파생을 `topic/dynamodb/keys.py` 한 곳에만 두는 이유는 **둘이 어긋나면 랭킹이 조용히
-틀리기 때문**이다. 두 키 속성 중 하나라도 없는 아이템은 **에러 없이** 모든 랭킹에서 사라진다
-(`scripts/dynamodb/backfill_index_key.py`가 보수하며, 인덱스보다 오래된 테이블에서는
-**배포 전에** 돌려야 한다 — 배포가 먼저 착지하면 보수 불가한 아이템이 생긴다).
+`rank_key = {topic_id}#{visibility}#{shard}`는 visibility에서 파생되는 **저장 속성**이고,
+`RANKED_TIERS = {public, friends}`일 때만 존재한다 — GSI는 키 속성이 있는 아이템만 담으므로
+private/hidden이 랭킹 인덱스에 없는 것은 버그가 아니라 **sparse index 메커니즘 그 자체**다
+(#16). tier를 바꾸는 쓰기(`patch_settings`)만 rank_key를 SET/REMOVE하고, injection·extraction은
+불가침이다. 파생은 `topic/connectors/dynamodb/keys.py` 한 곳(#18에서 모듈 이동)에만 있고,
+인덱스 이름도 그 모듈이 소유한다("reader와 writer가 어긋날 수 없게"). shard는 현재 전부
+0(`SOLE_SHARD`) — 키 포맷에 미리 실어 두어 나중에 넓혀도 저장 포맷이 안 바뀐다.
+(rev 3의 `backfill_index_key.py` 언급은 삭제 — 스크립트 자체가 사라졌고, 배포 인덱스의 유일한
+명세는 `scripts/dynamodb/create_tables.py`다 — §7-1.)
+
+한 아이템을 **세 writer가 disjoint 속성으로 나눠 쓴다**(storage 모듈 docstring에 계약 명시):
+user(visibility·rank_key) / extraction(descriptions·blocks) / injection(score·score_detail).
+겹침은 `updated_at` 하나뿐이고 거기서는 LWW가 올바른 의미다. 세 쓰기 모두
+`visibility = if_not_exists(:private)`를 심는다 — **어느 경로로 먼저 착지하든 private**이
+opt-in 정책의 저장층 구현이다(§6.1).
 
 ### 1.4 카탈로그 파이프라인
 
@@ -149,7 +171,7 @@ bourbon-api deferq 이벤트 (at-most-once)
                                            "extraction lands somewhere outside this repo"라고 말한다
  → user_persona 슬롯 (SHARABLE / PRIVATE × bio·traits·preferences)
  → topic-api의 persona→topic 파이프라인   ← 아래 임시 CLI가 그 스탠드인
- → POST /internal/topic/scores/bulk
+ → POST /api/internal/svc/topic/users/{uid}/scores
 ```
 
 이 사슬에서 따라 나오는 두 가지:
@@ -176,7 +198,8 @@ persona markdown
 
 - 출력은 **디스크 JSON**(`.persona_topics/`)뿐이다. 실 테이블 적재 경로는
   `scripts/dynamodb/seed_local.py`(loopback 전용) 하나이고, dev/prod에는
-  `POST /internal/topic/scores/bulk`를 부를 주체가 **아직 없다**.
+  `POST /api/internal/svc/topic/users/{uid}/scores`(구 `/internal/topic/scores/bulk` — #18에서
+  users 아래로 통합)를 부를 주체가 **아직 없다**.
 - 이 서비스는 **deferq/AMQP 의존이 전혀 없다** — 이벤트 소비는 상류(bourbon-agent)의 몫이고,
   topic-api는 persona 산출물을 받아 topic을 만드는 자리다.
 - `query_phrases`는 영어 한정이며 프롬프트가 "카탈로그가 라벨링하는 방식의 1–3단어 canonical
@@ -214,6 +237,21 @@ for item in self._topics.values():           # 2,605개 선형 순회 (dict 삽�
 **alias 66,349개**(토픽당 평균 25.5개). `programming language` 하나에 `computer language`,
 `coding language`, `프로그래밍언어`, `컴퓨터 언어`, `プログラム言語`, `Proglang`, 오타인
 `Programing language`까지 붙어 있다. 형태소 분석기가 할 일을 큐레이션된 목록이 대신한다.
+
+**라벨·alias가 만들어지는 규칙** (rev 4에서 명시화 — `topic/catalog_import/structs.py`의
+`topic_labels_from`·`topic_aliases_from`, 검증됨):
+
+- `labels.ko/en/ja` = Wikidata label 그대로. **en은 엔티티 기본 label로 폴백**하므로 거의 항상
+  존재하고, ko/ja는 빠질 수 있다.
+- `aliases` = Wikidata alias 중 **ko/en/ja만**, 중복 제거, 원래 순서, **토픽당 50개 cap**,
+  언어 구분 없이 평탄 저장(어느 언어의 alias였는지는 저장 후 알 수 없다).
+- 검색 정규화는 소문자화+공백 제거뿐 — "Phase 1 has no morphological analysis"가 코드 주석에
+  명시돼 있다.
+- 라벨·alias는 `catalog edit` 단계에서 사람이 수정할 수 있다 — **규칙은 안정적이고 어휘는
+  배포 단위로 움직인다.**
+
+이 규칙이 곧 expansion의 레버다: "Wikidata가 그 개념을 부르는 이름"으로 질의를 깎아야
+걸린다. §10-2의 R1–R7이 여기서 유도된다.
 
 **결정적 비대칭 — 방향.** `needle in haystack`에서 needle이 질의, haystack이 라벨이다.
 즉 **질의가 라벨의 부분문자열이어야 한다.**
@@ -257,7 +295,13 @@ canonical name으로 못 박는 진짜 이유가 이것이다. 검색 엔진이 
 
 ### 2.2 ② 토픽 → 유저: GSI + threshold 병합
 
-여기엔 텍스트가 없다. GSI 파티션 `{topic_id}#public`이 score 내림차순으로 정렬돼 있다.
+여기엔 텍스트가 없다. rank-index 파티션 `{topic_id}#{tier}#0`이 score 내림차순으로 정렬돼
+있고, **요청이 tier 집합을 명시한다**(rev 4): `visibility=public&visibility=friends` 반복
+파라미터, 기본 public. #16부터 friends도 랭킹 가능 tier이며, private/hidden은 파라미터 enum에
+스펠링 자체가 없다. 한 토픽이 tier 수만큼 파티션을 가지므로 `TopicIndexStream`이 파티션들을
+점수 내림차순으로 병합해 **토픽당 스트림 1개**를 유지한다 — 파티션을 별도 스트림으로
+threshold에 주면 bound가 합산되어(한 유저는 한 tier에만 있으므로 진짜 상한은 max) 조기 종료가
+사실상 불가능해지기 때문이다(`topic/search/streams.py` docstring 명시).
 **leaf와 rollup은 엔드포인트가 아니라 같은 서비스가 요청마다 고르는 두 전략이다**
 (`topic/search/service.py`의 `if len(weights) == 1`).
 
@@ -286,8 +330,10 @@ Fagin TA 계열 알고리즘:
 4. 아니면 `T`에 가장 크게 기여하는 스트림에서 다음 페이지를 읽고 2로
 
 그리고 비싼 단계가 하나 더 있다. 스트림은 "유저 U가 토픽 t에서 몇 점"만 알려주므로 총점을
-알려면 **U의 파티션 전체를 강한 일관성으로 다시 읽는다**(`resolve` → `list_for_user`,
-`ConsistentRead=True`). 이것이 rollup 비용의 대부분이다.
+알려면 **U의 파티션 전체를 다시 읽는다**(`resolve` → `list_for_user`). 이것이 rollup 비용의
+대부분이다. **rev 4에서 이 읽기가 `ConsistentRead=False`로 바뀌었다** — 후보가 이미 강한
+읽기가 불가능한 인덱스에서 왔으므로 강한 읽기는 최신성을 더하지 못하고 "서비스에서 가장 뜨거운
+읽기의 비용만 2배"라는 근거가 주석에 있다. §6.3의 보호 강도 서술도 이에 맞춰 정정했다.
 
 **중요한 방향성**: 서브트리 걷기는 **아래로만** 간다. 드립커피만 보유한 유저는 "커피" 질의에
 나오지만, 커피만 보유한 유저는 "드립커피" 질의에 **나오지 않는다.** extractor가 넓은 토픽과
@@ -298,13 +344,35 @@ Fagin TA 계열 알고리즘:
 - `truncated_descendants`: depth/count 상한이 잘라낸 자손 수. 여러 루트면 상한이 아니라 **상한의 상한**
 - `unranked_topics`: 이름이 매칭했으나 예산이 닿지 못한 루트 수
 
+**응답은 설명 트리다 (#21·#23·#24, rev 4).** `items[]`의 각 유저가
+`{user_id, score, matched[]}`이고 `matched`는 평면 리스트가 아니라 트리다:
+
+- 노드 = `{topic, item, distance, contribution, children}`. 보유 토픽이 기여도(weight×score)
+  내림차순으로 놓이고 `TOPIC_TREE_DEPTH=2` 기준 shown ancestor 아래로 접힌다.
+- `distance`: **0 = 질의가 지명한 토픽, 양수 = 자손(decay 지수 그 자체), 음수 = 표시용 조상**
+  (기여 0, 크기는 아래 노드까지의 hop 수).
+- `contribution`의 합 = `score` — 총점이 응답만으로 검산된다.
+- `item` = 그 토픽에 대한 유저의 저장 본문(score·visibility·descriptions·blocks·시각).
+  **`blocks[]`에 `score_detail` 블록(facets·relation·confidence)이 합성돼 나온다**
+  (`api/structs/user_topic.py:_blocks_of`) — §4.2의 걸림돌이 여기서 풀렸다.
+- 유저가 아무것도 보유하지 않은 매치 토픽은 그 유저의 트리에서 빠진다(#23). 이름 검색이 20개
+  토픽을 지명해도 각 유저의 `matched`에는 자기 총점을 설명하는 것만 남는다 — 같은 질의에 두
+  유저가 서로 다른 topic 목록을 답받는 것이 정상이다.
+- 불완전성 플래그의 wire 이름: `exhaustive` / `descendants_dropped` / `topics_dropped`
+  (도메인의 truncated_descendants / unranked_topics).
+
+토픽 검색(`GET /search/topics`)도 트리로 답한다(#22): 매치를 shown ancestor 아래 중첩하고
+노드마다 **`is_match`**(true=질의가 매치한 토픽, false=걸어두기용 조상)를 실으며(#24),
+`limit`은 매치 수만 센다. persona extraction 자신도 이 트리를 grounding 후보 조립에 쓴다.
+
 **페이징이 없다.** 양쪽 경로가 같은 resume 계약을 못 내서 일단 뺐다(README 명시). 즉
 top-`limit`(≤100) 밖은 존재하지 않는 것으로 취급해야 한다.
 
-**leaf 경로의 stale 처리** — §6에서 프라이버시 문제로 다시 다룬다. GSI 행은 남았는데 본문의
-visibility가 public이 아닐 때, 낡은 본문 대신 **인덱스에서 유도한 stub**을 답한다
-(`single.py:_ranked`). 본문 필드는 보호되지만 `user_id`와 `score`는 나간다.
-rollup 경로는 강한 일관성 테이블 읽기에서 다시 필터하므로 이 문제가 없다.
+**leaf 경로의 stale 처리** — §6에서 프라이버시 문제로 다시 다룬다. 인덱스 행은 남았는데
+본문의 visibility가 요청 tier 밖일 때, 낡은 본문 대신 **인덱스에서 유도한 stub**(행의
+score·tier만)을 답한다(`single.py:_ranked`). 본문 필드는 보호되지만 `user_id`와 `score`는
+나간다. rollup 경로는 본문 재확인에서 tier 밖 아이템을 걸러내므로 stub을 만들지 않는다 —
+단 rev 4부터 그 재확인도 eventual이다(§6.3).
 
 ---
 
@@ -429,7 +497,7 @@ finance 1. 실무 어휘(세무·조직·HR·프로덕트)는 없다.
 | 층 | 상태 | 고칠 수 있나 |
 |---|---|---|
 | **어휘** | §3.1–3.2. 관심 도메인 분류. science·AI만 예외적으로 촘촘 | ✅ `groups.yaml` seed 확장. 코드 변경 0 |
-| **점수 공식** | facets 5개 중 **4개가 관심·애착**(engagement/affinity/duration/recency), 전문성은 `knowledge` 하나. **등가중 평균**(`fmean`) × relation할인 × confidence | ✅ `score_inputs`에 원 facets가 남아 있어 재가중 가능 |
+| **점수 공식** | facets 5개 중 **4개가 관심·애착**(engagement/affinity/duration/recency), 전문성은 `knowledge` 하나. **등가중 평균**(`fmean`) × relation할인 × confidence | ✅ `score_detail`(구 score_inputs)에 원 facets가 남고, **rev 4부터 랭킹 응답에도 실린다**(§4.2) |
 | **근거 출처** | persona **자기 서술**. 프롬프트도 "`knowledge` = 문장이 드러내는 전문성의 깊이". 외부 검증(대화 근거·기여·타인 확인) 없음 | ❌ 구조적으로 없음 |
 
 ### 4.1 점수 공식 문제는 1차의 문제다
@@ -452,11 +520,12 @@ finance 1. 실무 어휘(세무·조직·HR·프로덕트)는 없다.
 **이견을 낼 수 있게** 한다."* 따라서 우리는 그들의 scalar를 재해석하는 게 아니라
 **원자료로 돌아가 우리 정렬 키를 만든다.**
 
-걸림돌: `score_inputs`가 **랭킹 응답(`MatchedTopicResponse`)에 없다**(전수 확인). 현재 받을 수
-있는 곳은 `GET /internal/topic/users/{owner_id}/topics`(`InternalUserTopicListResponse`)뿐이라
-owner당 추가 호출(N+1)이 된다. **internal 역할 한정으로 랭킹 응답에 필드 하나 추가**하면
-해결되고, 그들이 이미 세워 둔 근거("internal 호출자는 서비스, facets는 파이프라인이 자기 출력을
-검증할 때 필요한 것")와 정확히 같은 논리다. → §11-3
+~~걸림돌: `score_inputs`가 랭킹 응답에 없다(N+1)~~ — **rev 4에서 해소됐다.**
+`score_inputs`는 `score_detail`로 개명됐고, 랭킹 응답의 `matched[].item.blocks[]`에
+`score_detail` 블록(facets·relation·confidence)으로 합성돼 나온다
+(`api/structs/user_topic.py:_blocks_of` — 전수 확인). owner당 추가 호출 없이 **검색 한 번으로
+재가중 재료가 도착한다.** §11-3은 닫혔다. 단 이것은 재가중의 전제일 뿐이고, §9의 컷
+한계(도착하지 못한 후보는 재가중이 구제 못 함)는 그대로다.
 
 ---
 
@@ -502,6 +571,9 @@ rollup의 `top_k`는 **한 번에 한 스트림, 한 페이지씩 순차로** �
 | rev 14 계획 | **≈60 RCU** (1단계 45 + 2단계 15) | ≈60 RCU (N·K로 구조적 고정) |
 
 **leaf의 3 RCU는 우리가 상상했던 어떤 구조보다 싸다** — 이 비교의 가장 중요한 발견.
+
+rev 4 정정: resolve가 eventual 읽기로 바뀌어(§2.2) rollup 상한의 resolve 항이 절반이 된다
+(≈6,350 → ≈3,350 RCU). 구조 결론(rollup 상한이 크다)은 불변.
 
 ~~트래픽과 무관한 고정 읽기(60초 카탈로그 Scan ~313 RCU/워커/분 + 락 아래 블로킹 재적재의
 p99 스파이크)~~ — **#17에서 통째로 소멸.** 카탈로그는 이미지 안 파일이라 시작 시 1회 읽고
@@ -557,11 +629,15 @@ rev 14에 유리한 정정 하나: AOSS 신설 비용을 우려했으나 컬렉�
 
 코드가 이를 강제하는 방식(검증됨):
 
-1. 랭킹은 `RANKED_TIER = public` 파티션 **하나만** 읽는다(`topic/visibility/tiers.py`).
+1. 랭킹이 읽을 수 있는 tier는 `RANKED_TIERS = {public, friends}`뿐이고(#16 —
+   `topic/visibility/tiers.py`), 그중에서도 **요청이 명시한 부분집합만** 읽는다(기본 public).
+   private/hidden은 rank_key가 아예 안 써져 인덱스에 없다(§1.3의 sparse index).
 2. score 주입(`put_score`)은 첫 쓰기에서 `visibility = if_not_exists(..., private)` — 주석:
    *"A topic the user has never configured must not become searchable by everyone."*
-3. **주입 경로는 visibility를 쓸 수 없다.** `ScoreRequest`는 `{score, score_updated_at,
-   score_inputs}`뿐이고 internal 라우터 어디에도 visibility 쓰기가 없다(전수 확인).
+3. **주입 경로는 visibility를 쓸 수 없다.** `ScoreRequest`는 `{score, score_detail}`뿐이고
+   internal 라우터 어디에도 visibility 쓰기가 없다(전수 확인). rev 4에서
+   `score_updated_at`이 사라졌다 — computed-time 단조성 검사를 spec §8이 의도적으로 제거했고,
+   주입은 무조건 도착 순서 승리(LWW)다.
 4. 올릴 수 있는 건 `PATCH /me/topics/{id}` 하나이고 **edge-auth로 검증된 본인만** 부른다.
    internal에 `/me` 미러가 없다.
 5. 반대로 `TopicSettingsPatch`는 `score`를 받지 않는다 — 유저 쓰기가 점수를 나를 수 없다.
@@ -570,6 +646,9 @@ rev 14에 유리한 정정 하나: AOSS 신설 비용을 우려했으나 컬렉�
 tier는 독립 플래그가 아니라 **계열**이다: `public ⊂ friends ⊂ private ⊂ hidden`.
 `hidden`은 삭제 대신 치우는 것(삭제 라우트 없음)이며 `/me/topics`에만 나온다.
 친구 관계는 이 서비스가 저장하지 않는다 — `friends`는 클라이언트가 보내는 라벨이다.
+rev 4부터 friends가 **랭킹 가능 tier**가 됐고, "누가 어느 tier를 물을 자격이 있는가"는
+topic-api가 판정하지 않는다(spec §7 — 호출자 몫). 우리에게는 관계 정보가 없으므로 추천
+서빙은 public 단독으로 시작한다 → §10-9·§11-17.
 
 ### 6.2 결과
 
@@ -577,7 +656,7 @@ tier는 독립 플래그가 아니라 **계열**이다: `public ⊂ friends ⊂ 
 `PATCH /me/topics/{id}` `{"visibility":"public"}`). 없는 건 **그것을 호출하는 클라이언트
 화면**이고, topic-api 레포에도 우리 레포에도 없다. → Discovery 출시가 앱 딜리버러블에 걸린다.
 
-**비용**: `{topic_id}#public` 파티션이 희소해진다. 카탈로그와 점수가 완벽해도 토글한 유저가
+**비용**: `{topic_id}#public#0` 파티션이 희소해진다. 카탈로그와 점수가 완벽해도 토글한 유저가
 임계 아래면 빈 결과다. **지배적 리스크가 카탈로그 어휘가 아니라 cold start로 바뀐다.**
 
 **이득**: 유저가 **무엇을** 공개하기로 골랐는지가 그 자체로 신호다. "양자역학"을 공개한 사람은
@@ -591,13 +670,14 @@ TOPICSEARCH#·visibility 재확인·TOCTOU에 많은 지면을 쓴 이유가 이
 
 ### 6.3 leaf 경로의 구멍 (정책이므로 지적 대상)
 
-rollup은 안전하다 — `_ranked_in_subtree`가 **강한 일관성 테이블 읽기**에서
-`visibility is public`을 다시 확인하므로 비공개로 바꾼 아이템은 총점에 0으로 기여하고
-유저가 탈락한다.
+rollup은 본문 재확인으로 보호된다 — `_ranked_in_subtree`가 테이블 읽기에서 tier를 다시
+확인하므로 요청 tier 밖으로 바꾼 아이템은 총점에 기여하지 못하고 유저가 탈락한다. 단 rev
+4에서 이 읽기가 eventual로 바뀌어(§2.2) 보호가 "강한 일관성 보장"에서 "테이블 복제 지연
+수준의 짧은 창 허용"으로 약해졌다 — 인덱스 전파 지연보다 좁은 창이라 실질 차이는 작다.
 
-leaf(`topic/search/single.py:_ranked`)는 다르다. GSI 행은 남았고 본문이 이미 public이 아닐 때,
-낡은 본문 대신 **인덱스에서 유도한 stub**을 답한다. 본문 필드(description 등)는 보호되지만
-**`user_id`와 `score`는 그대로 나간다.**
+leaf(`topic/search/single.py:_ranked`)는 다르다. 인덱스 행은 남았고 본문이 이미 요청 tier
+밖일 때, 낡은 본문 대신 **인덱스에서 유도한 stub**을 답한다. 본문 필드(descriptions·blocks)는
+보호되지만 **`user_id`와 `score`는 그대로 나간다.**
 
 private이 단순 기본값이면 GSI 전파 지연 동안의 사소한 staleness다. 그러나 **공개가 유저의
 명시적 행위인 정책**이라면 "이 유저가 이 토픽을 보유하고 점수가 S다"라는 **소속 사실 자체가
@@ -629,9 +709,9 @@ Alpha는 내부 대상이므로 **내부 코호트에게 토글을 요청하는 
 
 | # | 갭 | 근거 | 소관 |
 |---|---|---|---|
-| 1 | **iac에 테이블이 없다** — 필요한 것이 #17로 **user topic 테이블 1개 + `topic-score-index`로 줄었다**(카탈로그 테이블은 더 이상 존재하지 않음). 그 1개도 iac에 없고, dev configmap은 존재하지 않는 테이블을 가리킴 → 전 호출 `ResourceNotFoundException` | iac origin/main `d364d3c` 전수 grep | 인프라 |
+| 1 | **테이블·인덱스의 iac 부재** — 필요한 것: user-topic 테이블 1개 + **GSI 2개**(#16: `topic-rank-index`·`topic-holder-index`). rev 4 상태: topic-api 문서는 "테이블은 iac 소관, 인덱스 2개는 AWS 콘솔 수작업 — **완료**"로 기록(`docs/dynamodb-key-design.md`, 커밋 b974d4b·0085d47). 그러나 **iac origin/main `592e34c` 재grep에도 테이블 선언이 없고**, 콘솔 작업은 레포 어디서도 검증되지 않는다 — `scripts/dynamodb/create_tables.py`가 배포 인덱스의 유일한 명세라고 그들 스스로 기록. dev 실물 존재 여부는 **미확인** | topic-api 문서 + iac 재grep | 인프라 |
 | 2 | **IRSA 권한 부족** — `bourbon-app`의 DynamoDB 문장은 `bourbon-agent` 테이블 ARN 1개 + `/index/*`로 한정이라 새 테이블 ARN 추가 필요. ~~`dynamodb:Scan` 부재~~는 #17로 **문제 아님**(카탈로그 Scan 소멸 — 기존 액션 목록으로 충분) | `iac terraform/modules/iam/service/service_roles.tf:116-132` | 인프라 |
-| 3 | **게이트웨이 미등록** — bourbon-api dispatch에 `/api/svc/topic/` 블록 없음 → public 워크로드 외부 도달 불가 | bourbon-api origin/main `k8s/base/api-svc-dispatch.yaml` | bourbon-api |
+| 3 | **게이트웨이 미등록** — bourbon-api dispatch에 `/api/svc/topic/` 블록 없음 → public 표면 외부 도달 불가. internal prefix(`/api/internal/svc/topic`)도 게이트웨이 IP gate 라우팅이 관례이나, 우리는 메시 내부에서 직접 호출하므로 어느 쪽도 우리 게이트가 아님 | bourbon-api origin/main `k8s/base/api-svc-dispatch.yaml` | bourbon-api |
 | 4 | **prod 적재 경로 미구현** — 호출자의 정체는 확정됐다(persona→topic 파이프라인, §1.5). 미구현인 것: ⑴ bourbon-agent의 persona extractor 자체(`save_persona` 호출자 0건) ⑵ persona→topic 파이프라인이 어디서 무슨 트리거로 도는지. 현 CLI는 디스크에만 쓴다 | §1.5 | extractor 체인 |
 | 5 | **internal `AuthorizationPolicy` 없음** — 메시 내 누구나 호출 가능 | README 명시(accepted risk) | topic-api |
 | 6 | **공개 토글 UI 없음** — §6.2 | 두 레포 모두 부재 | 앱/클라이언트 |
@@ -665,7 +745,7 @@ port-forward 전용.
    끝내므로 read-time LLM 없이 랭킹이 성립한다. 이것은 더 싼 것이 아니라 **문제를 더 잘 쪼갠 것**이다.
 
 카탈로그가 추가로 주는 것: 동명이의 통제, 계층 → rollup/decay, 재추출을 넘어 안정적인 id,
-`score_inputs`로 감사 가능한 점수, popularity 항이 없는 순수 per-user facet 점수
+`score_detail`로 감사 가능한 점수, popularity 항이 없는 순수 per-user facet 점수
 (우리 reputation 원칙과 충돌 없음).
 
 ### 8.2 금지: 병렬 두 시스템
@@ -678,9 +758,11 @@ port-forward 전용.
 ### 8.3 3단 계획
 
 **A (지금) — 순수 소비, 저장소 0.**
-expansion(작은 LLM 1회) → `GET /internal/topic/search/topics` → **구체 토픽 2–3개를 병렬
-조회**(`/topics/{id}/users`) → 우리 후처리(self-exclusion, eligibility, cap, `matched_topics`
-조립, 실패 3분기). 목적은 기능이 아니라 **측정**(§12).
+expansion(작은 LLM 1회) → `GET /api/internal/svc/topic/search/topics` → **구체 토픽 2–3개를
+병렬 조회**(`/topics/{id}/users`) → 우리 후처리(self-exclusion, eligibility, cap,
+`matched_topics` 조립, 실패 3분기). 목적은 기능이 아니라 **측정**(§12).
+(id 리스트를 한 번에 받는 랭킹 라우트는 없다 — `SearchQuery.topic_ids`는 서비스 층에
+존재하나 라우트는 이름 검색만 리스트 경로를 탄다. 그때까지 병합은 우리 RRF — §11-16.)
 
 넓은 토픽 하나로 rollup을 부르는 것보다 낫다: 잎에 떨어지면 싸고(3 RCU×3) 지연이 평탄하며
 (병렬 2 RTT) `exhaustive=True`가 보장되고, 어느 확장어가 맞았는지 귀속이 응답 단위로 남는다 —
@@ -716,8 +798,8 @@ computing/science seed 확장 + `min_importance` 하향 제안. `groups.yaml` �
 |---|---|---|
 | §2 전용 테이블 + 아이템 5종 스키마 | **폐기** | 저장 주체가 topic-api |
 | 3-item transaction · `publication_epoch` · `judge_revision` · `claim_digest` | **폐기** | 우리가 쓰지 않으므로 동시성 계약의 주체가 아님 |
-| TOPICSEARCH# projection / 전역 discoverable 계약 | **폐기** | GSI 파티션 `{topic_id}#public`이 같은 일을 함 |
-| §4 2단계 both-strong BatchGet 계약 | **폐기** | 읽기 주체가 topic-api. rollup이 이미 강한 일관 재확인 |
+| TOPICSEARCH# projection / 전역 discoverable 계약 | **폐기** | rank-index 파티션 `{topic_id}#public#0`이 같은 일을 함 |
+| §4 2단계 both-strong BatchGet 계약 | **폐기** | 읽기 주체가 topic-api. rollup이 본문 재확인(rev 4부터 eventual — §6.3) |
 | 스트림 색인 파이프라인 (Q1·Q2·Q9) | **폐기** | 색인할 우리 데이터가 없음 |
 | extractor 협의 Q5·Q13·Q14 | **폐기** | topic 저장·projection의 협의 상대가 사라짐 — 저장은 topic-api 소관. extractor 체인과의 새 협의 항목은 §11이 대체 |
 | AOSS 인덱스 신설 | **유예** | 카탈로그 2,605개 동안 정당화 안 됨. 필요해지면 **카탈로그만** 색인 |
@@ -748,17 +830,18 @@ computing/science seed 확장 + `min_importance` 하향 제안. `groups.yaml` �
 - **(a) Alpha 수용 (권고)**: 항상 `limit=100`으로 받고 재가중. Alpha는 공개 밀도가 낮아(§6.4)
   토픽당 공개 보유자가 100에 닿을 가능성이 낮다. **만료 조건을 명시한다**: 토픽당 공개 보유자
   수가 100에 접근하면 이 가정이 깨진다 — §12.3의 컷 경계 계측이 만료를 알린다.
-- **(b) topic-api에 expertise 접근 경로 요청**: 정렬 파라미터 또는 두 번째 GSI. §11-3(응답에
-  필드 하나)과는 크기가 다른 요청이므로 별도 항목(§11-15)이고, (a)의 측정이 필요를 증명한
-  뒤에 꺼낸다.
+- **(b) topic-api에 expertise 접근 경로 요청**: 정렬 파라미터 또는 두 번째 정렬 GSI.
+  rev 4에서 해소된 §11-3(응답에 재료 싣기)과는 크기가 다른 요청이므로 별도 항목(§11-15)이고,
+  (a)의 측정이 필요를 증명한 뒤에 꺼낸다.
 - **(c) 주입 점수 공식 변경**: 공식 소유권은 extractor 쪽이고 그 score는 그들 제품 UI
   (`/me/topics` 트리의 점수 표시)에도 쓰인다. 우리 사정으로 바꾸자기 어렵다 — 가능성만 기록.
 
-정렬 키 자체의 하위 결정 두 개는 §13-3의 몫이다: **`score_inputs`가 null인 아이템의 처우**
+정렬 키 자체의 하위 결정 두 개는 §13-3의 몫이다: **`score_detail`(구 score_inputs)이 null인
+아이템의 처우**
 (주입 전 아이템·breakdown 없는 주입이 실존한다 — 뒤로 보내면 주입이 늦은 전문가를 죽이고,
 score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그리고 **`relation`의 처리**
 (extractor는 `related`=인접 분야도 붙인다 — "가장 잘 아는"에게 related 보유는 전문성이 아니라
-인접성 신호이므로 필터 또는 강한 할인. `score_inputs.relation`이 원값으로 남아 있어 가능하다).
+인접성 신호이므로 필터 또는 강한 할인. `score_detail.relation`이 원값으로 남아 있어 가능하다).
 
 ---
 
@@ -766,9 +849,23 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 
 1. **어댑터 + 계약 테스트** — topic-api 응답 스키마 변화를 조용히 먹지 않도록.
    우리 wire-contract 규율(계약 테스트 payload를 consumer model에서 유도 금지)이 그대로 적용된다.
-2. **expansion 규칙** — 짧은 canonical 명사구(1–3단어), 수식어 금지, **영어 우선**(alias가 영어에
-   가장 두꺼움), **2자 이하 확장어 금지**(§2.1 `ai`가 560건을 매칭하고 캡을 무관한 것으로 채운다),
-   다어절 선호.
+2. **expansion 규칙 — 라벨 생성 규칙(§2.1)에서 유도한 R1–R7 (rev 4 확장)**:
+   - **R1 축소가 기본 방향.** 질의가 라벨보다 길면 0건(방향 비대칭)이므로 명사구를 추출해
+     긴 형태부터 점진 축소한다(실측: 핸드드립커피추출법 0 → 드립커피 1 → 커피 8).
+   - **R2 조사·활용 제거는 우리 몫.** 정규화는 공백·대소문자만 접는다 — "머신러닝으로"는
+     라벨 "머신러닝"에 안 걸린다.
+   - **R3 언어 병렬 프로브.** 언어별 label/alias 집합이 달라 결과가 다르다(실측: 머신러닝 1 /
+     기계학습 4 / machine learning 5). ko·en·한자어 동의어를 모두 생성해 **qid 기준 union**.
+   - **R4 Wikidata 정식 명칭으로 사상.** alias 사전은 Wikidata alias 한정 — expansion
+     프롬프트에 "Wikidata 항목명처럼 써라"를 제약으로 넣는다. 카탈로그에 없는 개념은
+     expansion으로 해결 불가 — seed 요청 채널(§8.3-B)로 보낸다.
+   - **R5 짧은 needle 금지 + 캡 인지.** `ai`가 560건을 매칭하고 삽입 순 캡 20을 무관한
+     것으로 채운다(§2.1). 최소 길이 기준(영문 4자+·한글 2자+ 수준)을 두고, **광역 프로브
+     1회보다 정밀 프로브 여러 회**가 구조적으로 유리하다.
+   - **R6 공백 변형은 생성하지 않는다.** 정규화가 흡수한다(드립 커피=드립커피).
+   - **R7 grounding→선별→id 랭킹 분리.** `/search/topics`의 is_match 트리(인메모리, 저렴)로
+     후보를 받고, 관련도 선별은 우리 2-tier entity linking(candidate-gen + LLM rerank)이,
+     랭킹은 확정 id로 `/topics/{id}/users` fan-out + RRF가 맡는다(§8.3-A).
 3. **실패 의미 3분기** — `/search/topics` 결과로 "토픽이 없다"(→422)와 "토픽은 있으나 공개
    보유자 0"(→200+empty)을 우리가 갈라야 한다. topic-api는 둘 다 200+빈 items로 답한다.
 4. **ordering 키** — facets 기반 전문성 가중(§9).
@@ -777,6 +874,9 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 7. **불완전성 플래그 로깅·게이트** — `exhaustive=false` / `unranked_topics>0` /
    `truncated_descendants>0`를 품질 저하로 다룬다.
 8. **잎 선호 fan-out + 병합(RRF)** — §8.3-A. leaf 강제는 불가능하므로 rollup 응답도 정상 경로.
+9. **tier 집합 결정** — friends가 랭킹 가능해졌고(#16) 자격 판정은 호출자 몫이다(spec §7).
+   우리에게 관계 정보가 없으므로 **public 단독으로 시작**하고, friends 사용은 별도 제품
+   결정으로 미룬다(§11-17).
 
 ---
 
@@ -784,12 +884,12 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 
 | # | 질문 | 소관 | 성격 |
 |---|---|---|---|
-| 1 | **공개 토글 UI의 소유자와 일정.** 그리고 공개 대상에 LLM이 쓴 `description`(그 유저에 대한 한 문장)이 포함되는지, 유저가 편집 가능한지(`PATCH`가 `description`도 받는다) | 앱 + 기획 | **블로커** |
+| 1 | **공개 토글 UI의 소유자와 일정.** 그리고 공개 대상에 LLM이 쓴 `descriptions`(그 유저에 대한 한 문장, rev 4부터 3언어)가 포함되는지. **유저 편집 경로는 rev 4에서 사라졌다** — `PATCH /me/topics`는 visibility만 받고 descriptions는 extraction 소유 속성이 됐다(#18·#20). 유저가 자기 서술을 고칠 수 없는 채 공개 여부만 고르는 구조가 제품 의도인지 확인 필요 | 앱 + 기획 | **블로커** |
 | 2 | **넓은 토픽 + 좁은 토픽 동시 부착을 계약으로.** 서브트리 걷기는 아래로만 간다(§2.2) — "커피"만 붙은 유저는 "드립커피" 질의에 안 나온다. 지금은 프롬프트가 강제하나 **프롬프트는 계약이 아니다.** 놓치면 우리 코드로 복구 불가 | extractor | **비가역** |
-| 3 | **`score_inputs`를 랭킹 응답(`MatchedTopicResponse`)에 추가 (internal 한정).** 전문성 재가중의 전제. 필드 하나. 아니면 owner당 N+1 호출. 단 이것은 재가중의 전제일 뿐 §9의 컷 문제를 풀지는 않는다(그건 §11-15) | topic-api | 높음 |
-| 4 | **leaf 경로 stub이 `user_id`+`score`를 공개하는 문제**(§6.3). 정책상 소속 사실도 보호 대상 | topic-api | 높음 |
+| 3 | ~~`score_inputs`를 랭킹 응답에 추가~~ — **rev 4에서 해소.** `score_detail`로 개명돼 `matched[].item.blocks[]`에 블록으로 실린다(§4.2). N+1 소멸. 컷 문제(§11-15)는 별개로 남음 | ~~topic-api~~ | **해소** |
+| 4 | **leaf 경로 stub이 `user_id`+`score`를 공개하는 문제**(§6.3). rev 4에서도 유지(stub이 행의 tier까지 명시하는 형태로 정리됐을 뿐 노출은 동일). 정책상 소속 사실도 보호 대상 | topic-api | 높음 |
 | 5 | **self-exclusion / `exclude_user_ids`를 서버측 cap 앞에.** 편의가 아니라 정확성 — `limit=20`을 받아 우리가 자신을 빼면 19개가 되고 20번째 후보는 애초에 오지 않는다. 일반화하면 in-room 제외도 같은 파라미터로 처리 | topic-api | 높음 |
-| 6 | **maturity gate의 입력.** 우리 gate 입력인 "근거 개수"가 topic-api에 없다. 대용은 `facets.knowledge` + `confidence` + `score_updated_at`인데 "얼마나 깊은가"와 "LLM이 얼마나 확신하나"는 다른 것이다. gate를 무엇 위에 세울지 지금 정해야 뒤집지 않는다 | 우리 + extractor | 중간 |
+| 6 | **maturity gate의 입력.** 우리 gate 입력인 "근거 개수"가 topic-api에 없다. 대용은 `facets.knowledge` + `confidence` + `updated_at`(rev 4에서 `score_updated_at`은 속성째 삭제)인데 "얼마나 깊은가"와 "LLM이 얼마나 확신하나"는 다른 것이다. gate를 무엇 위에 세울지 지금 정해야 뒤집지 않는다 | 우리 + extractor | 중간 |
 | 7 | **철회 경로.** 유저가 다시 private으로 내리면 GSI에서 빠지므로 절반은 정책이 해결한다. 남는 것은 "관심이 식었는데 유저가 안 내린 경우"를 extractor가 어떻게 다루는가(score 0 주입? `removed_topics` 반영?) | extractor | 중간 |
 | 8 | **`find_by_name` 정렬 근거.** 20개 캡 통과 순서가 dict 삽입 순이다. exact label 일치 우선 + `importance` 내림차순만으로도 크게 달라진다. README도 "this service has none to give"로 인정 | topic-api | 중간 |
 | 9 | **토큰 단위 매칭.** 질의가 라벨의 부분문자열이어야 하는 제약으로 긴 질의가 항상 0건이다. 질의를 공백으로 쪼개 하나라도 걸리면 후보로 두는 것만으로 recall이 오른다 | topic-api | 중간 |
@@ -797,8 +897,10 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 | 11 | **`unmatched_signals` 노출** — 이미 "카탈로그 갭을 드러내기 위해" 만든 필드인데 파일에 갇혀 있다. seed 제안의 근거 데이터 | extractor | 낮음 |
 | 12 | 배포 게이트 §7의 1·2·5 | 인프라 / topic-api | 배포 시점 |
 | 13 | ~~카탈로그 캐시 stale-while-revalidate~~ — **#17에서 구조 변경으로 해소**(시작 시 1회 파일 로드, TTL·Scan·블로킹 재적재 자체가 소멸) | ~~topic-api~~ | **해소** |
-| 14 | **persona→topic 추출의 입력 슬롯.** sharable만인지 private 포함인지(§1.5). private 포함이면 LLM이 쓴 per-topic `description`이 private 서술의 뉘앙스를 실어 나를 수 있다 — §11-1의 description 공개 여부와 **같이** 결정해야 한다. 슬롯 텍스트(3필드)와 현 CLI 입력(풍부한 마크다운)의 밀도 차이로 facets 품질 재검증도 필요 | extractor + 기획 | 높음 |
+| 14 | **persona→topic 추출의 입력 슬롯.** sharable만인지 private 포함인지(§1.5). private 포함이면 LLM이 쓴 per-topic `descriptions`가 private 서술의 뉘앙스를 실어 나를 수 있다 — §11-1의 description 공개 여부와 **같이** 결정해야 한다. 슬롯 텍스트(3필드)와 현 CLI 입력(풍부한 마크다운)의 밀도 차이로 facets 품질 재검증도 필요 | extractor + 기획 | 높음 |
 | 15 | **expertise 접근 경로**(정렬 파라미터 또는 expertise용 두 번째 GSI) — §9 컷 문제의 (b)안. **(a)안의 컷 경계 계측이 필요를 증명한 뒤에** 꺼낸다 | topic-api | 측정 후 |
+| 16 | **id 리스트 랭킹 라우트 (rev 4 신설).** `SearchQuery.topic_ids`는 서비스 층에 이미 리스트인데, 라우트는 이름 검색(`/search/users?q=`)만 리스트 경로를 탄다. expansion→선별 결과를 threshold 병합(감쇠 합산 총점)으로 물으려면 topic_ids를 받는 internal 라우트 하나가 필요 — **도메인 코드는 있고 라우트만 없다.** 그 전까지는 id별 fan-out + 우리 RRF(§8.3-A) | topic-api | 높음 |
+| 17 | **friends tier 사용 여부 (rev 4 신설).** friends가 랭킹 가능해졌고 자격 판정은 호출자 몫(spec §7). "추천 서빙이 friends를 물어도 되는가"는 제품 결정이고 관계 정보가 우리에게 없다 — Alpha는 public 단독(§10-9) | 기획 + 우리 | 중간 |
 
 1·2는 **extractor 계약이 열려 있는 지금만 싸게 들어간다.** 나중에 바꾸려면 재추출과 데이터
 마이그레이션이다.
@@ -852,7 +954,7 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
    어떻게 `matched_topics`로 축약하는가(대표 topic 선택 규율 — rev 14가 ranking 단계로 잠근 것).
 3. **ordering 키의 정확한 식.** facets 5개에서 전문성 키를 어떻게 만드는가.
    `knowledge` 단독? 가중합? `confidence`를 곱하는가? **`relation=related`는 필터인가 할인인가?**
-   **`score_inputs`가 null인 아이템은 어디에 놓는가?** §9 컷 문제의 (a)/(b) 중 무엇으로
+   **`score_detail`이 null인 아이템은 어디에 놓는가?** §9 컷 문제의 (a)/(b) 중 무엇으로
    시작하고 만료 조건은 무엇인가. 그리고 그 식이 **gate와 섞이지 않는다**는 것을 어떻게
    구조로 보장하는가.
 4. **실패 3분기의 판정 지점.** `/search/topics` 0건 → 422를 어디서 판정하는가.
@@ -880,11 +982,11 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
 
 ## 부록 A — 근거 인덱스
 
-`../bourbon-topic-api` (초판 HEAD `296723d` → rev 3 HEAD `107f5cd`):
+`../bourbon-topic-api` (초판 HEAD `296723d` → rev 3 `107f5cd` → rev 4 HEAD `80c650f`):
 
 | 주장 | 위치 |
 |---|---|
-| 역할별 라우터 마운트 | `api/depends/role.py` |
+| 표면별 라우터 마운트 (#19) | `api/depends/surfaces.py` (구 `role.py` — 삭제) |
 | leaf 경로 · stub 처리 | `topic/search/single.py` |
 | rollup · 서브트리 · 분기 | `topic/search/service.py` |
 | threshold 알고리즘 | `topic/search/threshold.py` |
@@ -896,19 +998,23 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
 | 시작 시 1회 카탈로그 로드 (#17) | `api/depends/services.py:startup` |
 | id 파생 규칙 (#17부터 전부 파생·랜덤 경로 제거) | `topic/catalog/ids.py` |
 | ~~카탈로그 Scan·캐시~~ | ~~`topic/catalog/repository.py`·`cache.py`~~ — **#17에서 삭제** |
-| GSI 쿼리 · `put_score` · `patch_settings` | `topic/user_topics/repository.py` |
-| `RANKED_TIER` · tier 계열 | `topic/visibility/tiers.py` |
-| facets · `ScoreInputs` · `Visibility` | `topic/structs.py` |
+| 저장층: 3-writer 계약 · `put_score` · `put_extraction` · `patch_settings` · rank/holder 쿼리 (#18) | `topic/storage/user_topics.py` (구 `topic/user_topics/repository.py`) |
+| rank_key 파생 · 인덱스 이름 (#16) | `topic/connectors/dynamodb/keys.py` |
+| `RANKED_TIERS`({public, friends}) · tier 검증 | `topic/visibility/tiers.py` |
+| 스트림 tier 병합 (#16) | `topic/search/streams.py:TopicIndexStream` |
+| blocks · `ScoreDetailBlock` 합성 | `topic/user_topics/blocks.py`, `api/structs/user_topic.py:_blocks_of` |
+| 라벨·alias 생성 규칙 | `topic/catalog_import/structs.py:topic_labels_from`·`topic_aliases_from` |
+| tier·언어 파라미터 | `api/structs/params.py` |
+| facets · `ScoreDetail`(구 ScoreInputs) · `Visibility` · `LocalizedText` | `topic/structs.py` |
 | 점수 공식 | `topic/persona_topics/scoring.py` |
 | 후보 조립(3패스 캡) | `topic/persona_topics/candidates.py` |
 | 병합 · `removed_topics` · `extras` | `topic/persona_topics/merge.py` |
 | 추출 구조체 · `unmatched_signals` | `topic/persona_topics/structs.py` |
 | LLM 프롬프트(signals / marking) | `cli/persona_topics/stages.py` |
 | 추출 오케스트레이션 | `cli/persona_topics/extract.py` |
-| `score_inputs` 노출 범위 | `api/routers/internal/structs.py` |
-| 랭킹 응답(= `score_inputs` 없음) | `api/routers/search/structs.py` |
-| score 주입 라우트 | `api/routers/internal/scores/router.py` |
-| 카탈로그 관리 라우트 | `api/routers/internal/catalog/router.py` |
+| 랭킹 응답(matched 트리 · is_match) | `api/routers/search/structs.py` |
+| score 주입·extraction 쓰기 라우트 (#18에서 users 아래 통합) | `api/routers/internal/users/router.py` (구 `internal/scores/` — 삭제) |
+| ~~카탈로그 관리 라우트~~ | ~~`api/routers/internal/catalog/router.py`~~ — **#17에서 삭제** |
 | 설정 기본값 | `topic/config.py` |
 | 워커 수 · HPA | `k8s/overlays/*/deployment-patch.yaml`, `k8s/base/hpa.yaml` |
 
@@ -919,7 +1025,7 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
 | DynamoDB 온디맨드 · GSI 정의 방식 | `terraform/modules/dynamodb/main.tf` |
 | AOSS 컬렉션 그룹 · OCU 한도 | `terraform/env/dev/main.tf:352-376` |
 | `bourbon-app` IRSA DynamoDB 권한 | `terraform/modules/iam/service/service_roles.tf:116-132` |
-| 토픽 테이블 부재 | 전수 grep 결과 없음 |
+| 토픽 테이블 부재 | 전수 grep 결과 없음 (rev 4: origin/main `592e34c`에서 재확인 — 여전히 없음) |
 
 `../bourbon-api` (origin/main `943b5f5`): `k8s/base/api-svc-dispatch.yaml` — `/api/svc/topic/` 미등록.
 `../bourbon-agent` (HEAD `18fbcac`): topic-api 참조 0건. 페르소나는 `SHARABLE`/`PRIVATE` 2슬롯 ×
@@ -1008,3 +1114,23 @@ exact / ancestor-only / 전무 / 캡 오염으로 분류하면 된다. ancestor-
   #13(proxy 헤더 미들웨어), `574a774`(topic 응답 필드 순서 통일 — wire 계약 의미 변화 없음),
   `ecd4a1b`(dev 이미지 CDN 서빙 활성화). **persona_topics·검색·랭킹·visibility 로직은 5커밋
   전부에서 무변** — §2·§4·§5.2·§6·§8–§13의 분석·결정은 그대로 유효하고, 테스트는 942/50/0.
+- **2026-08-24 rev 4** — HEAD `80c650f`(PR #16·#18–#25, 커밋 ~20개) 반영. 구조 변화 네 가지:
+  ⑴ **인덱스 2분할(#16)**: `topic-score-index` → `topic-rank-index`(rank_key =
+  `{topic_id}#{visibility}#{shard}`, sparse — ranked tier에서만 존재) + `topic-holder-index`
+  (전수 보유자). `RANKED_TIER=public` 단독 → `RANKED_TIERS={public, friends}` 집합이 되고
+  요청이 tier 부분집합을 명시한다. 저장층이 3-writer disjoint-속성 계약으로 재정리
+  (`topic/storage/user_topics.py`). ⑵ **응답 재편(#18·#20–#24)**: `matched`가 설명
+  트리(distance 부호·contribution 검산 가능·미보유 매치 제외)가 되고, `descriptions` 3언어화,
+  `score_inputs`→`score_detail` 개명 + **랭킹 응답 blocks에 블록으로 노출** — §4.2 걸림돌·
+  §11-3 해소, 우리 ordering 키 재료가 검색 한 번에 온다. topic 검색도 is_match 트리.
+  ⑶ **internal 표면 통합(#19)**: SERVICE_ROLE 이중 워크로드 소멸, 한 워크로드가
+  `/api/svc/topic` + `/api/internal/svc/topic` 두 prefix 서빙. ⑷ **resolve가 eventual로**:
+  rollup 본문 재확인·leaf 본문 로드 모두 `ConsistentRead=False` — §5.3 상한 절반, §6.3 보호
+  서술 정정. 이 문서에서 추가로: §2.1에 라벨·alias 생성 규칙 명시, §10-2를 그 규칙에서 유도한
+  expansion 규칙 R1–R7로 확장, §10-9(tier 집합)·§11-16(id 리스트 랭킹 라우트)·§11-17(friends
+  사용 여부) 신설, §7-1을 콘솔 수작업 인덱스 현황으로 갱신(iac `592e34c` 재grep — 테이블 선언
+  여전히 없음, 콘솔 작업은 레포로 검증 불가). 그 외 #22가 persona extraction의 grounding을
+  검색 트리 소비로 바꿨고, #25가 demo seed를 실제 persona 추출 경유로 바꿨다(분석 결론 무영향).
+  `backfill_index_key.py`는 삭제됐다(§1.3 언급 제거 — 인덱스 명세는 `create_tables.py`가 유일).
+  테스트 실측: **1208 passed / 86 skipped / 0 failed.** 검색 어휘층(`find_by_name`·normalize·
+  카탈로그 시드)은 rev 4 구간에서도 무변 — §2.1 실측 표·§3 카탈로그 분석은 그대로 유효하다.
