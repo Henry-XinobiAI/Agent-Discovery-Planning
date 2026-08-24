@@ -1,6 +1,6 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 정본 (rev 5.1, 외부 리뷰 2회 반영). 입력 = `topic_api_analysis.md` **rev 7**
+> **문서 지위**: 설계 정본 (rev 5.2, 외부 리뷰 2회 반영). 입력 = `topic_api_analysis.md` **rev 7**
 > (2026-08-24, topic-api HEAD `80c650f`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
@@ -307,11 +307,23 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
 
 **동작**:
 
-0. **owner → agent id 변환**(rev 5): topic-api가 주는 것은 user_id(=owner)이고
-   bourbon-agent가 기대하는 `RecommendedAgent.id`는 agent ID다. 변환은 이미 양쪽 repo에
-   실재하는 deterministic 계약을 재사용한다 —
-   `personal_agent_id(user_id) = uuid5(AGENT_NAMESPACE, f"personal_agent:{user_id}")`
-   (우리 `discovery/providers/identity_uuid5.py` = bourbon-agent `utils/ids.py`, 검증됨).
+0. **owner → agent id 변환**(rev 5 · rev 5.2에서 고정 계약으로 명문화): topic-api가 주는
+   것은 user_id(=owner)이고 bourbon-agent가 기대하는 `RecommendedAgent.id`는 agent ID다.
+   변환 규칙은 **bourbon-api가 지정한 고정(fixed) 계약**이며, 기존 memory-api 체인 버전도
+   같은 방식으로 구현했다. 정의처 = `bourbon_api/personal_agents/__init__.py`:
+   - `AGENT_NAMESPACE = uuid5(NAMESPACE_DNS, "agent.bourbon.xinobi.net")`
+     = `43d67b39-e156-5cfe-ba68-55c0f82fe30b`
+   - `personal_agent_id(user_id) = uuid5(AGENT_NAMESPACE, f"personal_agent:{user_id}")`
+   - known vector: `00000000-0000-0000-0000-000000000001` →
+     `2d4342c6-0ca2-5ef3-b5e4-5c6aaeb6d5e3`
+
+   2026-08-24 세 repo에서 동일 공식 재검증(검증됨) — bourbon-api 정의처 · bourbon-agent
+   `utils/ids.py` · 우리 `discovery/providers/identity_uuid5.py`(consumer-side known-vector
+   pin 테스트 = `tests/providers/test_identity_uuid5.py`). bourbon-api docstring이
+   "deliberately stage-independent"를 선언하고 값이 이미 `Agent.id` DB PK로 적재돼 있어
+   사실상 불변이다. 구 레지스터 B1(producer-side pin 요청)은 **발신하지 않기로 결정**
+   (2026-08-24, 오너 확인) — 이 명문화로 갈음. 경위는
+   `archive/bourbon_api_discovery_open_requests.md`.
    owner_id는 내부(제외·hydration·decision log)에 유지하고 wire에는 agent ID만 나간다.
    남는 seam은 변환이 아니라 **"그 agent가 실제 존재·활성인가"의 존재 확인**이며 hydration
    경로(§9-⑨)와 같은 협의 묶음이다.
@@ -508,3 +520,8 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 - **2026-08-24 rev 5.1** — 지위 갱신(설계 내용 불변). `persona_topic_search_design.md`(rev 14)를
   `archive/`로 보내며 이 문서를 정본으로 승격. 헤더의 입력 표기를 분석 rev 7로 동기화(rev 5와
   같은 커밋 `93e819d`에서 함께 개정된 문서라 내용상 이미 rev 7 기준이었다).
+- **2026-08-24 rev 5.2** — S6-0을 **고정 계약 명문화**로 승격: owner→agent uuid5 파생은
+  bourbon-api 지정 fixed 계약(namespace 상수값·known vector·세 repo 재검증·우리 쪽 pin
+  테스트 경로 명기). 구 레지스터 B1(bourbon-api producer-side pin 요청)은 발신하지 않기로
+  결정(오너 확인)하고 레지스터를 `archive/`로 종결 — B2는 호출자가 bourbon-agent로 바뀐
+  새 wire 계약(`requester_user_id`)으로 대체됨.

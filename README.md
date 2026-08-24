@@ -15,9 +15,8 @@
 | 문서 | 레이어 | 다루는 것 | 핵심 단위 |
 |---|---|---|---|
 | **`topic_api_analysis.md`** | **분석 + 방향 결정 기록 (rev 7, 2026-08-24)** | `bourbon-topic-api` 전수 분석(검색 메커니즘·카탈로그 실측·성능/비용·프라이버시 모델) + **축 이전 결정** + rev 14 폐기/승계 목록 + 열린 질문. **재설계의 입력이며 설계 문서가 아니다** | 사실/결정/열린 질문 |
-| **`recommendation_pipeline_design.md`** | **설계 정본 rev 5.1 (2026-08-24, 외부 리뷰 2회 반영)** | topic-api 소비 기반 추천 파이프라인 S1–S6: 단계별 동작·topic-api endpoint·산출물·실패 3분기. `persona_topic_search_design.md`(rev 14)를 대체(2026-08-24 archive) — 열린 결정은 §9 | 파이프라인 단계 산출물 |
+| **`recommendation_pipeline_design.md`** | **설계 정본 rev 5.2 (2026-08-24, 외부 리뷰 2회 반영)** | topic-api 소비 기반 추천 파이프라인 S1–S6: 단계별 동작·topic-api endpoint·산출물·실패 3분기. `persona_topic_search_design.md`(rev 14)를 대체(2026-08-24 archive) — 열린 결정은 §9 | 파이프라인 단계 산출물 |
 | **`impl/` (README + `01`–`11`)** | **현행 shipped 시스템의 구현 계약 (전환 전까지 유효)** | memory-api 기반의 실제 가동 중 시스템: 데이터 계약·provider 경계·grounding·gate/ranking·serving·eval. 전환 시 삭제 패스의 기준선이기도 하다 | typed struct / phase |
-| `bourbon_api_discovery_open_requests.md` | 활성 요청 레지스터 (bourbon-api B1–B2) | owner→agent 파생 계약·신뢰된 requester identity — **소스 전환과 무관하게 새 체인에서도 필요**(hydration·self-exclusion의 전제) | B# |
 
 > **방향 근거는 `topic_api_analysis.md`, 설계 정본은 `recommendation_pipeline_design.md`, 가동 중인
 > 것의 계약은 `impl/`.** `persona_topic_search_design.md`(3차 프레이밍 기록)는 2026-08-24에
@@ -66,6 +65,7 @@ Alpha 구현이 진행되며 실측·계약 기준이 `impl/`로 이동해 대�
 | `archive/memory_api_agent_recommendation_requirements.md` | memory-api가 제공해야 할 최소 계약 (2026-07-14 이전) | **이전 협의 기록** — 현재 계약 아님. 현재 상태는 `impl/findings-real-anchor-grounding-ties.md` / `impl/11-forward-roadmap.md` |
 | `archive/persona_api_discovery_requests.md` | persona 팀에 걸 데이터·API 요청서 (rev 15, 2026-08-13) | **폐기된 트랙 (2026-08-19)** — persona-api를 소스로 삼는 전환 자체가 폐기됐다. 요청·열린 질문 전부 무효. rev 16과 실사 문서 `persona_source_review.md`는 미머지 폐기(태그 `discarded/persona-api-ownership-split`) |
 | `archive/persona_api_endpoint_summary.md` | 위 요청서의 endpoint 요약 — persona 팀에 **실제 공유됨** | **폐기된 트랙 (2026-08-19)** — 공유한 문서라 폐기 사실을 persona 팀에 별도 통지해야 한다 |
+| `archive/bourbon_api_discovery_open_requests.md` | bourbon-api 요청 레지스터 (B1–B2, 미발신 초안) | **종결 (2026-08-24)** — B1(owner→agent uuid5 producer-side pin)은 발신하지 않기로 결정: 파생은 bourbon-api 지정 고정 계약이며 명문화는 `recommendation_pipeline_design.md` S6-0. B2(신뢰된 requester identity)는 호출자가 bourbon-agent로 바뀐 새 wire 계약(`requester_user_id`)으로 대체 |
 
 ### 2d. 방향 재변경으로 보관 (2026-08-20) — 2차 프레이밍의 기준 문서들
 
@@ -87,7 +87,7 @@ Alpha 구현이 진행되며 실측·계약 기준이 `impl/`로 이동해 대�
 |---|---|---|
 | `archive/persona_topic_search_design.md` | 3차 프레이밍 설계 (rev 14) — 우리가 topic/claim을 소유하고 AOSS에 색인 + 2단계 읽기 + 열린 질문 Q1–Q15 | 설계는 `recommendation_pipeline_design.md`, rev 14 결정·규율의 항목별 폐기/승계 처분은 `topic_api_analysis.md` §9 |
 
-> **루트에서 활성 요청 레지스터 역할을 하는 문서는 `bourbon_api_discovery_open_requests.md`(B1–B2) 하나뿐이다.**
+> **루트에 활성 요청 레지스터는 더 이상 없다** — bourbon-api 레지스터(B1–B2)는 2026-08-24 종결·보관(§2c).
 > 새 체인의 cross-team 열린 결정은 `recommendation_pipeline_design.md` §9(열린 결정)와
 > `topic_api_analysis.md` §11(열린 질문)이 갖는다.
 
@@ -98,7 +98,7 @@ Alpha 구현이 진행되며 실측·계약 기준이 `impl/`로 이동해 대�
 1. **`recommendation_pipeline_design.md`** — 확정된 방향(설계 정본). §0 요약 → S1–S6(§3) → §9 열린 결정 순.
 2. **`topic_api_analysis.md`** — 그 설계의 입력. topic-api의 사실·실측·결정·열린 질문(§11).
 3. **`impl/README.md` → `impl/01`–`11`** — 지금 가동 중인 시스템의 계약(전환 전까지 유효, 전환 시 삭제 패스 기준선).
-4. `bourbon_api_discovery_open_requests.md`(B1–B2)와 위 두 문서의 열린 결정·질문 — 타 팀에 걸려 있는 항목.
+4. 위 두 문서의 열린 결정(설계 §9)·열린 질문(분석 §11) — 타 팀에 걸려 있는 항목.
 5. 현행 시스템이 *왜* 그렇게 지어졌는지 → `archive/`의 프레이밍 문서들(§2d·§2e). 그보다 앞 계보는 §2a.
 
 ---

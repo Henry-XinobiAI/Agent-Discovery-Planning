@@ -714,7 +714,7 @@ secret을 잃고 네트워크 경계 단독이 됐으므로, 이 문장은 두 �
   exclusion)는 여전히 미결이며 phase10 spec §9의 별도 항목이다.
 - **owner당 복수 personal agent** — 현 canonical 계약은 결정적 1:1이므로 분기가 아니다(phase10 spec §9 (2)).
   지원하게 되면 resolver 출력과 self-exclusion 입도를 함께 재설계해야 한다.
-- **나머지 turn-on gate 3건** — producer-side pin(B1), memory-api R1–R6, phantom agent. 이 슬라이스는
+- **나머지 turn-on gate 3건** — ~~producer-side pin(B1)~~(2026-08-24 종결 — 발신하지 않기로 결정, phase10 spec §9 잔여 1 참조), memory-api R1–R6, phantom agent. 이 슬라이스는
   gate 1만 다루며, **그 gate에 필요한 설계 결정만** 닫는다(§10 표의 ⓐⓑⓒ 미완).
 - **production turn-on 자체** — `_reject_real_edge_in_production()` 제거는 gate 4건이 **전부** 닫힌 뒤의
   별도 커밋이다. 이 문서는 그 커밋의 선행 조건 하나를 준비할 뿐이다.
