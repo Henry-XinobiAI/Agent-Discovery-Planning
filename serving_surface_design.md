@@ -1,6 +1,6 @@
 # Agent 추천 API — 노출 표면(serving surface) 설계: internal-only + edge-auth 관례
 
-> **문서 지위**: 설계 rev 2 (2026-08-24). 입력 = bourbon-api `docs/microservice-edge-auth.md`
+> **문서 지위**: 설계 rev 3 (2026-08-24). 입력 = bourbon-api `docs/microservice-edge-auth.md`
 > (관례 정본) + bourbon-topic-api의 레퍼런스 구현(2026-08-24 소스 확인) +
 > `recommendation_pipeline_design.md` rev 5.3(파이프라인 정본 — 이 문서는 그 파이프라인이
 > **어떤 표면 위에서 서빙되는가**만 소유한다).
@@ -43,10 +43,14 @@ dev 진단(사람) ──office IP──▶ https://dev-bourbon.xinobi.net/api/i
 
 public 라우트가 없어도 `bourbon.xinobi.ai/edge-auth: enabled`를 붙인다. 이유 둘:
 
-1. **잘못 마운트된 라우트가 fail-closed가 된다.** 공유 정책의 notPaths는
-   `/api/internal/svc/` 아래만 check를 skip한다. internal prefix **밖**으로 실수 마운트된
-   라우트는 (label이 있으면) token을 요구해 tokenless 호출자에게 unreachable — "무인증
-   노출"이 아니라 "도달 불가"로 죽는다. label이 없으면 워크로드 전체가 무검사라 실수가
+1. **잘못 마운트된 라우트의 무인증 노출을 막는다**(rev 3에서 축소 서술 — "완전한
+   fail-closed"가 아니다). 공유 정책의 notPaths는 `/api/internal/svc/` 아래만 check를
+   skip한다. internal prefix **밖**으로 실수 마운트된 라우트는 (label이 있으면) token을
+   요구해 **무토큰 호출자에게만** unreachable이 된다 — 정상 access token을 가진 사용자는
+   check를 통과해 도달할 수 있고, 이 서비스는 x-user-id를 의도적으로 읽지 않으므로 그가
+   body에 실은 임의 `requester_user_id`가 그대로 신원이 된다(§1-3 threat model). 즉 label이
+   막는 것은 정확히 "unauthenticated 노출"까지이고, **오마운트 자체를 막는 시행층은
+   surface-boundary 테스트다**(§4-2). label이 없으면 워크로드 전체가 무검사라 실수가
    조용히 노출된다.
 2. **namespace fence의 opt-in이다.** `authz-internal-svc`(타 namespace in-mesh 호출자
    거부)는 labelled workload에만 적용된다(검증됨 — 관례 문서 "The namespace fence" 절).
@@ -67,6 +71,22 @@ may read one"). 따라서:
   규율(모델 공급 신원 비신뢰). 관례 문서의 "server-to-server auth has no answer yet"
   선언은 이 조합이 현존 최선임을 확인해 준다(구 B2 종결 판단과 일치 —
   `archive/bourbon_api_discovery_open_requests.md`).
+
+**threat model (rev 3 — 외부 리뷰 수용: 시행 범위를 실제보다 강하게 쓰지 않는다):**
+
+- body의 `requester_user_id`는 "검증된 사용자 신원"이 아니라 **"허용된 내부 호출자가
+  주장한 신원"**이다. 이 값을 검증하는 층은 어디에도 없다.
+- **namespace fence는 namespace 경계이지 bourbon-agent 인증이 아니다.** 실제 정책
+  (bourbon-api `k8s/overlays/dev/authz-internal-svc.yaml`, 검증됨)은 DENY +
+  `notNamespaces: ["dev"]` — dev namespace **안의 모든 workload가 통과**한다. 같은
+  namespace의 다른 서비스가 임의 신원으로 호출하는 것을 막는 층은 없다.
+- **bourbon-agent 단독 호출을 실제로 보장하려면 service account/principal 기반
+  AuthorizationPolicy가 추가로 필요하다.** 지금은 도입하지 않는다(허용된 호출자가 하나뿐인
+  단계에서 얻는 것이 없음) — 다만 **명명된 업그레이드 경로**로 기록한다: 호출자가 늘거나,
+  requester 신원의 용도가 self-exclusion을 넘어 권한·노출 판단에 쓰이게 되는 순간이
+  도입 시점이다.
+- 이 구도에서 **surface-boundary 테스트(§4-2)는 편의 테스트가 아니라 핵심 보안
+  시행층이다** — 오마운트를 막는 것은 정책이 아니라 이 테스트다.
 
 ### 1-4. 신규 template 구현 (오너 결정)
 
@@ -142,6 +162,10 @@ decision gone wrong" — 를 승계하되, 표면이 하나라 명부는 interna
 3. 모든 `api.routers.*` 라우트가 `INTERNAL_PREFIX` 아래(예외: health).
 4. `/api/svc/` 아래 라우트 **0개** — internal-only의 단정형.
 
+이 테스트 묶음은 §1-3 threat model이 기대는 **유일한 오마운트 방지층**이다(rev 3) —
+정책(label·fence)은 오마운트를 막지 못하고 노출 형태만 바꾼다. topic-api surfaces.py의
+"security decision gone wrong"이 여기서는 문자 그대로다.
+
 ### 4-3. "신원은 헤더에 없다" 테스트
 
 topic-api internal 테스트 디렉토리의 규약("No x-user-id header anywhere in this
@@ -187,6 +211,13 @@ directory's requests") + 명시 테스트(`test_internal_search_takes_no_caller_
 
 ## 변경 이력
 
+- **2026-08-24 rev 3** — 외부 리뷰 수용: 신뢰 경계를 실제 시행 범위로 축소 서술.
+  ⑴ §1-2의 "fail-closed"를 "무인증 노출 차단"으로 좁힘 — 토큰 보유 사용자는 오마운트
+  라우트에 도달해 임의 body 신원을 주장할 수 있다. ⑵ §1-3에 threat model 신설: body 신원 =
+  허용된 내부 호출자의 **주장** 신원, fence = namespace 경계(dev namespace 내 전 workload
+  통과 — 정책 소스 검증), principal 기반 정책은 명명된 업그레이드 경로(도입 시점 정의),
+  surface-boundary 테스트 = 핵심 보안 시행층. ⑶ §4-2에 테스트의 시행층 지위 명기.
+  recommendation_pipeline_design.md rev 5.5와 동기.
 - **2026-08-24 rev 2** — §7-①·③ 해소(오너 확정): repo = **`bourbon-agent-discovery-api`**
   (새 repo scaffold), `<name>` = `agent-discovery`, package = `agent_discovery`, endpoint =
   `/recommend` 유지, 기존 repo는 전환 후 archive. §1-5 신설(공존·컷오버 근거 + "discovery"
