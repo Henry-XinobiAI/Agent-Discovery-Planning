@@ -1,9 +1,10 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 초안 (rev 5, 외부 리뷰 2회 반영). 입력 = `topic_api_analysis.md` **rev 5.1**
+> **문서 지위**: 설계 정본 (rev 5.1, 외부 리뷰 2회 반영). 입력 = `topic_api_analysis.md` **rev 7**
 > (2026-08-24, topic-api HEAD `80c650f`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
-> 이 문서가 확정되면 `persona_topic_search_design.md`(rev 14)를 대체하는 새 정본이 된다.
+> `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
+> 대체하는 정본이 됐다(열린 결정은 §9에 잔존).
 >
 > **범위**: 큰 그림의 파이프라인 — bourbon-agent의 요청을 받아 topic-api의 어느 endpoint에서
 > 어떤 값을 가져와 추천 소스로 쓰는지, 각 단계의 동작·흐름·산출물. 구현 상세(코드 배치,
@@ -504,3 +505,6 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
   적용). ⑷ S3 fail-closed 확정(404는 캐시 무효화+재grounding 1회 후) — 열린 결정 ① 해소.
   ⑸ was_rollup → deep_holdings_observed 개명(충분조건 명기), 즐겨찾기 tiebreak dormant 명기,
   exclusion 후처리 결정에 만료 조건 부착.
+- **2026-08-24 rev 5.1** — 지위 갱신(설계 내용 불변). `persona_topic_search_design.md`(rev 14)를
+  `archive/`로 보내며 이 문서를 정본으로 승격. 헤더의 입력 표기를 분석 rev 7로 동기화(rev 5와
+  같은 커밋 `93e819d`에서 함께 개정된 문서라 내용상 이미 rev 7 기준이었다).

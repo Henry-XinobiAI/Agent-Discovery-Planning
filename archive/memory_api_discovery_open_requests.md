@@ -1,6 +1,6 @@
 # Memory API 요청 목록 — Agent Discovery 미해결 항목
 
-> **📦 폐기됨 (2026-08-20) — 미발신 초안인 채 종결.** 이 레지스터는 memory-api를 Discovery의 데이터 소스로 쓰는 세계의 요청 목록인데, persona extractor 체인(`../persona_topic_search_design.md`)이 확정되면서 **memory-api는 더 이상 우리 소스 대상이 아니다.** 발신 전 초안(DRAFT rev 1)이었으므로 대외 회수 절차는 없다. 각 항목의 문제의식은 새 체인에서 이렇게 이어진다:
+> **📦 폐기됨 (2026-08-20) — 미발신 초안인 채 종결.** 이 레지스터는 memory-api를 Discovery의 데이터 소스로 쓰는 세계의 요청 목록인데, persona extractor 체인(`persona_topic_search_design.md` — 2026-08-24 같은 디렉토리로 보관)이 확정되면서 **memory-api는 더 이상 우리 소스 대상이 아니다.** 발신 전 초안(DRAFT rev 1)이었으므로 대외 회수 절차는 없다. 각 항목의 문제의식은 새 체인에서 이렇게 이어진다:
 > - **R1**(탈퇴 owner의 지식 잔존·cross-owner 노출) → 새 체인의 **Q12**(real eligibility 소스) + TOPICSEARCH# 삭제 전파. 단 R1이 지적한 잔존 자체는 Discovery와 무관한 memory-api 쪽 데이터 위생 이슈로 남는다 — 그쪽 팀에 알릴지는 별도 판단.
 > - **R2·R7**(attribution 계약·테스트) → stance 트랙 자체가 2차 재설계 대상(Q8).
 > - **R3·R5**(join 완전성·ownership 검증) → 새 계약의 아이템 스키마 계약 테스트 + digest 소비자 검증.

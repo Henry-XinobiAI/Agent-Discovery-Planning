@@ -1,6 +1,6 @@
 # Agent Memory Vision
 
-> **📦 보관됨 (2026-08-20) — discovery의 확정 전제 지위 상실.** 이 비전(개인 knowledge graph 4계층 + Wikidata public anchor 정렬)은 discovery & recommendation 설계의 **확정 전제**였으나, 2026-08-19 아키텍처 재변경으로 discovery의 데이터 소스가 persona extractor 체인(bourbon-agent → DynamoDB → AOSS)으로 바뀌며 전제 지위를 잃었다. 비전 자체의 기록으로 보관한다 — discovery 관점의 전방 정본은 `../persona_topic_search_design.md`.
+> **📦 보관됨 (2026-08-20) — discovery의 확정 전제 지위 상실.** 이 비전(개인 knowledge graph 4계층 + Wikidata public anchor 정렬)은 discovery & recommendation 설계의 **확정 전제**였으나, 2026-08-19 아키텍처 재변경으로 discovery의 데이터 소스가 persona extractor 체인(bourbon-agent → DynamoDB → AOSS)으로 바뀌며 전제 지위를 잃었다. 비전 자체의 기록으로 보관한다 — discovery 관점의 전방 정본은 `../recommendation_pipeline_design.md`(2026-08-24; 3차 프레이밍 기록은 `persona_topic_search_design.md`).
 
 소유자: clint
 

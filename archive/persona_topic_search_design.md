@@ -1,5 +1,12 @@
 # Persona Topic Search — 신규 아키텍처 설계 (agent-recommendation 관점) — rev 14
 
+> **📦 보관됨 (2026-08-24) — superseded.** 3차 프레이밍(persona extractor 체인 — 우리가 topic/claim을
+> 소유하고 전용 테이블→AOSS로 색인)의 설계 기록이다. 2026-08-21 축 이전으로 topic 저장·검색·랭킹의
+> 주체가 `bourbon-topic-api`로 이동해 §2·§4와 Q1·Q2·Q5·Q9·Q13·Q14는 무효가 됐고, **전방 설계 정본은
+> `../recommendation_pipeline_design.md`**다. rev 14 결정·규율의 항목별 폐기/승계 처분은
+> `../topic_api_analysis.md` §9가 갖는다. §0의 extractor 체인(bourbon-agent 상주·deferq 이벤트)은
+> topic-api 뒤편의 ingest로 여전히 사실이며, 그 기록은 `../topic_api_analysis.md` §1.5에 있다.
+
 작성: 2026-08-20 · 상태: **설계 기준 (초안)** — 2026-08-19 회의 결정 + 2026-08-20 설계 리뷰·외부 리뷰 반영. §5의 열린 결정이 닫힐 때마다 rev-up하고, 전부 닫히면 확정으로 승격한다. 개정 이력은 문서 끝.
 
 > **개정 체크 (rev 7부터 상시).** 결정을 뒤집는 rev은 커밋 전에 **뒤집은 단어를 문서 전체에서

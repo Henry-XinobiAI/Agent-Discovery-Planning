@@ -1,7 +1,7 @@
 # bourbon-topic-api 분석과 Discovery 방향 재정립
 
 > **문서 지위**: 분석 기록 + 방향 결정 기록. **설계 문서가 아니다.**
-> 이 문서는 `persona_topic_search_design.md`(rev 14)를 대체하기 위한 **재설계의 입력**이며,
+> 이 문서는 `archive/persona_topic_search_design.md`(rev 14, 2026-08-24 보관)를 대체하기 위한 **재설계의 입력**이며,
 > 재설계 결과가 나오면 그 문서가 새 정본이 된다.
 >
 > **작성 근거**: 2026-08-21, `../bourbon-topic-api` 전수 읽기 + 테스트 실행 + 카탈로그 시드
