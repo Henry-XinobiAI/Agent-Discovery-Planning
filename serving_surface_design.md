@@ -1,6 +1,14 @@
 # Agent 추천 API — 노출 표면(serving surface) 설계: internal-only + edge-auth 관례
 
-> **문서 지위**: 설계 rev 3 (2026-08-24). 입력 = bourbon-api `docs/microservice-edge-auth.md`
+> **구현 상태 (rev 3.2, 2026-08-24)**: §3 델타와 §4 이디엄이 새 repo
+> `bourbon-agent-discovery-api`에 **반영됨** — `4176b0a`(k8s: label·vs 삭제·docs 게이트
+> retarget·API_TOKENS 제거), `05ec707`(app: `INTERNAL_PREFIX` 마운트·surfaces 명부·bearer
+> 토큰 층 삭제·surface 테스트 4종), `d861b5f`(§4-5 표면 밖 관례 정합: configmap·빈 secret·
+> ErrorResponse·테스트 배치·잔차). 남은 것은 §7-④(bourbon-api dispatch 등록 PR)뿐이고,
+> 그것 없이는 dev **진단 경로만** 닫혀 있다(in-cluster 직행은 registry를 타지 않는다).
+> 이 문서는 여전히 "무엇을 왜 그렇게 하는가"의 정본이고, 구현 상태는 이 블록만 갱신한다.
+
+> **문서 지위**: 설계 rev 3.2 (2026-08-24). 입력 = bourbon-api `docs/microservice-edge-auth.md`
 > (관례 정본) + bourbon-topic-api의 레퍼런스 구현(2026-08-24 소스 확인) +
 > `recommendation_pipeline_design.md` rev 5.3(파이프라인 정본 — 이 문서는 그 파이프라인이
 > **어떤 표면 위에서 서빙되는가**만 소유한다).
@@ -136,9 +144,14 @@ may read one"). 따라서:
 | 3. dispatch 등록 | `/api/svc/agent-discovery/` 블록 | **internal 블록 1개만** PR(`/api/internal/svc/agent-discovery/`) — topic-api는 두 블록(bourbon-api `k8s/base/api-svc-dispatch.yaml:16,24` 검증됨), 우리는 하나. **Service 포트는 `name: http` 필수** — 무명 포트는 plain TCP 취급이라 L7 정책(namespace fence 포함)이 아예 안 돈다 |
 | 4. prefix 마운트 | `API_PREFIX` | `INTERNAL_PREFIX`만. docs URL도 그 아래 dev-only |
 | 5. CORS | bourbon-api ConfigMap에서 origin 목록 | **전부 생략** — 브라우저 호출자 없음. ConfigMap 참조·preflight 미들웨어 순서 규칙 모두 해당 없음 |
+| (6). template의 bearer 층 | 관례 문서에 없음 | **삭제** — template은 `API_TOKENS` env + `verify_token` dependency + `/dev/verify` 라우트를 들고 온다(rev 3.1에서 확인). 토큰 검사는 edge의 일이고, 앱 안의 두 번째 인증 체계는 **관리되지 않는 인증 표면**이다. secret·양 overlay의 env·`AuthorizationError`까지 함께 제거해야 pod가 뜬다(secret만 지우면 env 참조가 남아 기동 실패) |
 
 파생 효과: CORS가 빠지면서 관례 문서의 미들웨어 순서 제약("CORSMiddleware가 최외곽")이
 사라진다 — 미들웨어 스택은 request_id·proxy-headers류만 남아 단순해진다.
+
+**template이 이미 만족하던 것 (rev 3.1 확인)**: Service 포트 `name: http`(사유 주석까지
+포함), CORS 미들웨어 부재. `project-template-python`이 관례 반영 후 판이라 step 3·5의 델타는
+"고칠 것"이 아니라 "이미 그렇게 되어 있음"이었다.
 
 ## §4 topic-api에서 차용하는 이디엄 (레퍼런스 구현, 소스 검증됨)
 
@@ -159,6 +172,8 @@ decision gone wrong" — 를 승계하되, 표면이 하나라 명부는 interna
    모양 그 자체를 단정.
 2. **클라이언트 쪽 prefix 상수가 앱과 일치** — topic-api는 자기 CLI로 이걸 하는데, 우리는
    e2e/진단 CLI와(가능하면 bourbon-agent client 계약 테스트와도) 같은 단정을 건다.
+   (rev 3.1: repo에 아직 그 클라이언트가 없어 **보류** — 테스트 파일 docstring에 도입 시점을
+   명기해 뒀다. 클라이언트가 생기는 커밋에서 함께 추가한다.)
 3. 모든 `api.routers.*` 라우트가 `INTERNAL_PREFIX` 아래(예외: health).
 4. `/api/svc/` 아래 라우트 **0개** — internal-only의 단정형.
 
@@ -179,6 +194,35 @@ directory's requests") + 명시 테스트(`test_internal_search_takes_no_caller_
 - k8s label 사유 주석(§3 step 1).
 - (참고) topic-api internal 응답이 단일 언어가 아니라 **언어 맵**인 이유 = "caller identity
   없음 → 언어 선호를 모름". 파이프라인 설계 S6의 ko·en 라벨 병기 결정과 같은 뿌리다.
+
+### 4-5. 표면 밖 이디엄 정합 (rev 3.2 — topic-api 1:1 대조 결과)
+
+표면 구조는 §4-1~4-4로 일치했고, **public 표면 유무로 설명되지 않는 차이 4건**을 topic-api
+쪽으로 맞췄다(코드 `d861b5f`). 여기 기록하는 이유는 이것들이 "표면"은 아니지만 **같은 관례
+체계의 일부**이고, 나중에 물리면 계약을 이미 굳힌 뒤가 되기 때문이다.
+
+| 차이 | topic-api | 우리 결정 |
+|---|---|---|
+| 앱 설정 그릇 | base `configmap.yaml` + 스테이지별 patch + `envFrom` | **동일하게 도입**. 미리 준비가 아니라 **결함 수정**이었다 — `LOG_LEVEL` 코드 기본값이 DEBUG인데 k8s가 아무 값도 안 줘서 양 스테이지가 DEBUG JSON 로그로 뜰 상태였다. 스테이지별 키(upstream URL·모델명)는 생길 때 patch 추가 |
+| secret | 파일을 **비워서 유지** + "왜 자격증명이 없는지" 주석 | 동일. 삭제하면 그 사유가 기록되지 않고, LLM provider 키가 필요해지는 순간 되살릴 파일이다 |
+| 에러 envelope | `ErrorResponse`(`extra="forbid"`) + 앱에 `responses={"4XX","5XX"}` 선언 | 동일 + **한 칸 더**: 그쪽은 envelope이 `error_code: str`(필수)인데 `AppError` 기본값이 `None`이라 코드 없는 raise가 핸들러 안에서 검증 실패하는 잠재 구멍이 있다(현재 그런 raise는 없음). 우리는 `AppError`의 기본 코드를 실제 값으로 채워 그 구멍을 없앴다. 우리 wire는 422 `grounding_failed`·503을 계약으로 갖기 때문에 타입 있는 envelope이 그쪽보다 더 중요하다 |
+| 테스트 배치 | `tests/integration/routers/internal/` + 그 conftest docstring에 "No x-user-id header anywhere" 규약 | 동일하게 이전. **규약이 디렉토리 단위로 사는 구조**가 요점 — `/recommend`의 fake들이 들어올 자리이기도 하다 |
+
+**보류(의도적)**: 코드 쪽 `EnvSettings` 베이스(pydantic·`extra="forbid"`·`from_env`)는
+topic-api·bourbon-agent 공통 관례지만, **서브클래스가 0개인 지금 넣으면 사용자가 없는
+프레임워크**다 → 첫 설정 항목(topic-api base URL)이 생기는 커밋에서 함께 도입한다. 그때
+ConfigMap 키 이름은 그 클래스의 필드명과 **정확히** 일치해야 한다(topic-api 주석의 함정:
+오타는 조용히 코드 기본값으로 폴백).
+
+**정리한 잔차**: template의 `log_invalid_response` 미들웨어 제거(핸들러가 이미 남긴 4xx/5xx를
+한 번 더 기록하고, 예외가 없는 응답에도 `exc_info=True`를 붙였다 — topic-api에도 없다),
+logger 이름을 전 모듈 `__name__`으로 통일, lifespan의 무의미한 `global logger` 재바인딩 제거.
+**포팅 안 함**: topic-api의 OpenAPI 예제 설치(`api/docs/openapi.py` + `examples.json`) —
+실제 라우트가 생긴 뒤에 판단.
+
+**차이지만 우리가 맞는 것**: `serviceAccountName: bourbon-app`(그쪽은 DynamoDB·S3 IRSA용,
+우리는 AWS SDK 의존 자체가 없다 — `pyproject.toml` 확인), 그리고 §4-2의 "health가 prefix 밖
+유일 라우트" 단정(public 라우트가 밖에 있는 topic-api에서는 쓸 수 없는 형태다).
 
 ## §5 포팅하지 않는 것
 
@@ -205,12 +249,27 @@ directory's requests") + 명시 테스트(`test_internal_search_takes_no_caller_
 | # | 항목 | 내용 |
 |---|---|---|
 | ① | ~~`<name>`~~ | **해소(2026-08-24, §1-5)** — repo/서비스명 `bourbon-agent-discovery-api`, `<name>` = `agent-discovery`, package `agent_discovery` |
-| ② | dev docs 게이트 | internal prefix 아래 docs는 dev에서 edge gate(office IP)가 이미 막는다. 기존 `authz-oauth2-proxy.yaml`을 internal 경로로 retarget해 SSO 이중 게이트로 둘지, 제거할지. **권고 = 유지·retarget**: dev host는 public이고(관례 문서의 httpbin 경고와 같은 이유), IP 허용 목록 하나에 기대지 않는다 |
+| ② | ~~dev docs 게이트~~ | **해소(2026-08-24, rev 3.1 — 권고대로 구현)**: `authz-oauth2-proxy.yaml`을 `dev-bourbon.xinobi.net` + internal prefix 아래 docs 4경로로 retarget해 유지(`4176b0a`). dev host는 public이므로 IP 허용 목록 하나에 기대지 않는다 |
 | ③ | ~~신규 구현의 그릇~~ | **해소(2026-08-24, §1-5)** — 새 repo scaffold. 기존 repo는 전환 완료까지 가동하는 참조용 동결, 삭제 패스 없음 |
 | ④ | dispatch PR 시점 | 등록은 bourbon-api 배포를 타므로(관례 문서 step 3), dev 첫 배포 전에 PR이 머지·배포돼 있어야 gateway 진단 경로가 열린다 |
 
 ## 변경 이력
 
+- **2026-08-24 rev 3.2** — bourbon-topic-api와 1:1 대조(§4-5 신설, 코드 `d861b5f`).
+  표면 구조는 일치했고, public 표면 유무로 설명되지 않는 차이 4건을 그쪽으로 맞췄다:
+  ConfigMap+`envFrom`(★`LOG_LEVEL` 기본 DEBUG가 k8s에 미설정 — 준비가 아니라 결함
+  수정이었다)·빈 secret 유지(사유 기록)·`ErrorResponse` envelope(그쪽의 `error_code`
+  None 구멍은 막고)·internal 테스트 디렉토리(규약이 conftest에 사는 구조). 잔차 3건 정리
+  (`log_invalid_response` 제거·logger `__name__` 통일·`global logger` 제거), `EnvSettings`
+  베이스는 첫 설정 항목까지 보류, OpenAPI 예제 설치는 미포팅.
+- **2026-08-24 rev 3.1** — 새 repo `bourbon-agent-discovery-api`에 §3·§4 구현 반영
+  (`4176b0a`·`05ec707`). ⑴ 머리말에 구현 상태 블록 신설(이후 상태 갱신은 그 블록만).
+  ⑵ §7-② 해소 — docs 게이트는 권고대로 유지·retarget. ⑶ §3에 델타 (6) 추가 — template이
+  들고 오는 bearer 층(`API_TOKENS`·`verify_token`·`/dev/verify`)은 **삭제**가 결정이며,
+  secret·양 overlay env·`AuthorizationError`까지 함께 지워야 기동한다. ⑷ §3에 "template이
+  이미 만족하던 것"(포트 `name: http`, CORS 부재) 명기 — 기존 repo 기준으로 잡았던 갭 2건은
+  실제로는 존재하지 않았다. ⑸ §4-2 항목 2(클라이언트 prefix 등가 단정)는 클라이언트 부재로
+  보류 상태임을 명기. 남은 열린 결정은 §7-④ 하나.
 - **2026-08-24 rev 3** — 외부 리뷰 수용: 신뢰 경계를 실제 시행 범위로 축소 서술.
   ⑴ §1-2의 "fail-closed"를 "무인증 노출 차단"으로 좁힘 — 토큰 보유 사용자는 오마운트
   라우트에 도달해 임의 body 신원을 주장할 수 있다. ⑵ §1-3에 threat model 신설: body 신원 =

@@ -16,7 +16,7 @@
 |---|---|---|---|
 | **`topic_api_analysis.md`** | **분석 + 방향 결정 기록 (rev 7.1, 2026-08-24)** | `bourbon-topic-api` 전수 분석(검색 메커니즘·카탈로그 실측·성능/비용·프라이버시 모델) + **축 이전 결정** + rev 14 폐기/승계 목록 + 열린 질문. **재설계의 입력이며 설계 문서가 아니다** | 사실/결정/열린 질문 |
 | **`recommendation_pipeline_design.md`** | **설계 정본 rev 5.5 (2026-08-24, 외부 리뷰 3회 반영)** | topic-api 소비 기반 추천 파이프라인 S1–S6: 단계별 동작·topic-api endpoint·산출물·실패 3분기. `persona_topic_search_design.md`(rev 14)를 대체(2026-08-24 archive) — 열린 결정은 §9 | 파이프라인 단계 산출물 |
-| **`serving_surface_design.md`** | **설계 rev 3 (2026-08-24)** | 노출 표면: internal-only(`/api/internal/svc/agent-discovery/` 단독) + edge-auth 관례 채택 + topic-api 레퍼런스 이디엄 차용. **신규 repo = `bourbon-agent-discovery-api`** (project-template-python scaffold, 기존 repo는 전환 후 archive). x-user-id 금지·신원=body·label 유지·surface boundary 테스트 | 표면 계약 / template 델타 |
+| **`serving_surface_design.md`** | **설계 rev 3.2 (2026-08-24, §3·§4 구현 반영 + topic-api 관례 정합)** | 노출 표면: internal-only(`/api/internal/svc/agent-discovery/` 단독) + edge-auth 관례 채택 + topic-api 레퍼런스 이디엄 차용. **신규 repo = `bourbon-agent-discovery-api`** (project-template-python scaffold, 기존 repo는 전환 후 archive). x-user-id 금지·신원=body·label 유지·surface boundary 테스트. **표면 정비는 코드 repo에 반영 완료**(`4176b0a`·`05ec707`·`d861b5f`) — 남은 열린 결정은 §7-④ dispatch 등록 PR | 표면 계약 / template 델타 |
 | **`impl/` (README + `01`–`11`)** | **현행 shipped 시스템의 구현 계약 (전환 전까지 유효)** | memory-api 기반의 실제 가동 중 시스템: 데이터 계약·provider 경계·grounding·gate/ranking·serving·eval. 전환 시 삭제 패스의 기준선이기도 하다 | typed struct / phase |
 
 > **방향 근거는 `topic_api_analysis.md`, 설계 정본은 `recommendation_pipeline_design.md`, 가동 중인
