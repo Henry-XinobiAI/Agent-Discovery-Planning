@@ -1,6 +1,6 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 정본 (rev 5.6, 외부 리뷰 3회 반영). 입력 = `topic_api_analysis.md` **rev 8**
+> **문서 지위**: 설계 정본 (rev 5.7, 외부 리뷰 3회 반영). 입력 = `topic_api_analysis.md` **rev 8**
 > (2026-08-25, topic-api HEAD `9ee67f3`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
@@ -235,7 +235,10 @@ exact_label: bool}], outcome: grounded | failed | ambiguous | unavailable }`
 topic-api 5xx/timeout → `unavailable` → **503**.
 
 **계측**: probe 0건율(= 카탈로그 커버리지 지표, 분석 §12.3), 후보 수→확정 수, exact-label
-비율, unmatched probe의 원문 기록(→ seed 요청 채널의 근거 데이터, 분석 §8.3-B).
+비율, unmatched probe의 **digest·길이·언어·귀속**(원문은 남기지 않는다 — rev 5.7 정정).
+probe는 topic/context 파생이라 관심사·개인정보가 실릴 수 있고, 일반 로그에 예외를 두면 그
+예외가 규칙을 먹는다. 원문이 카탈로그 개선(seed 요청 채널, 분석 §8.3-B)에 정말 필요해지면
+**접근제어·보존기간·샘플링·기본 OFF를 가진 별도 measurement sink**로 분리한다.
 
 ### S3 Retrieval — topic_id별 후보 유저 수집
 
@@ -261,10 +264,13 @@ rev 6: 다중 id 병합은 그들 score를 cross-topic 가중에 재유입시키
 per-topic 100×N보다 후보 풀이 좁으며, rollup 경로를 강제한다. per-topic fan-out + S4 RRF가
 의미·후보 풀·비용·exhaustive 전부에서 우월. 재검토 조건은 분석 §11-16.)
 
-**산출물**: `TopicCandidates { topic_id, users: [...위 보존 필드...],
-flags: {exhaustive, descendants_dropped, topics_dropped}, deep_holdings_observed: bool }`
-— `deep_holdings_observed` = 응답 matched에 `distance > 0` 존재. **rollup 여부의 충분조건일
-뿐 필요조건이 아니다**(rollup을 탔어도 root topic만 보유한 유저들이면 전부 distance 0,
+**산출물**: `TopicCandidates { topic_id, users: [{...위 보존 필드..., deep_holdings_observed}],
+flags: {exhaustive, descendants_dropped, topics_dropped} }`
+— `deep_holdings_observed` = **그 유저의** matched 트리에 `distance > 0` 존재(rev 5.7: topic
+단위 bool에서 **유저 단위**로 내렸다. 값이 원래 유저의 트리에서 계산되고, topic 단위 bool은
+유저 단위 값의 `any()`로 언제든 얻지만 역은 불가능하다. 아래 "비율" 계측은 두 단위 모두에서
+정의되므로 세밀한 쪽에 둔다). 어느 단위에서 읽어도 **rollup 여부의 충분조건일 뿐
+필요조건이 아니다**(rollup을 탔어도 root topic만 보유한 유저들이면 전부 distance 0,
 빈 결과에서는 판별 불가) — 그래서 "was_rollup"이라 부르지 않는다. 정확한 경로 계측이
 필요해지면 topic-api에 `strategy` 응답 필드를 요청한다(분석 §11-19, 낮음). 분기용이 아니라
 계측·비용 귀속용.
@@ -306,8 +312,10 @@ flags: {exhaustive, descendants_dropped, topics_dropped}, deep_holdings_observed
    스케일 차이를 우리가 재해석하지 않기 위해서다. S2의 그룹당-1 규칙이 지켜져야 이 합산이
    "여러 **독립** 관심 축에 걸린 owner가 위로 온다"는 의미를 가진다 — 같은 개념의
    broad+narrow를 둘 다 확정하면 이 단계가 같은 근거를 이중 보상하게 된다(S2-3).
-2. **evidence 병합**: owner별로 topic마다 {topic_id, contribution, distance, score_detail?,
-   descriptions?}를 모은다 — S6의 재료.
+2. **group contribution 병합**: owner별로 topic마다 {topic_id, contribution, distance,
+   score_detail?, descriptions?}를 모은다 — S6의 재료. `contribution`은 topic-api의 값이라
+   구현에서는 `ranking_contribution`으로 옮긴다(우리 RRF 기여인 `rrf_share`와 한 타입 안에서
+   섞이지 않게 — 어댑터가 외부 이름을 내부 의미로 번역한다).
 2-1. **stub 방어 필터**(rev 5, 임시 방어): 대표 매치 item의 `created_at`/`updated_at`이
    null이면 그 후보-topic 쌍을 버린다. 세 writer 전부가 timestamps를 심으므로(검증됨)
    null은 인덱스 유래 stub(= 철회 직후 stale 행)의 강한 신호다. **계약이 아니라
@@ -325,11 +333,18 @@ flags: {exhaustive, descendants_dropped, topics_dropped}, deep_holdings_observed
    거나 real eligibility가 활성화되어 top-100이 대량 소모되기 시작하면(계측: 제외·필터
    탈락 비율) overfetch 또는 서버측 필터를 재논의한다. eligibility 활성화 gate의 선행
    조건으로 이 재논의를 건다.
-4. **eligibility**: `EligibilityProvider.check`(현 AllowAll stub 유지, Q12).
+4. **eligibility**: `EligibilityPolicy.is_eligible`(현 AllowAll stub 유지, Q12) — S4가 순수
+   함수라 **동기 술어**다(rev 5.7 정정: rev 5.6까지의 `EligibilityProvider.check`는 async
+   provider 모양이어서 순수 함수 안에서 호출할 수 없었다. 실제 eligibility 원천이 생기면
+   조회는 조립 함수가 비동기로 하고 그 결과를 이 정책에 넘긴다 — S4를 async로 바꾸지 않는다).
 
 **topic-api 호출**: 없음.
 
-**산출물**: `CandidatePool { candidates: [{user_id, rrf_rank, evidences: [...]}] }` —
+**산출물**: `CandidatePool { candidates: [{user_id, rrf_score, group_contributions: [...]}] }`
+(rev 5.7 개명: `rrf_rank` → `rrf_score` — 이 값은 순위가 아니라 `Σ 1/(k+rank+1)` **합**이고,
+S5의 1키가 그것을 내림차순으로 읽는다. §S5·§9의 금지는 scalar의 **노출**이지 내부 존재가
+아니다. `evidences` → `group_contributions` — 영어로 evidence는 불가산이고, 이 항목은
+"한 그룹이 이 후보 점수에 기여한 내용"이라 contribution이 타입 전체를 더 잘 말한다) —
 `degraded` 필드는 rev 5.5에서 **삭제**: S3의 부분 실패·불완전 플래그가 전부 503이 된 뒤로는
 도달 불가능한 값이다. 품질 신호는 decision log가 소유하고, 필드는 degraded wire 재개방
 결정과 함께 재정의한다.
@@ -346,15 +361,15 @@ flags: {exhaustive, descendants_dropped, topics_dropped}, deep_holdings_observed
 ```
 gate(현 A단계: privacy=public tier 소비 + S4 stub 방어 — §11-4 해소 전에는 "구조
      보장"이 아니다(rev 5.5, §1의 약화 서술과 동기화), maturity=§11-6 대기로 비활성)
-  → 1키: 정렬 전략 슬롯 (기본 전략 = RRF 순위)
+  → 1키: 정렬 전략 슬롯 (기본 전략 = RRF 점수 `Σ 1/(k+rank+1)` 내림차순)
   → 2키: 즐겨찾기 tiebreak (승계 — gate 우회 금지, 동순위에서만. **dormant**: 공급처가
         아직 없다 — §1)
   → 3키: user_id bytes (결정적 — topic-api와 같은 규율)
 ```
 
 **전략 슬롯**: expertise ordering 키(facets 기반)는 **facets 계약 확정(분석 §11-18)이 선행
-조건**이므로 지금은 식을 잠그지 않는다. 슬롯의 계약만 잠근다 — 입력은 S4의 evidence(원형
-score_detail 포함), 출력은 전순서(total order), **facet 필드 이름에 하드바인딩 금지**(모르는
+조건**이므로 지금은 식을 잠그지 않는다. 슬롯의 계약만 잠근다 — 입력은 S4의 group
+contribution(원형 score_detail 포함), 출력은 전순서(total order), **facet 필드 이름에 하드바인딩 금지**(모르는
 facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3). 기본 전략(RRF)은 facets를
 전혀 읽지 않으므로 dummy 기간에도 안전하다.
 
@@ -440,7 +455,7 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
 | S1 | `ExpansionResult` (concept groups ⊃ probes + 귀속) | S2, 계측 |
 | S2 | `GroundingResult` (topic 1~3 + outcome) | S3, §4 판정, 계측 |
 | S3 | `TopicCandidates[]` (유저+matched 트리 원형+플래그) | S4, 계측 |
-| S4 | `CandidatePool` (RRF 순위 + evidence 병합) | S5 |
+| S4 | `CandidatePool` (RRF 점수 + group contribution 병합) | S5 |
 | S5 | `OrderedCandidates` | S6 |
 | S6 | `RecommendResponse` | bourbon-agent |
 
@@ -590,6 +605,20 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 이 절이 거절 근거다.
 
 ## 변경 이력
+
+- **2026-08-25 rev 5.7** — **구현 설계안(코드 repo `tasks/todo.md` rev 10)의 이름 감사 역반영.**
+  설계 판단은 하나도 바꾸지 않았고, 이름과 한 값의 **소속 단위**만 고쳤다. ⑴ **§S2 계측 — unmatched
+  probe의 원문 기록을 폐기**하고 digest·길이·언어·귀속만 남긴다. 이것은 구현 설계안이 이 문서를
+  이기고 있던 유일한 지점이었다(그 문서 §10-7이 "정본을 고쳐야 한다"고 기록해 둔 빚). ⑵ **§S3 산출물
+  — `deep_holdings_observed`를 topic 단위에서 유저 단위로** 내렸다(값이 유저의 트리에서 계산되고,
+  topic 단위는 `any()`로 파생된다). ⑶ **§S4-2 개명** — `evidence 병합` → `group contribution 병합`,
+  `contribution`이 구현에서 `ranking_contribution`이 되는 이유 명시(우리 `rrf_share`와의 혼동 차단).
+  ⑷ **§S4 산출물 개명** — `rrf_rank` → `rrf_score`(합이지 순위가 아니다. scalar 금지는 **노출**
+  규칙이라 무관), `evidences` → `group_contributions`. ⑸ **§S4-4 개명·정정** —
+  `EligibilityProvider.check`(async) → `EligibilityPolicy.is_eligible`(동기 술어). S4를 순수 함수로
+  잠근 이 문서가 그 안에서 await할 수 없는 port를 예시하고 있었다. ⑹ §S5 전략 슬롯 입력과 §단계
+  산출물 요약표의 같은 어휘 동기화. 구현 쪽 이름 감사의 전체 표와 유지 결정은 `tasks/todo.md`
+  rev 9·10 변경 이력에 있다.
 
 - **2026-08-25 rev 5.6** — **상류 검색 전제 동기화**(외부 리뷰 P1-3 수용 — 분석 rev 8과 같은
   브랜치). topic-api `42f59bf`가 `find_by_name`에 관련도 서열을 도입해, 이 문서가 **S1 프롬프트에
