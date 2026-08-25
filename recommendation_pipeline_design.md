@@ -1,7 +1,7 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 정본 (rev 5.5, 외부 리뷰 3회 반영). 입력 = `topic_api_analysis.md` **rev 7**
-> (2026-08-24, topic-api HEAD `80c650f`) + bourbon-agent의 기왕 계약
+> **문서 지위**: 설계 정본 (rev 5.6, 외부 리뷰 3회 반영). 입력 = `topic_api_analysis.md` **rev 8**
+> (2026-08-25, topic-api HEAD `9ee67f3`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
 > 대체하는 정본이 됐다(열린 결정은 §9에 잔존).
@@ -46,7 +46,8 @@ bourbon-agent      [topic-api 불능 → 503 / 정직한 empty → 200]
 ⑷ 근거를 사용자 언어로 조립하는 일(S6)을 소유한다.
 
 **이 문서가 잠그지 않는 것**: expertise ordering 키의 식(facets 계약 미확정 — 분석 §11-18이
-선행 조건), friends tier 사용(분석 §11-17), C단계 rerank 판정층의 진입 조건. 셋 다 슬롯만
+선행 조건), friends tier 사용(분석 §11-17 — rev 5.6: 상류 지원 예고로 성격이 "우리가 교차
+필터"에서 "상류 계약 소비"로 바뀜), C단계 rerank 판정층의 진입 조건. 셋 다 슬롯만
 설계에 남기고 식·값은 비워 둔다.
 
 ---
@@ -129,9 +130,15 @@ topic 라벨 ko·en) + `match_reason` 재료(대표 topic·기여 요지)로 고
    규칙을 아는 자만 쓸 수 있는 레버(분석 §2.1)를 LLM에게 그대로 준다:
    - 카탈로그 = 큐레이션된 Wikidata 항목 집합. 각 topic은 ko/en/ja label + Wikidata alias
      (≤50, 77%가 영어)를 가진다
-   - 매칭 = 정규화(소문자화+공백 제거) 후 **probe가 label/alias의 substring**이어야 한다 —
-     probe가 label보다 길면 절대 못 맞는다
-   - 관련도 순위 없음·매치 캡 20 — 짧고 범용인 probe는 노이즈로 캡을 채운다
+   - 매칭 = 정규화(소문자화+공백 제거+**NFC**) 후 **probe가 label/alias의 substring**이어야
+     한다 — probe가 label보다 길면 절대 못 맞는다. **단 latin probe는 substring만으로 부족하고
+     단어 시작이어야 한다**(rev 5.6 — topic-api `42f59bf`): `tent`는 `content`에 안 걸린다.
+     CJK probe는 substring 그대로다(`위스키` ⊂ `싱글몰트위스키`)
+   - **관련도 서열 있음**(rev 5.6, 구 "순위 없음"): label > alias, 그 안에서 exact > 단어시작 >
+     substring 순으로 **정렬한 뒤** 캡 20을 적용한다. 캡이 자르는 것은 **상류 tier에서 후순위인
+     매치**이지 의미상 약한 매치가 아니다 — 둘은 같지 않다: label 단어시작이 alias exact를
+     이기므로 **의미상 강한 약어 매치가 무관한 label 뒤로 밀린다**(`ai` → 인공지능 16위,
+     분석 §2.1 rev 8). 약어는 풀어서 보내는 편이 안전하다
    - 따라서: Wikidata 항목명처럼 쓸 것(R4), 명사구만·긴 형태부터 축소(R1), 조사·활용
      제거(R2), 영문 4자+/한글 2자+(R5), 공백 변형 금지(R6)
    이 설명은 정적 프롬프트로 안전하다 — 매칭 **규칙**은 안정적이고 배포마다 움직이는 것은
@@ -190,9 +197,12 @@ ExpansionResult {
 
 선별 — **concept_group당 정확히 1 topic**(rev 5, 외부 리뷰 수용):
 
-1. **rule pass**: probe별 매치 수가 캡(20)에 닿았으면 그 probe의 매치는 신뢰 하향(분석 §2.1
-   `ai` 사례 — 캡 도달은 노이즈 신호). exact-label 일치(정규화 기준 라벨==probe)는 후보
-   집합을 exact/non-exact로 나눈다.
+1. **rule pass**: probe별 매치 수가 캡(20)에 닿았으면 그 probe의 매치는 신뢰 하향 — 단
+   **rev 5.6에서 근거가 약해졌다**: 상류가 관련도 순으로 정렬한 뒤 자르므로 캡 도달이 곧
+   "상위 20개가 노이즈"를 뜻하지 않는다(`ai`는 560→62로 줄고 인공지능이 16위로 들어온다,
+   분석 §2.1 rev 8). 캡 도달은 이제 **"probe가 넓다"**는 신호로만 읽고, 하향 폭은 eval로
+   정한다. exact-label 일치(정규화 기준 라벨==probe)는 후보 집합을 exact/non-exact로 나눈다 —
+   **약어 probe는 alias exact라서 이 분기를 못 탄다**(위 §S1 매칭 규칙).
 2. **그룹당 1 확정**: 각 concept_group에서 topic 하나만 확정한다. **exact 후보 집합이
    non-exact보다 우선하되, exact가 복수면 context로 판별한다(LLM)** — exact 단독 승자
    가드가 아니다: 같은 label의 동음이의 topic이 실존하고(topic-api id 설계의 근거 자체가
@@ -231,7 +241,12 @@ topic-api 5xx/timeout → `unavailable` → **503**.
 
 **동작**: 확정 topic마다 유저 랭킹을 **병렬** 호출한다. **항상 `limit=100`**(컷 한계 (a)안 —
 분석 §9: 컷은 그들 score로 일어나고 페이징이 없으므로, 최대로 받아 우리 층의 재량을 확보한다.
-만료 조건 계측 동봉). **`visibility=public` 단독**(분석 §11-17 — friends는 제품 결정 대기).
+만료 조건 계측 동봉). **`visibility=public` 단독** — rev 5.6: 상류에 friends 지원이 예고돼
+있으므로(전언 2026-08-25: requester 신원이 실리면 public+friends, 없으면 public 단독 — 분석
+§6.1·§11-17) 이 값은 **provider에 하드코딩하지 않고 호출 인자로 둔다.** 지금 보내는 값은 public
+하나이고, 아이템 tier 검증도 "public 고정"이 아니라 **"요청한 tier 집합 안"**으로 읽는다.
+friends 실사용은 상류 계약 확정 후이며, 그때 **S3 캐시 키에 requester가 들어가야 한다**(같은
+topic도 requester마다 다른 랭킹이 되므로 — 현재 키 설계의 전제가 깨진다).
 
 응답에서 보존하는 것(어댑터가 버리지 않는다):
 
@@ -576,6 +591,23 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 
 ## 변경 이력
 
+- **2026-08-25 rev 5.6** — **상류 검색 전제 동기화**(외부 리뷰 P1-3 수용 — 분석 rev 8과 같은
+  브랜치). topic-api `42f59bf`가 `find_by_name`에 관련도 서열을 도입해, 이 문서가 **S1 프롬프트에
+  내장하는 매칭 규칙**과 **S2 rule pass의 캡 해석**이 거짓이 됐다. 설계 판단은 바꾸지 않고
+  사실만 고쳤다: ⑴ §S1-3 규칙 블록 — latin probe는 substring이 아니라 **단어 시작**이어야 하고
+  (`tent` ⊄ `content`), CJK는 substring 유지, 정규화에 NFC 추가, "관련도 순위 없음" → **서열
+  있음**(label > alias · exact > 단어시작 > substring, 정렬 후 캡). ⑵ §S2 rule pass — 캡 도달을
+  "상위 20개가 노이즈"로 읽던 근거가 약해졌으므로(`ai` 560→62, 인공지능 16위) **"probe가 넓다"
+  신호로만** 읽고 하향 폭은 eval로 정하도록 좁힘. 새로 드러난 것: **약어 probe는 alias exact라
+  exact-label 분기를 못 탄다** → §S1에 "약어는 풀어서 보낸다"를 명시(R1–R7의 정식 "약어 확장"
+  규칙 신설과 약어 fixture eval은 후속). 미변경: R5 길이 가드·R6 공백 변형 금지는 그대로 두되,
+  상류가 두 spacing을 모두 시도하게 됐으므로(`red wine` → `Redwine`) **R6는 재검토 대상**으로만
+  적어 둔다 — 규칙 완화는 측정 뒤에 결정한다. ⑶ **friends tier 예고**(전언 2026-08-25): 상류가
+  friends를 지원할 예정이고 방향은 "requester 신원이 실리면 public+friends, 없으면 public
+  단독"이다. 설계 판단은 바꾸지 않되(Alpha는 public 단독) **되돌리기 쉬운 형태**로 고쳤다 —
+  §S3의 `visibility=public`을 provider 하드코딩이 아니라 **호출 인자**로 두고, 아이템 tier
+  검증을 "요청한 tier 집합 안"으로 읽는다. 함께 기록한 파급: friends가 켜지면 같은 topic도
+  requester마다 다른 랭킹이므로 **S3 캐시 키에 requester가 들어가야 한다**(현재 키 전제가 깨짐).
 - **2026-08-24 rev 1** — 최초 작성. 입력 = `topic_api_analysis.md` rev 5.1. 큰 그림
   파이프라인(S1–S6)·단계별 topic-api endpoint·산출물·실패 3분기 판정 지점·§13 질문 대응을
   담고, expertise 키 식·friends tier·C단계 rerank는 슬롯으로 비워 둠. 리뷰 대기.
