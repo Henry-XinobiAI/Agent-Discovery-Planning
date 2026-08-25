@@ -10,6 +10,10 @@
 > #18–#25(응답 재구성·internal 표면 통합·3언어 서술·응답 트리·demo persona seed)를 반영했다.
 > **rev 5(2026-08-24)는 오너 전언 3건 반영** — facets는 dummy·계약 미확정, item=null 의미
 > 확인, 트리 depth 2 + 이하 rollup.
+> **rev 8은 HEAD `9ee67f3`(2026-08-25)** — `80c650f` 이후 12커밋(#26–#28 + 직접 커밋) 감사.
+> **우리가 소비하는 응답 shape 무변동**(필드 추가·삭제·타입 변경 0; 그들 쪽 validation 제약만
+> 강화 — `score`·`descendants_dropped`·`topics_dropped`에 `ge=0`), 의미 변경 3건: relation 할인
+> 삭제 · `find_by_name` 관련성 서열 · 카탈로그 2,962로 확장. §2.1 실측 표는 새 서열로 재실행.
 > 대조 대상은 `../../iac`(origin/main `d364d3c`, rev 4에서 `592e34c`로 재확인),
 > `../bourbon-api`(origin/main `943b5f5`), `../bourbon-agent`(HEAD `18fbcac`).
 >
@@ -22,7 +26,7 @@
 ## §0 한 페이지 요약
 
 **무엇을 발견했나.** `bourbon-topic-api`는 이미 구현된 독립 마이크로서비스다. 큐레이션된
-Wikidata 기반 토픽 카탈로그(2,605개 — **이미지에 커밋된 JSON 산출물**)와 유저별 토픽 점수
+Wikidata 기반 토픽 카탈로그(2,605개 → rev 8 시점 **2,962개** — **이미지에 커밋된 JSON 산출물**)와 유저별 토픽 점수
 (DynamoDB 1테이블)를 두고,
 "토픽 → 그 토픽을 가진 유저 랭킹"을 답한다. **OpenSearch를 쓰지 않는다.**
 
@@ -49,6 +53,26 @@ internal 표면은 별도 워크로드에서 같은 워크로드의 `/api/intern
 **현재 facets는 dummy이고 필드·의미가 모두 바뀔 수 있다** — 재가중 재료의 운반 경로는
 확보됐지만 의미는 아직 계약이 아니며, ordering 키 식은 facets 계약 확정(§11-18) 전에
 잠그지 않는다.
+
+**rev 8에서 움직인 것 (2026-08-25, HEAD `9ee67f3`).** 우리가 소비하는 응답 shape는 한 필드도
+움직이지 않았다 — 판정 근거는 부록 B-4의 3중 확인이며, 단일 검사로 단정하지 않았다. 그들
+쪽에서 `score`·`descendants_dropped`·`topics_dropped`에 `ge=0`이 붙은 것은 **shape가 아니라
+그들이 새로 명시한 보증**이라 무변동에 포함하지 않는다. 움직인 것은 **의미** 셋이다.
+⑴ **relation 할인이 점수에서 빠졌다**(`9616f35`): 점수는 `fmean(present facets) × confidence`가
+되어 **relation 자체가 더 이상 점수를 움직이지 않는다** — facets와 confidence가 같으면 exact와
+ancestor·related가 동점이다(무조건 동점은 아니다: 같은 signal 안에서는 confidence가 이들의
+순위를 가른다). 잃은 것은 **signal을 가로질러 일관된 정밀도 페널티**다. confidence는 한 signal이
+낳은 topic들을 가르는 값이지 signal 간 보정을 주장하지 않으므로, "덜 정확히 명명된 보유"를
+가로로 눌러 주던 계수는 이제 없다 → "상위 개념으로 흡수되며 점수만 할인"(§3.3)이 "흡수되되
+relation은 점수에 무영향"으로 바뀌었고, exact를 앞세우는 일은 **전적으로 우리 ordering
+몫**이 됐다(§11-18·§13-3). ⑵ **`find_by_name`이 관련성
+서열을 갖게 됐다**(`42f59bf`): label > alias, exact > word-start > substring, latin 질의는
+substring 없음 → §11-8 해소, `ai`의 560→62 매칭. 단 **label word-start가 alias exact를 이긴다**
+(§2.1 재실측 — `aikido`가 alias `AI`를 가진 인공지능보다 앞). ⑶ 카탈로그 2,605→**2,962**,
+루트 231(활동 도메인 10그룹 + persona가 말하는데 없던 시드 3개). 그 외 소비자에게 보이던 증상
+하나가 사라졌다: leaf 랭킹에서 visibility 전파 중 같은 유저가 두 tier 파티션에 있으면 body
+BatchGet이 **503**을 냈는데 dedupe로 제거됐다(`5d771eb`) — 우리에겐 `UpstreamUnavailable`로
+보였을 간헐 장애다.
 
 **재설계가 답해야 하는 것**은 §13에 목록으로 있다.
 
@@ -198,7 +222,11 @@ persona markdown
  → ②grounding internal GET /search/topics + 상세의 children. 활성만, dedupe, signal당 40개 캡
  → ③marking   LLM 1회/signal: 후보 목록에서 exact|ancestor|related + confidence + 한국어 description
                               **모델은 인덱스만 답한다** (id를 주면 그럴듯한 것을 발명하므로)
- → score = 존재하는 facet들의 등가중 평균 × relation할인(1.0/0.85/0.6) × confidence
+ → score = 존재하는 facet들의 등가중 평균 × confidence
+              (~~× relation할인(1.0/0.85/0.6)~~ — rev 8: `9616f35`에서 삭제. relation은 저장·서빙되되
+               점수를 움직이지 않는다. marking도 "중심 후보를 먼저 정하고 나머지를 그 중심에 대해
+               분류"로 바뀌었고(`081d6c7`), confidence의 정의가 "producer의 확신"에서
+               **"topic이 관심을 대표하는 강도"**로 재정의됐다 — §11-6)
 ```
 
 - 출력은 **디스크 JSON**(`.persona_topics/`)뿐이다. 실 테이블 적재 경로는
@@ -223,7 +251,8 @@ persona markdown
 
 ### 2.1 ① 텍스트 → 토픽: 인메모리 부분문자열 스캔
 
-`topic/catalog/graph.py:find_by_name`이 전부다.
+`topic/catalog/graph.py:find_by_name`이 전부다. **아래는 rev 4(`80c650f`)까지의 모양**이다 —
+rev 8의 관련성 서열은 이 절 끝의 재실측 표에 있다.
 
 ```python
 needle = normalize_search_text(query)        # lower() + 공백 전부 제거
@@ -235,8 +264,12 @@ for item in self._topics.values():           # 2,605개 선형 순회 (dict 삽�
     if len(found) >= limit: break             # limit = SEARCH_MAX_NAME_MATCHES(20)
 ```
 
-토크나이저·형태소 분석·stemming·점수·순위가 **전부 없다.** 시작 시 1회 로드한 카탈로그 전체를
-메모리에 들고 `grep -i`를 돌린다(#17 전에는 60초 TTL 재적재였다 — §5.3).
+토크나이저·형태소 분석·stemming·점수가 **전부 없다.** 시작 시 1회 로드한 카탈로그 전체를
+메모리에 들고 `grep -i`를 돌린다(#17 전에는 60초 TTL 재적재였다 — §5.3). ~~순위도 없다~~ →
+rev 8(`42f59bf`): 전체를 매칭한 뒤 `(label|alias tier, exact|word-start|substring)` 두 축의 tier로
+정렬하고 나서 캡을 적용한다. latin 질의는 substring tier가 없고, 정규화에 NFC가 추가됐다
+(macOS 파일명에서 붙인 분해형 한글이 조합형 라벨과 만나도록). 여전히 형태소 분석·stemming·점수는
+없다 — 검색 엔진이 아니라 서열 있는 grep이다.
 
 작동하는 이유는 **Wikidata alias가 동의어 사전 역할을 하기 때문**이다. 실측: 그래프 2,605개에
 **alias 66,349개**(토픽당 평균 25.5개). `programming language` 하나에 `computer language`,
@@ -298,6 +331,29 @@ canonical name으로 못 박는 진짜 이유가 이것이다. 검색 엔진이 
    들어올지는 운이다. `MIN_NAME_QUERY=2`가 있지만 2자로는 부족하다.
    `find_by_name`은 "제공할 relevance 순서가 없다"고 README가 인정한다.
 
+**rev 8 재실측 (HEAD `9ee67f3`, 카탈로그 2,962 · alias 72,437 — `42f59bf`의 관련성 서열 적용
+후, 부록 B 방법 그대로).** 서열은 `(label 0 | alias 3) + (exact 0 | word-start 1 | substring 2)`,
+latin 질의는 substring tier 없음, 동tier는 카탈로그 순서 유지(결정적):
+
+| 질의 | rev 4 | rev 8 | 읽기 |
+|---|---|---|---|
+| `ai` | 560, 상위 20에 인공지능 없음 | **62**, 인공지능 **16위** | word-start 규칙이 is**ai**·m**ai**l류를 걷어냈다. 그러나 1–15위는 `aikido`·`aircraft`·`Aidi`(label word-start, tier 1)이고 인공지능은 alias `AI`의 **exact**(tier 3)라 뒤로 밀린다 — **label tier가 alias tier를 무조건 이기는 설계의 결과**. `인공지능`·`artificial intelligence`는 1위 |
+| `quantum` | 첫 결과 `crossword` | quantum chemistry · mechanics · information science, crossword **4위** | alias 오염이 label 뒤로 |
+| `database` | 첫 결과 `blockchain` | **`database` 1위**, blockchain 4위 | 동상 |
+| `커피` | 8 | 9 (coffee 1위) | CJK는 substring 유지 — 정상 |
+| `machine learning` | 5 | 5 (machine learning 1위) | 동일 집합, 순서만 정돈 |
+
+읽어야 할 것: §11-8은 **해소**됐고 캡 오염(§12.1)은 크게 줄었다. 남는 결함은 하나로 좁혀진다 —
+**약어 alias의 exact 일치가 무관한 label의 word-start에 진다.**
+
+정확히 무엇이 문제인지 좁혀 둔다. `ai`에서 인공지능은 **16위이므로 캡 20 안에 들어온다** —
+지금은 retrieval miss가 아니다. 실제 영향은 셋이다: ⑴ S2의 **exact-label fast path가 확정하지
+못한다**(alias exact는 라벨 일치가 아니므로) ⑵ 판별은 LLM으로 넘어가되 **후보에는 인공지능이
+들어 있다** ⑶ `limit`이 줄거나 카탈로그가 더 커지면 **그때 miss가 된다** — 지금 값은 여유가 4다.
+대응 순서: expansion에서 약어를 풀고(R1–R7에 "약어 확장"), **약어 fixture로 grounding eval을
+돌린 뒤** 상류 tier 변경이 필요한지 판단한다. topic-api 수정 요청(alias exact를 label word-start
+위로)은 그 측정 뒤의 별건으로 §11-8 잔여에 남긴다.
+
 ### 2.2 ② 토픽 → 유저: GSI + threshold 병합
 
 여기엔 텍스트가 없다. rank-index 파티션 `{topic_id}#{tier}#0`이 score 내림차순으로 정렬돼
@@ -319,6 +375,11 @@ threshold에 주면 bound가 합산되어(한 유저는 한 tier에만 있으므
 **leaf** (`topic/search/single.py`) — 파티션 하나가 후보 전체다. 상위 `limit`행을 읽고(score 0을
 만나면 그 아래는 전부 0이므로 즉시 종료) 본문을 BatchGet 한 번으로 채운다. 라운드트립 2회,
 `exhaustive=True`가 **항상** 보장된다(병합이 없으니 근사가 아니라 정답). decay 없음.
+rev 8: visibility 변경이 인덱스에 전파되는 동안 같은 유저가 두 tier 파티션에 동시에 있을 수
+있는데, 이전엔 그 중복 키가 BatchGet을 실패시켜 **503**이 났다. `5d771eb`가 첫(최고점) row만
+남기도록 dedupe해 제거 — `limit`은 이제 "distinct 유저 수"다. rollup 쪽 `top_k`도 같은 커밋에서
+score 0 꼬리에 resolve 예산을 쓰지 않게 됐고 threshold ≤ 0이면 즉시 `exhaustive=True`로 끝난다
+(→ `exhaustive=false` 빈도 감소 방향, §10-7 503 정책의 발동이 줄어든다).
 
 **rollup** (`topic/search/service.py:_rank_rollup` + `topic/search/threshold.py`) —
 서브트리의 토픽마다 파티션이 따로 있으므로 정렬된 스트림 N개를 병합한다. 유저 점수는 가중 합:
@@ -424,6 +485,19 @@ alias 총 66,694개 (토픽당 평균 25.5)
 **탈락률 79.5%** (10,151 / 12,768). 카탈로그의 좁음은 Wikidata 커버리지가 아니라
 `min_importance`·`max_generality`·`too_specific` 컷의 결과다.
 
+**rev 8 재실측 (HEAD `9ee67f3`, 산출물을 그쪽 `read_artifact`+`TopicGraph`로 직접 읽음):**
+topics **2,962**(전부 active) · edges 2,742 · 루트 231 · alias 72,437 · dump 20260802(불변).
+시드 파일 27→**37**: #28이 활동 도메인 10그룹(outdoor·crafts-making·pets-plants·cooking·
+fitness·mind-selfcare·personal-finance·gear-collecting·fandom·travel, 시드 164·사람 판정 207건)을
+세웠고, #27이 persona가 실제로 말하는데 없던 시드 3개(computer programming·Formula One·
+user experience design — importance는 넘지만 subclass_of 계보가 그룹 시드에서 닿지 않아 확장으론
+못 들어오던 것)를 넣었다. §3.2의 "seed 선택의 결과이므로 `groups.yaml`로 고칠 수 있다"가 그대로
+실행된 것이다. 그쪽 README는 "2962 topics / 239 top-level groups / 2734 edges"로 적지만
+**루트·edge 수는 stale하다**: 같은 개념을 그들 자신의 `TopicGraph.roots()`(docstring: "독자에게
+보이는 top level이자 기본 이미지 생성 대상")로 세면 **231**이고 edges는 **2,742**다. topic 수만
+일치한다. 우리 결론에는 영향이 없고, 그쪽 문서 버그로 별도 정정 가능하다. 아래 rev 1
+시드 집계는 **rev 1 시점 값**으로 남긴다(탈락률·깊이 분포는 재집계하지 않았다).
+
 행 2,617 vs 고유 qid 2,605의 차이는 **12개 qid가 두 그룹에 동시 채택**되었기 때문이다
 (decision theory·game theory: business-money+science / blockchain: business-money+computing /
 esports: games+sports / medical physics: health+science / musical·twist: music+performing-arts 등).
@@ -488,11 +562,20 @@ finance 1. 실무 어휘(세무·조직·HR·프로덕트)는 없다.
 
 3단 완충이 있다.
 
-1. **근사 grounding (대부분 여기서 처리됨).** marking은 `exact`만이 아니라 `ancestor`(0.85)와
-   `related`(0.6)를 허용하고, grounding이 검색 히트의 **조상과 한 단계 자식까지** 후보로 모은다.
-   따라서 카탈로그에 없는 니치 관심사는 사라지지 않고 **상위 개념으로 흡수되며 점수만 할인**된다.
-   `persona_seeds/user01.json`이 드립커피 88.7 + 커피 76.2를 **둘 다** 가진 것이 그 결과다.
-   → **정밀도를 잃고 살아남는 것이 기본 동작이다.**
+1. **근사 grounding (대부분 여기서 처리됨).** marking은 `exact`만이 아니라 `ancestor`와
+   `related`를 허용하고, grounding이 검색 히트의 **조상과 한 단계 자식까지** 후보로 모은다.
+   따라서 카탈로그에 없는 니치 관심사는 사라지지 않고 **상위 개념으로 흡수**된다.
+   ~~점수만 할인된다(ancestor 0.85 · related 0.6)~~ → **rev 8: relation은 점수를 움직이지
+   않는다**(`9616f35`). 그쪽 근거: "relation은 카탈로그가 관심을 얼마나 정확히 명명하는가의
+   속성이라, 할인은 유저 탓이 아닌 카탈로그 갭을 벌줬다"(디자이너의 유일한 도달 가능 topic이
+   `related`로 잡혀 빵보다 낮게 앉은 사례). `persona_seeds/user01.json`이 드립커피 + 커피를
+   **둘 다** 가진 것이 그 결과다.
+   → **정밀도를 잃고 살아남는 것이 기본 동작**이라는 결론은 그대로다. 바뀐 것은 그 다음이다:
+   살아남은 근사가 정밀한 것보다 낮게 앉을 이유가 **점수 안에는** 더 이상 없다. 정확히는
+   `fmean(facets) × confidence`가 같으면 relation이 달라도 동점이고, 같은 signal이 낳은
+   topic들 사이는 confidence가 가른다(그 값의 정의가 "대표성"이므로 exact 쪽이 대개 높다).
+   **signal을 가로지르는 보정은 없다** — confidence는 signal 간 calibration을 주장하지 않는다.
+   exact 우선을 계약으로 원한다면 `score_detail.relation`을 읽는 우리 ordering이 해야 한다(§11-18).
 2. **아무것도 못 붙으면 `unmatched_signals`.** 파일에만 남고 서비스는 읽지 않는다. 조용한 손실.
 3. **그 유저는 그 주제에 대해 검색에 존재하지 않는다.** GSI에 행이 없으므로 leaf든 rollup이든
    나오지 않고 **에러도 없다.**
@@ -526,7 +609,7 @@ finance 1. 실무 어휘(세무·조직·HR·프로덕트)는 없다.
 | 층 | 상태 | 고칠 수 있나 |
 |---|---|---|
 | **어휘** | §3.1–3.2. 관심 도메인 분류. science·AI만 예외적으로 촘촘 | ✅ `groups.yaml` seed 확장. 코드 변경 0 |
-| **점수 공식** | facets 5개 중 **4개가 관심·애착**(engagement/affinity/duration/recency), 전문성은 `knowledge` 하나. **등가중 평균**(`fmean`) × relation할인 × confidence | ✅ `score_detail`(구 score_inputs)에 원 facets가 남고, **rev 4부터 랭킹 응답에도 실린다**(§4.2). ⚠️ 단 현재 값은 dummy·필드/의미 변경 가능(오너 전언 — §11-18) |
+| **점수 공식** | facets 5개 중 **4개가 관심·애착**(engagement/affinity/duration/recency), 전문성은 `knowledge` 하나. **등가중 평균**(`fmean`) × confidence(rev 8: relation 할인 삭제 — relation이 점수를 움직이지 않는다. facets·confidence가 같으면 exact와 ancestor/related가 동점, §3.3) | ✅ `score_detail`(구 score_inputs)에 원 facets가 남고, **rev 4부터 랭킹 응답에도 실린다**(§4.2). ⚠️ 단 현재 값은 dummy·필드/의미 변경 가능(오너 전언 — §11-18) |
 | **근거 출처** | persona **자기 서술**. 프롬프트도 "`knowledge` = 문장이 드러내는 전문성의 깊이". 외부 검증(대화 근거·기여·타인 확인) 없음 | ❌ 구조적으로 없음 |
 
 ### 4.1 점수 공식 문제는 1차의 문제다
@@ -657,7 +740,9 @@ rev 14에 유리한 정정 하나: AOSS 신설 비용을 우려했으나 컬렉�
   몇 ms지만 10만 규모면 질의당 100–400ms 블로킹이고 워커는 pod당 1개다. 매칭 0건 질의가 최악
   (전체 스캔). **여기가 AOSS가 실제로 필요해지는 지점이며, 색인 대상은 유저 아이템이 아니라
   카탈로그다**(정적, 하루 몇 번 변경 → 스트림 파이프라인 불필요).
-- 20개 캡을 통과하는 순서가 관련도가 아니다(§2.1 `ai` 사례).
+- ~~20개 캡을 통과하는 순서가 관련도가 아니다(§2.1 `ai` 사례).~~ rev 8: 관련성 서열 도입
+  (`42f59bf`)으로 해소. 선형 스캔은 그대로지만 label·alias 폴딩이 그래프 생성 시 1회로 옮겨져
+  요청당 CPU는 줄었다(`_search_index`). 잔여는 §2.1 rev 8 표의 "alias exact < label word-start".
 - 형태소 분석·동의어 확장 없음. decay는 **DAG 거리**만 알고 요청 의도를 모른다.
 
 ---
@@ -687,10 +772,22 @@ rev 14에 유리한 정정 하나: AOSS 신설 비용을 우려했으나 컬렉�
 
 tier는 독립 플래그가 아니라 **계열**이다: `public ⊂ friends ⊂ private ⊂ hidden`.
 `hidden`은 삭제 대신 치우는 것(삭제 라우트 없음)이며 `/me/topics`에만 나온다.
-친구 관계는 이 서비스가 저장하지 않는다 — `friends`는 클라이언트가 보내는 라벨이다.
+친구 관계는 이 서비스가 **현재는** 저장하지 않는다 — `friends`는 소유자가 자기 아이템에 붙인
+라벨이고, 관계를 푸는 코드가 없다(friendship/relationship 전수 grep 0건, 2026-08-25 확인).
 rev 4부터 friends가 **랭킹 가능 tier**가 됐고, "누가 어느 tier를 물을 자격이 있는가"는
-topic-api가 판정하지 않는다(spec §7 — 호출자 몫). 우리에게는 관계 정보가 없으므로 추천
-서빙은 public 단독으로 시작한다 → §10-9·§11-17.
+topic-api가 판정하지 않는다(spec §7 — 호출자 몫). 자격 위임의 우회로도 없다: **internal 표면은
+라우트 시그니처에 viewer 신원 파라미터 자체가 없고**(`api/routers/internal/search/router.py`),
+edge-auth를 건너뛰므로 거기 붙인 `x-user-id`는 사이드카가 덮어쓰지 않은 검증되지 않은 주장이다.
+public 표면조차 `viewer_id`를 랭킹에 쓰지 않는다(검색 라우트는 로그 필드로만, `users/{id}/topics`는
+preference 정렬용).
+
+**⚠️ 곧 바뀐다 (예고 — 전언, 2026-08-25).** topic-api에 friends 지원이 추가될 예정이다. "어느
+유저의 친구 관계인지"를 어떻게 넘길지는 미정이나, 방향은 **요청에 requester 신원이 실리면
+public+friends를, 없으면 public 단독을 조회**하는 형태다(예: `requester_user_id`). 성립하면
+**자격 판정이 상류로 이동**한다 — 우리가 친구 그래프를 받아 교차 필터해야 한다는 결론(rev 8
+작성 시점의 판단)은 그때 뒤집힌다. 지금 시점의 결정(public 단독)은 그대로 유지하되, 근거는
+"우리에게 관계 정보가 없다"가 아니라 **"상류가 아직 지원하지 않는다"**로 읽어야 한다
+→ §10-9·§11-17.
 
 ### 6.2 결과
 
@@ -854,7 +951,7 @@ computing/science seed 확장 + `min_importance` 하향 제안. `groups.yaml` �
 | §4 2단계 both-strong BatchGet 계약 | **폐기** | 읽기 주체가 topic-api. rollup이 본문 재확인(rev 4부터 eventual — §6.3) |
 | 스트림 색인 파이프라인 (Q1·Q2·Q9) | **폐기** | 색인할 우리 데이터가 없음 |
 | extractor 협의 Q5·Q13·Q14 | **폐기** | topic 저장·projection의 협의 상대가 사라짐 — 저장은 topic-api 소관. extractor 체인과의 새 협의 항목은 §11이 대체 |
-| AOSS 인덱스 신설 | **유예** | 카탈로그 2,605개 동안 정당화 안 됨. 필요해지면 **카탈로그만** 색인 |
+| AOSS 인덱스 신설 | **유예** | 카탈로그 2,605개(rev 8: 2,962) 동안 정당화 안 됨. 필요해지면 **카탈로그만** 색인 |
 | §1-⑪ relevance 판정층 | **승계, gate→rerank로 격하** | top-20 재정렬 |
 | 실패 의미 3분기(422 / 200+empty / 503) + 오귀속 금지 | **승계** | topic-api는 매칭 0건도 `200 + 빈 items`로 답한다 → **우리가 구분해야 함** |
 | ordering contract (gate→filter→tiebreak) | **승계, 재해석** | 아래 |
@@ -930,8 +1027,11 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
    RRF에서 꼬리 소실도 "다른 랭킹"이다). 부분 결과 허용은 명시적 degraded wire와 함께 재개방.
 8. **잎 선호 fan-out + 병합(RRF)** — §8.3-A. leaf 강제는 불가능하므로 rollup 응답도 정상 경로.
 9. **tier 집합 결정** — friends가 랭킹 가능해졌고(#16) 자격 판정은 호출자 몫이다(spec §7).
-   우리에게 관계 정보가 없으므로 **public 단독으로 시작**하고, friends 사용은 별도 제품
-   결정으로 미룬다(§11-17).
+   **public 단독으로 시작**한다. rev 8 갱신: 근거는 "우리에게 관계 정보가 없다"가 아니라
+   **"상류가 아직 친구 관계를 풀지 않는다"**이며, 그 지원이 예고돼 있으므로(§6.1 예고)
+   이 결정은 **되돌리기 쉬운 형태로 둔다** — provider가 tier를 요청 파라미터로 받을 수 있게
+   두고(현재는 보내지 않음), 아이템 tier 검증은 "public 고정"이 아니라 **"요청한 tier 집합
+   안"**으로 읽는다. 실제 사용은 상류 계약 확정 후(§11-17).
 
 ---
 
@@ -944,9 +1044,9 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 | 3 | ~~`score_inputs`를 랭킹 응답에 추가~~ — **rev 4에서 해소.** `score_detail`로 개명돼 `matched[].item.blocks[]`에 블록으로 실린다(§4.2). N+1 소멸. 컷 문제(§11-15)는 별개로 남음 | ~~topic-api~~ | **해소** |
 | 4 | **leaf 경로 stub이 `user_id`+`score`를 공개하는 문제**(§6.3). rev 4에서도 유지(stub이 행의 tier까지 명시하는 형태로 정리됐을 뿐 노출은 동일). 정책상 소속 사실도 보호 대상. **rev 7에서 블로커 승격**(외부 리뷰 수용): 유저가 토글할 수 있게 되는 순간 = 우리 출시 시점에 창이 열리므로 user-facing 출시 게이트에 연동. 소비자 임시 방어(timestamps-null 필터)는 §6.3 — 계약 아님 | topic-api | **블로커** |
 | 5 | ~~self-exclusion / `exclude_user_ids`를 서버측 cap 앞에~~ — **철회, 우리 후처리로 확정(2026-08-24 결정).** 원 논거(limit=20에서 1명 빼면 20번째 후보가 안 옴)는 설계가 fan-out `limit=100`·최종 `max_results=3`으로 잡히며 실질 소멸했고, 제외 목록(requester+추후 room_members)은 countable이라 후처리 오버헤드가 무시 가능. 제외 집합 인터페이스는 설계 문서 S4 | ~~topic-api~~ | **철회** |
-| 6 | **maturity gate의 입력.** 우리 gate 입력인 "근거 개수"가 topic-api에 없다. 대용은 `facets.knowledge` + `confidence` + `updated_at`(rev 4에서 `score_updated_at`은 속성째 삭제)인데 "얼마나 깊은가"와 "LLM이 얼마나 확신하나"는 다른 것이다. gate를 무엇 위에 세울지 지금 정해야 뒤집지 않는다 | 우리 + extractor | 중간 |
+| 6 | **maturity gate의 입력.** 우리 gate 입력인 "근거 개수"가 topic-api에 없다. 대용은 `facets.knowledge` + `confidence` + `updated_at`(rev 4에서 `score_updated_at`은 속성째 삭제)인데 "얼마나 깊은가"와 "LLM이 얼마나 확신하나"는 다른 것이다. **rev 8: `confidence`의 정의가 바뀌었다** — "producer의 확신"이 아니라 "topic이 유저의 관심을 **대표하는 강도**"(`topic/structs.py` Confidence 주석, `081d6c7`). 즉 한 signal이 낳은 topic들 사이의 순위 신호이며 근거 두께와는 더 멀어졌다. 대표성과 근거 두께가 상관될 수는 있으나 **상관만으로 hard gate를 세우면 "강하게 대표하지만 근거가 얇은 topic"이 통과한다** → maturity 대용 후보에서 `confidence`는 **제외**하고, 쓰려면 gate가 아니라 ranking 보조 신호로 별도 calibration한다(gate ⊥ ordering 원칙, §10). gate를 무엇 위에 세울지 지금 정해야 뒤집지 않는다 | 우리 + extractor | 중간 |
 | 7 | **철회 경로.** 유저가 다시 private으로 내리면 GSI에서 빠지므로 절반은 정책이 해결한다. 남는 것은 "관심이 식었는데 유저가 안 내린 경우"를 extractor가 어떻게 다루는가(score 0 주입? `removed_topics` 반영?) | extractor | 중간 |
-| 8 | **`find_by_name` 정렬 근거.** 20개 캡 통과 순서가 dict 삽입 순이다. exact label 일치 우선 + `importance` 내림차순만으로도 크게 달라진다. README도 "this service has none to give"로 인정 | topic-api | 중간 |
+| 8 | ~~**`find_by_name` 정렬 근거.** 20개 캡 통과 순서가 dict 삽입 순이다.~~ **rev 8 해소**(`42f59bf`): label > alias · exact > word-start > substring(latin은 substring 없음) · 동tier는 카탈로그 순. **잔여 1건**: label word-start(tier 1)가 alias exact(tier 3)를 무조건 이겨 `ai`→인공지능이 16위. 캡 20 안이므로 지금은 miss가 아니고 **exact-label fast path가 확정하지 못하는 상태**이며, 여유가 4라 카탈로그가 더 크면 miss가 된다(§2.1 rev 8 표). **선행 조치는 우리 쪽**: expansion 약어 확장 → 약어 fixture로 grounding eval → 그 결과로 상류 요청 여부 판단 | 우리 → topic-api (잔여) | 낮음 |
 | 9 | **토큰 단위 매칭.** 질의가 라벨의 부분문자열이어야 하는 제약으로 긴 질의가 항상 0건이다. 질의를 공백으로 쪼개 하나라도 걸리면 후보로 두는 것만으로 recall이 오른다 | topic-api | 중간 |
 | 10 | **페이징 복귀** — 현재 top-`limit`(≤100) 밖은 존재하지 않는 것으로 취급해야 한다 | topic-api | 낮음 |
 | 11 | **`unmatched_signals` 노출** — 이미 "카탈로그 갭을 드러내기 위해" 만든 필드인데 파일에 갇혀 있다. seed 제안의 근거 데이터 | extractor | 낮음 |
@@ -955,8 +1055,8 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 | 14 | **persona→topic 추출의 입력 슬롯.** sharable만인지 private 포함인지(§1.5). private 포함이면 LLM이 쓴 per-topic `descriptions`가 private 서술의 뉘앙스를 실어 나를 수 있다 — §11-1의 description 공개 여부와 **같이** 결정해야 한다. 슬롯 텍스트(3필드)와 현 CLI 입력(풍부한 마크다운)의 밀도 차이로 facets 품질 재검증도 필요 | extractor + 기획 | 높음 |
 | 15 | **expertise 접근 경로**(정렬 파라미터 또는 expertise용 두 번째 GSI) — §9 컷 문제의 (b)안. **(a)안의 컷 경계 계측이 필요를 증명한 뒤에** 꺼낸다 | topic-api | 측정 후 |
 | 16 | **id 리스트 랭킹 라우트 (rev 4 신설 → rev 6에서 우선순위 하향).** `SearchQuery.topic_ids`는 서비스 층에 이미 리스트고 라우트만 없다. 그러나 재평가 결과 A단계에서는 **써도 안 쓸 라우트**: ⑴ 다중 id 병합 총점 = Σ weight×score라 그들 score(관심 편향)가 cross-topic 가중에 재유입 — RRF는 순위만 융합해 이를 차단 ⑵ 병합 후 top-100 컷이라 per-topic 100×N보다 후보 풀이 좁음 ⑶ 다중 id는 무조건 rollup 경로(threshold·예산·exhaustive 불확실) vs per-topic leaf는 2 RTT·exhaustive=True. **발동 조건**: 확정 topic 수 증가로 fan-out 비용이 실측 문제 될 때, 또는 expertise 정렬(§11-15) 이후 그들 병합 의미를 원하게 될 때 | topic-api | 조건부 (측정 후) |
-| 17 | **friends tier 사용 여부 (rev 4 신설).** friends가 랭킹 가능해졌고 자격 판정은 호출자 몫(spec §7). "추천 서빙이 friends를 물어도 되는가"는 제품 결정이고 관계 정보가 우리에게 없다 — Alpha는 public 단독(§10-9) | 기획 + 우리 | 중간 |
-| 18 | **facets 계약 확정 (rev 5 신설 — 오너 전언 2026-08-24).** 현재 facets는 dummy이고 **필드 집합·값 의미가 모두 변경될 수 있다.** 확정해야 할 것: ⑴ 최종 필드 집합과 각 필드의 의미(특히 전문성 축이 어느 필드에 남는가) ⑵ 실데이터 주입 시점 ⑶ 변경 통지 채널(우리 ordering 키 식이 이 계약에 결합된다 — §4.2·§13-3). **이 계약 확정 전에는 키 식을 잠그지 않는다** | extractor + topic-api | **높음 (키 식의 선행 조건)** |
+| 17 | **friends tier 사용 (rev 4 신설 · rev 8에서 성격 변경).** ~~관계 정보가 우리에게 없다~~ → **상류 지원이 예고됨**(전언 2026-08-25): requester 신원이 요청에 실리면 public+friends, 없으면 public 단독. 자격 판정이 상류로 가므로 "우리가 친구 그래프를 받아 교차 필터"는 더 이상 기본안이 아니다. **답해야 할 것**: ⑴ 상류가 신원을 받는 형태와 그것이 검증된 신원인지(internal 표면엔 현재 신원 파라미터가 없다 — 새로 생기는 필드의 신뢰 등급이 계약의 핵심) ⑵ 우리가 넘길 requester = 추천 수신자(owner_id)가 맞는지 ⑶ tier가 요청마다 달라지므로 **S3 캐시 키에 requester가 들어가야 한다**(같은 topic도 requester마다 다른 랭킹) ⑷ 근거 문구가 "친구여서 보인다"를 드러내도 되는지. Alpha는 public 단독 유지(§10-9) | 기획 + 우리 + topic-api | 중간 (상류 도착 시 상승) |
+| 18 | **facets 계약 확정 (rev 5 신설 — 오너 전언 2026-08-24).** 현재 facets는 dummy이고 **필드 집합·값 의미가 모두 변경될 수 있다.** 확정해야 할 것: ⑴ 최종 필드 집합과 각 필드의 의미(특히 전문성 축이 어느 필드에 남는가) ⑵ 실데이터 주입 시점 ⑶ 변경 통지 채널(우리 ordering 키 식이 이 계약에 결합된다 — §4.2·§13-3). **이 계약 확정 전에는 키 식을 잠그지 않는다.** **rev 8 추가 ⑷**: relation 할인이 그쪽 점수에서 빠졌으므로(`9616f35`) `score_detail.relation`을 exact 우선·related 필터/할인 중 무엇으로 읽을지는 **우리 키 식이 단독으로 답한다** — 상류가 대신 반영해 주던 시절은 끝났다. 그쪽이 계속 relation을 블록에 실어 준다는 것이 이 항목의 새 전제(현재 `ScoreDetail.relation` 필수 필드로 유지됨) | extractor + topic-api | **높음 (키 식의 선행 조건)** |
 | 19 | **랭킹 응답에 `strategy`(leaf\|rollup) 필드 (rev 7 신설).** 소비자의 경로 판별은 `distance>0` 관측뿐인데 이는 충분조건이라(root만 보유한 유저·빈 결과에서 판별 불가) 정확한 계측·비용 귀속이 안 된다. 응답 1필드 | topic-api | 낮음 |
 | 20 | **공개 철회의 즉시성 요구 (rev 7 신설).** 철회 전파(GSI 제거·rollup eventual read)에 지연 상한 계약이 없다(§6.3). "철회가 즉시 반영돼야 하는가"가 제품 요구면 topic-api 쪽 별도 해결 필요, 아니면 "짧은 창 수용"을 정책으로 명문화 | 기획 + topic-api | 중간 |
 
@@ -969,7 +1069,7 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
 
 ### 12.1 지금 잴 수 있는 것 — 카탈로그 커버리지
 
-eval 코퍼스의 질의·앵커를 2,605개 카탈로그에 대조해 다음을 낸다:
+eval 코퍼스의 질의·앵커를 카탈로그(rev 8 시점 2,962개)에 대조해 다음을 낸다:
 
 - **exact 매칭률** — 질의가 토픽 라벨/alias에 직접 걸리는 비율
 - **ancestor-only 매칭률** — 상위 개념으로만 흡수되는 비율(정밀도 손실을 안고 살아남는 경우)
@@ -1015,7 +1115,10 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
 3. **ordering 키의 정확한 식.** **선행 조건: facets 계약 확정(§11-18) — 현재 필드·의미가
    미확정(dummy)이므로 그 전에는 식을 잠그지 않고, 어댑터는 facet 이름에 하드바인딩하지
    않는 교체 가능한 전략으로 설계한다(§4.2).** 그 위에서: facets에서 전문성 키를 어떻게 만드는가.
-   `knowledge` 단독? 가중합? `confidence`를 곱하는가? **`relation=related`는 필터인가 할인인가?**
+   `knowledge` 단독? 가중합? `confidence`를 곱하는가(rev 8: 정의가 "대표성"으로 바뀌어 근거
+   두께 대용으로는 부적합 — §11-6)? **`relation=related`는 필터인가 할인인가?**(rev 8: 상류가
+   할인을 삭제해 이 질문의 답은 우리 식에만 존재한다 — 답하지 않으면 signal을 가로지르는
+   정밀도 페널티가 아예 없는 채로 서빙된다, §3.3·§11-18)
    **`score_detail`이 null인 아이템은 어디에 놓는가?** §9 컷 문제의 (a)/(b) 중 무엇으로
    시작하고 만료 조건은 무엇인가. 그리고 그 식이 **gate와 섞이지 않는다**는 것을 어떻게
    구조로 보장하는가.
@@ -1144,6 +1247,49 @@ for q in ["커피", "드립 커피", "핸드드립 커피 추출법", "machine l
 exact / ancestor-only / 전무 / 캡 오염으로 분류하면 된다. ancestor-only 판정에는
 부모 엣지가 필요하므로 `broader_qids`와 `placement`를 함께 읽어야 한다.
 
+**주의 (rev 8)**: 위 `find`는 rev 4까지의 평평한 substring 매칭이다. rev 8부터 실제
+`find_by_name`은 tier 정렬 후 캡을 적용하므로, 재현하려면 시드 대신 산출물을 읽고 그들 함수를
+직접 부르는 편이 정확하다 — `read_artifact(Path("catalog_dist/catalog.json"))` →
+`TopicGraph(topics, edges)` → `g.find_by_name(q, limit=...)`. §2.1 rev 8 표와 §3 rev 8 재실측이
+이 방식이다.
+
+### B-4 상류 이동 감사법 (rev 8에서 확립)
+
+상류가 움직였을 때 "우리가 소비하는 shape가 변했는가"를 판정하는 절차. **단일 검사로 단정하지
+않는다** — 각 검사가 못 잡는 것이 다르다.
+
+| 검사 | 잡는 것 | **못 잡는 것** |
+|---|---|---|
+| ⓐ 그들 응답 모델 diff 전수 | 필드 추가·삭제·타입 변경 전부 | (사람이 빠뜨리면 끝 — 그래서 기계 검사 2개를 덧댄다) |
+| ⓑ 우리 fixture를 **그들 HEAD 모델**로 검증 | 그들이 필드를 **삭제**·필수 필드 **추가**·제약 **강화** | **그들이 optional 필드를 추가한 것** — 우리 fixture엔 그 필드가 없으니 통과한다 |
+| ⓒ 그들 payload를 **우리 모델의 `extra="forbid"` 임시본**으로 검증 | 그들이 보내는데 **우리가 선언하지 않은 필드** | 우리 fixture가 낡았으면 낡은 payload에 대한 답만 준다 |
+
+ⓑ만으로 "추가 필드 없음"을 주장하면 **증명 방향이 반대**다. 추가 필드 맹점(`extra="ignore"`)을
+동적으로 닫는 것은 ⓒ이며, ⓒ가 의미를 가지려면 payload가 HEAD 것이어야 한다. rev 8에서는
+`api/docs/examples.json`이 `80c650f` 이후 불변임을 확인해 기존 fixture가 곧 HEAD payload임을
+확보한 뒤 ⓒ를 돌렸다(둘 다 통과 — 우리 모델이 그들 payload의 모든 필드를 선언한다).
+
+가장 무거운 다리는 ⓐ다. 그들 응답 모델이 전부 `extra="forbid"`이고 선언 필드를 **항상**
+내보내므로(§2.2 — `exclude_none`·alias 없음), 모델 diff는 **선언된 응답 schema shape의 완전한
+결정**이다. 그 이상은 아니다: 실제 바이트에는 라우트의 serialization 설정과 serializer도
+관여하므로(`response_model` 교체·`response_model_exclude`·커스텀 encoder), schema가 그대로여도
+wire가 움직일 수 있다. ⓐ에 wire 전체의 지위를 주면 안 되는 이유이자 ⓑ·ⓒ가 별도로 필요한
+이유다 — ⓑ·ⓒ는 실제 payload를 통과시키므로 그 층까지 함께 본다.
+
+ⓒ 재현(우리 repo 루트에서):
+
+```python
+import json, pydantic
+from agent_discovery.providers.topic_api import wire
+targets = [o for n in dir(wire) if isinstance(o := getattr(wire, n), type)
+           and issubclass(o, pydantic.BaseModel) and o.__module__ == wire.__name__]
+for m in targets: m.model_config = {**m.model_config, "extra": "forbid"}
+for m in targets: m.model_rebuild(force=True)
+p = "tests/providers/topic_api/payloads/"
+wire.TopicSearchResponse.model_validate(json.load(open(p+"topic_search_response.json")))
+wire.TopicUsersResponse.model_validate(json.load(open(p+"topic_users_response.json")))
+```
+
 ---
 
 ## 변경 이력
@@ -1228,3 +1374,32 @@ exact / ancestor-only / 전무 / 캡 오염으로 분류하면 된다. ancestor-
 - **2026-08-24 rev 7.1** — §10-7 초기 정책 반전: 불완전성 플래그를 "품질 저하 취급"에서
   **503**으로(설계 문서 rev 5.5의 완전성 정책과 동기 — 외부 리뷰 3차 수용). 부분 결과
   허용은 degraded wire 계약과 함께 재개방.
+- **2026-08-25 rev 8** — 상류 이동 감사: HEAD `80c650f` → `9ee67f3`(12커밋, #26–#28 + 직접
+  커밋). 방법은 **부록 B-4로 절차화**(검사 ⓐ 모델 diff / ⓑ 우리 fixture→그들 모델 / ⓒ 그들
+  payload→우리 모델 `extra="forbid"` 임시본)했다. **우리가 소비하는 응답 shape 무변동 →
+  코드·fixture 조치 없음.** 그들 쪽 `ge=0` 추가는 shape가 아니라 새로 명시된 보증이므로 무변동에
+  포함하지 않는다. 의미 변경 3건 반영: ⑴ relation 할인 삭제(`9616f35`) — §0·§1.5·§3.3·§6 표·
+  §11-18 ⑷·§13-3. **"무조건 동점"이 아니라 "relation이 점수를 움직이지 않는다"**로 서술한다:
+  facets·confidence가 같을 때 동점이고, 같은 signal 안에서는 confidence가 가른다. 잃은 것은
+  signal을 가로지르는 정밀도 페널티다. 같은 계열에서 `confidence`가 "대표성"으로 재정의
+  (`081d6c7`) — 상관만으로 hard gate를 세우면 "강하게 대표하나 근거가 얇은 topic"이 통과하므로
+  §11-6 대용 후보에서 제외하고 쓰려면 ranking 보조 신호로 calibration.
+  ⑵ `find_by_name` 관련성 서열(`42f59bf`) — **§11-8 해소**, §2.1에 rev 4/rev 8 대조 표
+  (`ai` 560→62·인공지능 부재→16위, `quantum`·`database` 오염 정돈), §5.6 정정. 잔여 1건(label
+  word-start > alias exact)은 **miss가 아니라 fast path 미확정**으로 좁혀 §11-8에 낮음으로 남기고,
+  선행 조치를 우리 쪽(약어 확장 → 약어 fixture eval)으로 지정. ⑶ 카탈로그 2,605→**2,962**·시드
+  파일 27→37(#27 persona 빈자리 시드 3 · #28 활동 도메인 10그룹) — §0·§3·§12.1. 그쪽 README의
+  루트·edge 수(239·2,734)는 그들 `TopicGraph.roots()` 기준 실측(231·2,742)과 달라 **stale**임을
+  §3에 기록. 부수: leaf 랭킹 tier 중복 row dedupe로 BatchGet 503 제거·`top_k` zero-tail 예산
+  절약(`5d771eb`) — §2.2. dev overlay `DEMO_SAMPLE_USERS=true`는 `/me`·`/users/{id}` 3 라우트에만
+  걸려 우리 경로 무관(기록만). 설계 정본 `recommendation_pipeline_design.md`는 검색 전제가 직접
+  깨지므로 같은 브랜치에서 rev 5.6으로 동기화했다(외부 리뷰 P1-3 수용).
+  ⑷ **friends tier 예고 반영**(전언 2026-08-25, 코드 아님): 상류에 friends 지원이 추가될
+  예정이며 방향은 "요청에 requester 신원이 실리면 public+friends, 없으면 public 단독"이다.
+  이 세션 초반에 소스로 확인한 사실(친구 그래프 없음·internal 표면에 신원 파라미터 없음 —
+  §6.1에 기록)은 **현재 시점의 사실**로 남기고, 그 위에 예고를 명시했다. 결론 하나가 뒤집힌다:
+  "자격 필터가 통째로 우리 몫"이 아니라 **상류 계약 소비**가 된다. 결정(public 단독)은 유지하되
+  근거를 "관계 정보 부재" → "상류 미지원"으로 바꾸고, **되돌리기 쉬운 형태**를 §10-9에 명시
+  (tier를 호출 인자로 두고, 아이템 검증을 "public 고정"이 아니라 "요청한 tier 집합 안"으로).
+  §11-17을 답해야 할 4항으로 재작성 — 특히 **새 신원 필드의 신뢰 등급**(internal 표면은 지금
+  검증된 신원을 갖지 않는다)과 **S3 캐시 키에 requester가 들어가야 한다**는 파급을 적었다.
