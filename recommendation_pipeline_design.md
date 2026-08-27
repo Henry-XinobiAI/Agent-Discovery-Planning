@@ -1,6 +1,6 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 정본 (rev 5.8, 외부 리뷰 3회 반영). 입력 = `topic_api_analysis.md` **rev 8**
+> **문서 지위**: 설계 정본 (rev 5.9, 외부 리뷰 4회 반영). 입력 = `topic_api_analysis.md` **rev 8**
 > (2026-08-25, topic-api HEAD `9ee67f3`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
@@ -452,8 +452,8 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
    §9-⑨, hydration 키) · `expertise` = 대표+요약 topic 라벨(ko·en) + **각 topic의 카탈로그
    `descriptions`(ko·en)**(rev 5.8 신규 — 상류가 검색 응답에 이미 같이 주는 값이라 새 호출 0.
    이것은 **주제**의 설명이고 agent 설명이 아니므로 `matched_topics` 안에 둬서 오독을 구조로 막는다)
-   · **`relation`**(rev 5.8 신규 — §9-④ 해소, 아래) · `match_reason` = **우리가 쓰는 결정적 템플릿
-   문장**(rev 5.8: 재료만이 아니라 문장까지. 근거는 §2 "되살아난 것" — 문장이 이상하면 relation이나
+   · **`relation`**(rev 5.8 신규 · rev 5.9에서 `exact`/`descendant` **2값**으로 정정 — §9-④)
+   · `match_reason` = **우리가 쓰는 결정적 템플릿 문장**(rev 5.8: 재료만이 아니라 문장까지. 근거는 §2 "되살아난 것" — 문장이 이상하면 relation이나
    대표 topic 선택이 이상한 것이므로 이 문장 자체가 계측이다. LLM 요약 문장은 ⑴ 피추천자 설명이
    실제로 존재하는지의 계측 ⑵ 남이 쓴 텍스트를 요약해 내보내는 것의 privacy 판정 뒤로 미룬다).
    `name`·`description`은 계속 **우리 것이 아니다**(§9-⑨ (b)) — 그들 strict 모델의
@@ -480,6 +480,7 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
 | topic 있으나 공개 보유자 0 / 필터 후 0 | S4 | **200 + empty** |
 | topic-api 불능 (5xx/timeout) | S2/S3 (`unavailable`) | **503** |
 | S3에서 확정 topic 일부 실패 (404 재grounding 후 포함) | S3 | **503** (fail-closed — 부분 RRF는 다른 랭킹) |
+| **보유 근거가 랭킹 범위를 벗어남**(item 있는 노드의 distance < 0 — rev 5.9) | provider(client) | **503** (구조적 불변식 위반 · §9-④) |
 
 오귀속 금지의 축: **"카탈로그에 없다"고 말할 자격은 expansion이 정상 완료됐을 때만
 생긴다**(C4 규율 — 판단에 도달했는가). 어댑터 파싱 실패는 계약 위반 로깅 + 503 — 422로
@@ -573,13 +574,34 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
    실패 → 503). 부분 성공은 degraded wire·concept-group 의미가 자리잡은 뒤 재개방할 계약.
 2. **probe 수 상한(6)·grounding limit(20)·확정 topic 수(1~3)** — 기본값 제안. 측정 후 조정.
 3. **RRF k=60** — 표준값 제안.
-4. ~~matched_topics wire 모양~~ — **rev 5.8에서 해소**: 정수 `distance`는 wire에 내지 않고,
-   그것에서 파생한 **`relation` enum `exact`/`descendant`/`ancestor`**를 응답 프로젝션에서 만들어
-   보낸다(0 / >0 / <0, 부호는 상류 것을 유지). 근거는 "카드가 인쇄할 수 있는 값이어야 한다"는 것 —
-   `2`는 topic-api가 자기 트리에 노드를 놓는 방식이고 호출자가 행동할 수 없다. 어휘는 **우리 것**이다:
-   topic-api에도 `Relation` enum이 있지만 세 번째 값이 `related`이고 우리 `descendant`와 같은 것이
-   아니라, 그쪽 철자에 맞추는 것은 뜻이 아니라 단어를 맞추는 일이 된다(어휘 수렴은 호출자 확인 항목).
-   이 값은 **사람별**이다 — 같은 topic이라도 A는 `exact`, B는 `descendant`일 수 있다.
+4. ~~matched_topics wire 모양~~ — **rev 5.8에서 해소, rev 5.9에서 2값으로 정정**: 정수 `distance`는
+   wire에 내지 않고, 그것에서 파생한 **`relation` enum `exact`/`descendant`**(0 / >0)를 응답
+   프로젝션에서 만들어 보낸다. 근거는 "카드가 인쇄할 수 있는 값이어야 한다"는 것 — `2`는 topic-api가
+   자기 트리에 노드를 놓는 방식이고 호출자가 행동할 수 없다. 어휘는 **우리 것**이다: topic-api에도
+   `Relation` enum이 있지만 세 번째 값이 `related`이고 우리 `descendant`와 같은 것이 아니라, 그쪽
+   철자에 맞추는 것은 뜻이 아니라 단어를 맞추는 일이 된다(어휘 수렴은 호출자 확인 항목). 이 값은
+   **사람별**이다 — 같은 topic이라도 A는 `exact`, B는 `descendant`일 수 있다.
+
+   `검증됨`(2026-08-27, 외부 리뷰 4차 · topic-api `9ee67f3`) **`ancestor`는 이 endpoint에서 생성될 수
+   없다.** rev 5.8이 3값으로 쓴 것은 오류였다. 근거 사슬: ⑴ `distances`는
+   `graph.descendants(topic_id, …)`로만 만들어져 전부 0 이상(`topic/search/service.py:171-190`)
+   ⑵ 유저 항목은 `_ranked_in_subtree`가 `item.topic_id in weights`로 걸러내고 `weights` 키 =
+   `distances` 키(`service.py:220`) ⑶ 음수는 `topic_id not in distances`일 때의 `_above(...)`뿐이고
+   (`service.py:331`) 그 노드는 item이 없다. 즉 **item을 가진 노드의 distance는 항상 ≥ 0**이고 음수는
+   구조 설명 header 전용이다.
+
+   `결정`(rev 5.9) 그래서 ⑴ enum은 2값 ⑵ "더 넓은 주제를 보유한다"는 문장도 삭제 ⑶ **item을 가진 노드가
+   음수 distance로 오면 provider가 fail-closed로 거절**한다(`UpstreamContractViolation` → 503). 이것은
+   불완전성이 아니라 **구조적 불변식 위반**이다 — 융합·`relation`·우리가 쓰는 문장이 모두 "보유 근거 =
+   topic + descendants"를 읽으므로, ancestor 보유를 descendant로 답하는 것은 빠진 이유가 아니라 **틀린
+   이유**가 된다. ancestor 보유자까지 추천하려는 제품 요구가 생기면 그것은 enum 문제가 아니라
+   **topic-api 랭킹 범위를 넓히는 별도 설계**이고, 그때 이 거절이 그것을 크게 알린다.
+
+   `규율` **상류 fixture는 그 endpoint의 의미 계약이 아니다.** rev 5.8의 오류는 우리 fixture(topic-api의
+   `SearchResponse` **컴포넌트 예시**)의 item 노드에 우리가 음수를 심어 만든 테스트에서 나왔다. shape
+   검증에는 유효하지만 "그 값이 이 endpoint에서 나온다"의 증거로는 쓸 수 없다. 의미 계약은 **랭킹 코드**나
+   **실제 캡처한 응답**에서 읽는다(구현 repo에 dev 실캡처 fixture 추가 — 보유자 2명·item 노드 distance
+   `[0, 1]`).
 5. **expansion LLM 모델·예산** — 기존 proxy 경유 flash-lite 계열 제안 (~500–1000 input tokens).
 6. **S2 LLM rerank를 A단계 초기부터 켤지** — 대안: exact-label rule만으로 시작하고 ambiguous
    비율을 측정한 뒤 켠다. (판정층 §13-6과는 별개 — 이것은 topic 선별, 그것은 후보 재정렬.)
@@ -652,6 +674,18 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 이 절이 거절 근거다.
 
 ## 변경 이력
+
+- **2026-08-27 rev 5.9** — **`relation`을 2값으로 정정**(외부 리뷰 4차, P2 1건 수용). rev 5.8이 하루도 안
+  돼 틀린 것을 고친다: `ancestor`는 `/topics/{id}/users`에서 **생성될 수 없는 값**이었다. topic-api 랭킹은
+  보유 근거를 "조회 topic + descendants"로만 만들고(근거 3단계는 §9-④에 `file:line`으로), 음수 distance는
+  item이 없는 구조 header 전용이다. 그래서 ⑴ enum 2값 ⑵ ancestor 문장 삭제 ⑶ item 있는 노드가 음수로 오면
+  **provider fail-closed 503**(§4 표에 행 추가) — 불완전성이 아니라 구조적 불변식 위반이고, 랭킹 범위를
+  넓히려면 그건 별도 설계다.
+  ★**상류의 컴포넌트 예시 fixture는 그 endpoint의 의미 계약이 아니다.** rev 5.8의 오류는 우리가 그
+  fixture의 item 노드에 음수를 **직접 심어** 만든 테스트에서 나왔다 — shape 검증에는 유효하지만 "이 값이
+  실제로 온다"의 증거가 아니다. 의미 계약은 랭킹 코드나 실제 캡처에서 읽는다. 구현 repo에 dev 실캡처를
+  fixture로 넣었고(보유자 2명 · item 노드 distance `[0, 1]`), 캡처는 보유자가 쓴 문장만 placeholder로
+  치환했다(그 텍스트를 fixture로 커밋하는 것은 같은 유출을 느린 경로로 하는 것이다).
 
 - **2026-08-27 rev 5.8** — **응답 wire를 네 값 넓힌다.** 계기는 dev 배포(2026-08-26) 후 확인된 연동
   블로커다: bourbon-agent의 `RecommendedAgent`가 `name`·`description`을 strict 필수로 요구하는데 우리
