@@ -1,6 +1,6 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 정본 (rev 5.7, 외부 리뷰 3회 반영). 입력 = `topic_api_analysis.md` **rev 8**
+> **문서 지위**: 설계 정본 (rev 5.10, 외부 리뷰 5회 반영). 입력 = `topic_api_analysis.md` **rev 8**
 > (2026-08-25, topic-api HEAD `9ee67f3`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
@@ -90,10 +90,16 @@ read-time 판정 gate 없음(C단계 rerank는 dormant 슬롯).
 | `requester_user_id: UUID` | S4 self-exclusion 대상 (구 requester_owner_id) | handler가 task payload에서 채움 — 모델 공급 신원 비신뢰(그쪽 규율, 우리 규율과 일치) |
 | `room_id: UUID` | 지금은 로깅만 | 오너 의도(협의 2026-08-24): "방 관련 정보를 더 요청할 수 있는 키". **in-room 제외는 defer 합의** — OBT까지는 내 에이전트가 추천하는 구조라 같은 방 상황이 사실상 없음. 단 추후 `room_members`가 오면 requester와 **같은 제외 집합**으로 처리하도록 S4를 집합 인터페이스로 설계해 둔다 |
 
-**삭제**: `need_type`·`proposition`(1차 유형 단일화·stance 폐기), **`lang`**(불필요해짐 —
-S6에서 matched_topics에 ko·en 라벨을 병기해 보내면 최종 발화는 bourbon-agent 모델이 대화
-언어로 렌더한다). `eligibility_context`는 wire에서 빼고 우리 내부에서 room_id·requester로
-구성(Q12 stub 유지).
+**삭제**: `need_type`·`proposition`(1차 유형 단일화·stance 폐기). `eligibility_context`는 wire에서
+빼고 우리 내부에서 room_id·requester로 구성(Q12 stub 유지).
+
+**되살아난 것 — `lang`**(rev 5.8): rev 5까지의 삭제 근거는 "우리는 **재료**만 보내고 최종 발화는
+bourbon-agent 모델이 대화 언어로 렌더한다"였고, 재료(ko·en 라벨 병기)만 보내는 한 그 근거는 지금도
+맞다. 바뀐 것은 우리가 보내는 것이다 — S6이 `match_reason` **문장**을 쓰기로 하면(§S6-4 응답 wire
+변환표) 문장 생성 자체가 언어 의존이 되고, 그 언어는 요청이 말해 주는 수밖에 없다. 그래서
+`lang: "en" | "ko"`, 기본 `en`으로 되살린다. **라벨은 여전히 두 언어를 병기**한다(축소가 아니라
+추가다 — 호출자가 자기 모델로 문장을 다시 쓸 때 재료가 그대로 필요하다). 쓸 문장이 없는 언어 값은
+파이프라인 전에 422이고, 언어 추가는 템플릿 추가만으로 additive다.
 
 **응답 쪽 간극 — 협의 결과(2026-08-24, §9-⑨)**: 그들의 `RecommendedAgent`
 `{id, name, description, expertise[], match_reason}`에서 `name` = 추천되는 user(owner)의
@@ -108,7 +114,30 @@ S6에서 matched_topics에 ko·en 라벨을 병기해 보내면 최종 발화는
 직접 호출(hot path 의존 신설)과 `description=""` 채우기(타입만 통과시키는 가짜 계약).
 이 문서의 설계는 (b)/(c) 어느 쪽이 되든 성립하도록 우리 산출물을 `id`(**agent** — S6-0
 변환 후. rev 5.5 정정: 구판의 "owner" 표기는 S6-0과 자기모순) + `expertise` 재료(matched
-topic 라벨 ko·en) + `match_reason` 재료(대표 topic·기여 요지)로 고정해 둔다.
+topic 라벨 ko·en) + `match_reason` 재료(대표 topic·기여 요지)로 고정해 둔다(rev 5.8: `match_reason`은
+재료에서 **문장**까지로 넓어졌다 — §S6-4).
+
+**(b)를 실행 가능하게 만드는 값 — `owner_user_id` 노출**(`결정` rev 5.8, 오너 결정 2026-08-27):
+(b)는 "agent ID로 hydration"인데 **그 조회 경로가 어느 repo에도 없다**. `agent_id =
+uuid5(_AGENT_NAMESPACE, f"personal_agent:{user_id}")`는 단방향이고 bourbon-agent도 같은 **정방향**
+함수만 갖는다(`bourbon_agent/utils/ids.py:16-17`, 검증됨). 카드의 `name`은 agent 행이 아니라
+**owner의 이름**인데 bourbon-api `agents.name`·`agents.description`은 둘 다 nullable이고 personal
+agent는 비어 있는 게 정상이다(`bourbon_api/agents/models.py:27-32`, 검증됨). 즉 agent_id만 받은
+쪽은 무엇으로도 사람에 도달할 수 없어서, (b)는 값이 하나 빠진 상태로는 권고가 아니라 막힌 길이었다.
+그래서 응답에 `owner_user_id`를 싣는다. **이것은 (c)로의 전환이 아니다** — `name`·`description`은
+계속 우리 것이 아니고, 우리가 주는 것은 호출자가 자기 소유 데이터를 찾아갈 수 있는 키까지다.
+
+`비용`(명시): `(id, owner_user_id)` 쌍은 **그 자체로 매핑 테이블**이다 — 한 번 새면 이후 agent_id
+하나로 사람을 특정할 수 있는 자료가 남는다. internal prefix는 edge-auth를 건너뛰고 body의
+`requester_user_id`는 아무도 검증하지 않는 주장이므로, 지금 이 값의 보호막은 **네트워크 경계
+단독**이다(`serving_surface_design.md` §1-3).
+
+`계약` 필드명은 `owner_user_id`(요청 body의 `requester_user_id`와 혼동을 피하고 bourbon-api 어휘와
+일치). **nullable로 선언하고 지금은 항상 채운다** — privacy 게이트가 켜지면 어떤 요청자에게는 이
+값을 주지 않아야 하고, 그때 호출자 파서를 깨지 않는 유일한 모양이 nullable이다. 그 날의 의미도
+정확히 nullable이 말하는 것이다: "누구인지는 항상 알 수 있는 것이 아니다". 이 필드는 privacy
+게이트를 켤 때 **첫 재검토 대상**이며, 그 조건을 코드 주석에 남긴다(조건이 문서에만 있으면 조건이
+사라져도 아무도 이 필드를 빼지 못한다).
 
 ---
 
@@ -399,7 +428,9 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
    사실상 불변이다. 구 레지스터 B1(producer-side pin 요청)은 **발신하지 않기로 결정**
    (2026-08-24, 오너 확인) — 이 명문화로 갈음. 경위는
    `archive/bourbon_api_discovery_open_requests.md`.
-   owner_id는 내부(제외·hydration·decision log)에 유지하고 wire에는 agent ID만 나간다.
+   owner_id는 내부(제외·decision log)에 유지한다. **wire에는 agent ID와 함께 `owner_user_id`도
+   나간다**(rev 5.8 — §9-⑨의 hydration 결정: agent→owner 역방향 조회 경로가 없어서 (b)가 이 값
+   없이는 실행 불가능하다). rev 5.7까지 이 줄은 "wire에는 agent ID만"이었다.
    남는 seam은 변환이 아니라 **"그 agent가 실제 존재·활성인가"의 존재 확인**이며 hydration
    경로(§9-⑨)와 같은 협의 묶음이다.
 1. **matched_topics 축약**(분석 §13-2의 답): owner별 **대표 topic = 최종 RRF 합에 가장
@@ -408,19 +439,27 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
    점수 설명 표시에만** 쓴다 — "topic 간 score 스케일을 비교하지 않는다"는 RRF 근거와
    일관되게. 대표 외 그룹은 개수와 라벨만 요약. 계층 문맥은 matched 트리의 `distance`로
    복원한다 — 노드 위치가 아니라(분석 §2.2 rev 5.1: depth 2는 조상 사슬만 접는다).
-2. **라벨 언어**: `lang` 필드는 wire에서 빠졌다(§2). matched_topics에 **ko·en 라벨을
-   병기**해 보내고, 최종 발화 언어는 bourbon-agent 모델이 대화 언어로 고른다 — 유저가
-   프로필 화면에서 보는 라벨(topic-api의 pick 규칙)과 갈라지지 않도록 라벨 원문은
-   topic-api의 것을 그대로 쓴다(축 이전의 근거 1).
+2. **라벨 언어**: matched_topics에 **ko·en 라벨을 병기**해 보내고, 최종 발화 언어는 bourbon-agent
+   모델이 대화 언어로 고른다 — 유저가 프로필 화면에서 보는 라벨(topic-api의 pick 규칙)과 갈라지지
+   않도록 라벨 원문은 topic-api의 것을 그대로 쓴다(축 이전의 근거 1). 병기는 그대로 두고, 요청의
+   `lang`은 **우리가 쓰는 문장(`match_reason`)에만** 적용된다(rev 5.8 — §2 "되살아난 것"). rev 5.7
+   까지 이 줄은 "`lang` 필드는 wire에서 빠졌다"였다.
 3. **signals는 wire가 아니다**(rev 5 정정 — rev 1이 wire 정의에 signals를 실어 자기모순).
    플래그·deep_holdings_observed·degraded는 **decision log 전용** 내부 신호다. reason
    generator는 OFF 유지(기존).
-4. **응답 wire — bourbon-agent 모델로의 변환표**(rev 5): 후보별로
-   `id` = agent ID(위 0의 uuid5 변환) · `expertise` = 대표+요약 topic 라벨(ko·en) ·
-   `match_reason` 재료 = 대표 topic·기여 요지. `name`·`description`은 hydration 결정(§9-⑨ — **S6 선행 블로커**: 결정 전에는 strict wire를 채울 수 없어 S6 구현·통합 테스트 불가)
-   에 따름 — 단 그들 strict 모델의 `description: str`(non-nullable)은 "현재 항상 NULL"인
-   데이터 현실과 충돌하므로 어느 경로든 그쪽 모델이 한 번 움직여야 한다(nullable 또는
-   빈 문자열 관례). **scalar 점수 비노출**(순위가 곧 응답 순서).
+4. **응답 wire — bourbon-agent 모델로의 변환표**(rev 5, rev 5.8에서 네 값 추가): 후보별로
+   `id` = agent ID(위 0의 uuid5 변환) · `owner_user_id` = 그 agent의 owner(**rev 5.8 신규** —
+   §9-⑨, hydration 키) · `expertise` = 대표+요약 topic 라벨(ko·en) + **각 topic의 카탈로그
+   `descriptions`(ko·en)**(rev 5.8 신규 — 상류가 검색 응답에 이미 같이 주는 값이라 새 호출 0.
+   이것은 **주제**의 설명이고 agent 설명이 아니므로 `matched_topics` 안에 둬서 오독을 구조로 막는다)
+   · **`relation`**(rev 5.8 신규 · rev 5.9에서 `exact`/`descendant` **2값**으로 정정 — §9-④)
+   · `match_reason` = **우리가 쓰는 결정적 템플릿 문장**(rev 5.8: 재료만이 아니라 문장까지. 근거는 §2 "되살아난 것" — 문장이 이상하면 relation이나
+   대표 topic 선택이 이상한 것이므로 이 문장 자체가 계측이다. LLM 요약 문장은 ⑴ 피추천자 설명이
+   실제로 존재하는지의 계측 ⑵ 남이 쓴 텍스트를 요약해 내보내는 것의 privacy 판정 뒤로 미룬다).
+   `name`·`description`은 계속 **우리 것이 아니다**(§9-⑨ (b)) — 그들 strict 모델의
+   `description: str`(non-nullable)은 "현재 항상 NULL"인 데이터 현실과 충돌하므로 어느 경로든 그쪽
+   모델이 한 번 움직여야 한다(nullable 또는 빈 문자열 관례). **scalar 점수 비노출**(순위가 곧 응답
+   순서).
 
 **산출물**: `RecommendResponse`.
 
@@ -441,6 +480,7 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
 | topic 있으나 공개 보유자 0 / 필터 후 0 | S4 | **200 + empty** |
 | topic-api 불능 (5xx/timeout) | S2/S3 (`unavailable`) | **503** |
 | S3에서 확정 topic 일부 실패 (404 재grounding 후 포함) | S3 | **503** (fail-closed — 부분 RRF는 다른 랭킹) |
+| **보유 근거가 랭킹 범위를 벗어남**(item 있는 노드의 distance < 0 — rev 5.9) | provider(client) | **503** (구조적 불변식 위반 · §9-④) |
 
 오귀속 금지의 축: **"카탈로그에 없다"고 말할 자격은 expansion이 정상 완료됐을 때만
 생긴다**(C4 규율 — 판단에 도달했는가). 어댑터 파싱 실패는 계약 위반 로깅 + 503 — 422로
@@ -534,8 +574,43 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
    실패 → 503). 부분 성공은 degraded wire·concept-group 의미가 자리잡은 뒤 재개방할 계약.
 2. **probe 수 상한(6)·grounding limit(20)·확정 topic 수(1~3)** — 기본값 제안. 측정 후 조정.
 3. **RRF k=60** — 표준값 제안.
-4. **matched_topics wire 모양** — distance 부호를 그대로 노출할지, 우리 wire로 단순화
-   (예: 대표 topic + "하위 topic n개 포함")할지.
+4. ~~matched_topics wire 모양~~ — **rev 5.8에서 해소, rev 5.9에서 2값으로 정정**: 정수 `distance`는
+   wire에 내지 않고, 그것에서 파생한 **`relation` enum `exact`/`descendant`**(0 / >0)를 응답
+   프로젝션에서 만들어 보낸다. 근거는 "카드가 인쇄할 수 있는 값이어야 한다"는 것 — `2`는 topic-api가
+   자기 트리에 노드를 놓는 방식이고 호출자가 행동할 수 없다. 어휘는 **우리 것**이다: topic-api에도
+   `Relation` enum이 있지만 세 번째 값이 `related`이고 우리 `descendant`와 같은 것이 아니라, 그쪽
+   철자에 맞추는 것은 뜻이 아니라 단어를 맞추는 일이 된다(어휘 수렴은 호출자 확인 항목). 이 값은
+   **사람별**이다 — 같은 topic이라도 A는 `exact`, B는 `descendant`일 수 있다.
+
+   `검증됨`(2026-08-27, 외부 리뷰 4차 · topic-api `9ee67f3`) **`ancestor`는 이 endpoint에서 생성될 수
+   없다.** rev 5.8이 3값으로 쓴 것은 오류였다. 근거 사슬: ⑴ `distances`는
+   `graph.descendants(topic_id, …)`로만 만들어져 전부 0 이상(`topic/search/service.py:171-190`)
+   ⑵ 유저 항목은 `_ranked_in_subtree`가 `item.topic_id in weights`로 걸러내고 `weights` 키 =
+   `distances` 키(`service.py:220`) ⑶ 음수는 `topic_id not in distances`일 때의 `_above(...)`뿐이고
+   (`service.py:331`) 그 노드는 item이 없다. 즉 **item을 가진 노드의 distance는 항상 ≥ 0**이고 음수는
+   구조 설명 header 전용이다.
+
+   `결정`(rev 5.9) 그래서 ⑴ enum은 2값 ⑵ "더 넓은 주제를 보유한다"는 문장도 삭제 ⑶ **item을 가진 노드가
+   음수 distance로 오면 provider가 fail-closed로 거절**한다(`UpstreamContractViolation` → 503). 이것은
+   불완전성이 아니라 **구조적 불변식 위반**이다 — 융합·`relation`·우리가 쓰는 문장이 모두 "보유 근거 =
+   topic + descendants"를 읽으므로, ancestor 보유를 descendant로 답하는 것은 빠진 이유가 아니라 **틀린
+   이유**가 된다. ancestor 보유자까지 추천하려는 제품 요구가 생기면 그것은 enum 문제가 아니라
+   **topic-api 랭킹 범위를 넓히는 별도 설계**이고, 그때 이 거절이 그것을 크게 알린다.
+
+   `결정`(rev 5.10, 외부 리뷰 5차) **거절은 두 층이고, 나누는 기준은 귀속이다.** rev 5.9의 ⑶은 상류 경로만
+   덮었다 — 우리 코드가 음수 attribution을 만들면 투영이 조용히 `descendant`를 답했다. 그래서: **상류가
+   음수 item을 보냄 → provider `UpstreamContractViolation` → 503**(그들의 계약 위반) · **우리가 음수
+   attribution을 만듦 → 도메인 타입이 `ValueError` → 500**(우리 결함) · 관계를 명명하는 함수도 단어를
+   고르지 않고 거절한다(두 가드 뒤라 도달 불가지만, 도달 불가의 대안이 "안전"이 아니라 "`descendant`를
+   답한다"이므로 남긴다). **상류의 값을 나르는 중간 타입(`HoldingEvidence`·`GroupContribution`)에는 넣지
+   않는다** — 거기서 거절하면 상류의 계약 위반이 우리 500으로 기록돼 §S1 계측의 귀속 규율(우리 잘못을
+   상류 장애로, 또는 그 반대로 세지 않는다)을 어긴다.
+
+   `규율` **상류 fixture는 그 endpoint의 의미 계약이 아니다.** rev 5.8의 오류는 우리 fixture(topic-api의
+   `SearchResponse` **컴포넌트 예시**)의 item 노드에 우리가 음수를 심어 만든 테스트에서 나왔다. shape
+   검증에는 유효하지만 "그 값이 이 endpoint에서 나온다"의 증거로는 쓸 수 없다. 의미 계약은 **랭킹 코드**나
+   **실제 캡처한 응답**에서 읽는다(구현 repo에 dev 실캡처 fixture 추가 — 보유자 2명·item 노드 distance
+   `[0, 1]`).
 5. **expansion LLM 모델·예산** — 기존 proxy 경유 flash-lite 계열 제안 (~500–1000 input tokens).
 6. **S2 LLM rerank를 A단계 초기부터 켤지** — 대안: exact-label rule만으로 시작하고 ambiguous
    비율을 측정한 뒤 켠다. (판정층 §13-6과는 별개 — 이것은 topic 선별, 그것은 후보 재정렬.)
@@ -548,9 +623,12 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
    구현·통합 테스트가 불가능하다. name=owner 이름·description=personal agent 현재 NULL.
    옵션: (a) 우리가 채움 → bourbon-api 직접 호출 의존성 신설 — **배제 권고**,
    **(b) bourbon-agent가 agent ID로 hydration + 우리 wire 축소 — 권고**, (c) 그쪽 wire
-   nullable화 — 차선. `description=""` 채우기는 가짜 계약이라 금지. **bourbon-agent 오너와
-   협의해 코드 골격 전에 확정할 것.** description이 "추천 판단 입력"이 될 가능성(오너
-   언급)은 열어 둔다.
+   nullable화 — 차선. `description=""` 채우기는 가짜 계약이라 금지. description이 "추천 판단
+   입력"이 될 가능성(오너 언급)은 열어 둔다.
+   **rev 5.8 부분 해소**: (b)로 가되 (b)가 전제한 agent→owner 조회 경로가 존재하지 않으므로 응답에
+   `owner_user_id`를 싣는다(오너 결정 2026-08-27 — 근거·비용·계약은 §2 아래 문단). 남는 열린 항목은
+   **그쪽 strict 모델의 `name`·`description`**이다: 우리는 그 두 값을 보내지 않으므로 bourbon-agent가
+   nullable화하거나 owner 조회로 채워야 하고, 그건 그쪽 코드의 변경이다.
 10. **probe 언어 배분(원문1+en3+ko2)** (rev 2) — 실측 12쌍 기준 제안값. S1 계측(언어별 히트
    기여)으로 조정.
 
@@ -605,6 +683,45 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 이 절이 거절 근거다.
 
 ## 변경 이력
+
+- **2026-08-27 rev 5.10** — **음수 distance 거절을 두 층으로 나눈다**(외부 리뷰 5차, P2 1건 수용). rev 5.9의
+  "provider가 거절한다"는 **상류 경로에만** 참이었다: 우리 코드가 음수 attribution을 만들면 투영 함수가
+  조용히 `descendant`를 답했고, 그것은 이 트랙이 없애려던 바로 그 **틀린 이유**다. 기준은 **귀속**이다 —
+  그들의 답변이면 503, 우리가 만든 값이면 500, 그리고 상류의 값을 나르는 중간 타입에는 가드를 넣지 않는다
+  (넣으면 그들의 계약 위반이 우리 결함으로 기록된다). 상세는 §9-④의 `결정`(rev 5.10).
+
+- **2026-08-27 rev 5.9** — **`relation`을 2값으로 정정**(외부 리뷰 4차, P2 1건 수용). rev 5.8이 하루도 안
+  돼 틀린 것을 고친다: `ancestor`는 `/topics/{id}/users`에서 **생성될 수 없는 값**이었다. topic-api 랭킹은
+  보유 근거를 "조회 topic + descendants"로만 만들고(근거 3단계는 §9-④에 `file:line`으로), 음수 distance는
+  item이 없는 구조 header 전용이다. 그래서 ⑴ enum 2값 ⑵ ancestor 문장 삭제 ⑶ item 있는 노드가 음수로 오면
+  **provider fail-closed 503**(§4 표에 행 추가) — 불완전성이 아니라 구조적 불변식 위반이고, 랭킹 범위를
+  넓히려면 그건 별도 설계다.
+  ★**상류의 컴포넌트 예시 fixture는 그 endpoint의 의미 계약이 아니다.** rev 5.8의 오류는 우리가 그
+  fixture의 item 노드에 음수를 **직접 심어** 만든 테스트에서 나왔다 — shape 검증에는 유효하지만 "이 값이
+  실제로 온다"의 증거가 아니다. 의미 계약은 랭킹 코드나 실제 캡처에서 읽는다. 구현 repo에 dev 실캡처를
+  fixture로 넣었고(보유자 2명 · item 노드 distance `[0, 1]`), 캡처는 보유자가 쓴 문장만 placeholder로
+  치환했다(그 텍스트를 fixture로 커밋하는 것은 같은 유출을 느린 경로로 하는 것이다).
+
+- **2026-08-27 rev 5.8** — **응답 wire를 네 값 넓힌다.** 계기는 dev 배포(2026-08-26) 후 확인된 연동
+  블로커다: bourbon-agent의 `RecommendedAgent`가 `name`·`description`을 strict 필수로 요구하는데 우리
+  wire는 `{id, matched_topics[]}`뿐이라 호출자가 우리 응답을 자기 모델에 넣는 것 자체가 검증에서
+  터졌다. 네 값 중 셋은 **추가**이고 하나는 **잠근 결정의 반전**이다.
+  ⑴ **`owner_user_id` 노출**(오너 결정 2026-08-27 — §9-⑨, §S6-0). 이것이 반전이다: rev 5.7까지
+  "owner 신원은 wire에 안 나간다"였다. 뒤집은 이유는 §9-⑨의 권고 (b)("bourbon-agent가 agent ID로
+  hydration")가 **존재하지 않는 조회 경로를 전제**하고 있었다는 것 — uuid5는 단방향이고 양쪽 repo에
+  정방향 함수만 있으며, 카드의 `name`은 agent 행이 아니라 owner의 이름이다. 값이 하나 빠진 (b)는
+  권고가 아니라 막힌 길이었다. 비용(`(id, owner_user_id)` 쌍 = 그 자체로 매핑 테이블 · 보호막은 지금
+  네트워크 경계 단독)과 계약(nullable · privacy 게이트 켤 때 첫 재검토 대상)을 §9-⑨ 아래에 명문화했다.
+  ⑵ **카탈로그 `descriptions`를 `matched_topics` 안으로** — 상류가 검색 응답에 이미 같이 주는 값이라
+  새 호출 0. 위치가 계약이다: 주제의 설명이 agent의 설명으로 읽히는 오독을 shape으로 막는다.
+  ⑶ **`relation` enum 신설로 §9-④ 해소** — 정수 `distance`는 계속 wire 밖이고, `exact`/`descendant`/
+  `ancestor`를 파생해 보낸다. 어휘는 우리 것(topic-api의 `related` ≠ 우리 `descendant`).
+  ⑷ **`match_reason`을 재료가 아니라 문장으로**, 그래서 **`lang`이 되살아났다**(§2). rev 5의 `lang`
+  삭제 근거는 "우리는 재료만 보낸다"였고 그 전제가 바뀐 것이다 — 문장 생성은 언어 의존이고 그 언어는
+  요청만 알려줄 수 있다. 라벨 ko·en 병기는 그대로 두므로 축소가 아니라 추가다. 결정적 템플릿으로 두는
+  이유는 **문장 자체가 계측**이라서다(문장이 이상하면 relation이나 대표 topic 선택이 이상한 것).
+  구현은 코드 repo PR 8(`feat/recommend-card-material`)이고, 이 문서가 먼저 고쳐진 뒤 `owner_user_id`
+  코드가 들어간다 — 잠근 결정을 코드가 먼저 뒤집는 순서를 만들지 않기 위해서다.
 
 - **2026-08-25 rev 5.7** — **구현 설계안(코드 repo `tasks/todo.md` rev 10)의 이름 감사 역반영.**
   설계 판단은 하나도 바꾸지 않았고, 이름과 한 값의 **소속 단위**만 고쳤다. ⑴ **§S2 계측 — unmatched
