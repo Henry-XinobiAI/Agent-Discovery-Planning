@@ -19,17 +19,25 @@
 | **`serving_surface_design.md`** | **설계 rev 3.3 (2026-08-24, §7 열린 결정 전부 해소)** | 노출 표면: internal-only(`/api/internal/svc/agent-discovery/` 단독) + edge-auth 관례 채택 + topic-api 레퍼런스 이디엄 차용. **신규 repo = `bourbon-agent-discovery-api`** (project-template-python scaffold, 기존 repo는 전환 후 archive). x-user-id 금지·신원=body·label 유지·surface boundary 테스트. **표면 정비는 코드 repo에 반영 완료**(`4176b0a`·`05ec707`·`d861b5f`) — §7 열린 결정 전부 해소 — dispatch 등록 PR도 준비(bourbon-api `0eb55b6`)·순서 제약 없음 | 표면 계약 / template 델타 |
 | **`impl/` (README + `01`–`11`)** | **현행 shipped 시스템의 구현 계약 (전환 전까지 유효)** | memory-api 기반의 실제 가동 중 시스템: 데이터 계약·provider 경계·grounding·gate/ranking·serving·eval. 전환 시 삭제 패스의 기준선이기도 하다 | typed struct / phase |
 
-> **논의 기록 (결정 아님)** — `facets_ownership_split_discussion.md` (rev 1, 2026-08-26):
+> **논의 기록 (결정 아님)** — `facets_ownership_split_discussion.md` (rev 3, 2026-08-27):
 > topic-api에서 `score`/`score_detail`을 떼어 facet producer가 소유하는 DynamoDB로 옮기고
 > agent-discovery가 읽기 전용으로 join하는 구조의 **사실·판단·열린 항목**. 기준 문서가 아니고
 > 어떤 계약도 이것으로 바뀌지 않았다 — 착수 자격은 측정값 셋이 준다(§7-1). 결정이 생기면 정본 §S3·§S4·§9로 올라간다.
 
-> **논의 기록 (결정 아님)** — `service_boundary_discussion.md` (rev 1, 2026-08-27):
+> **논의 기록 (결정 아님)** — `service_boundary_discussion.md` (rev 2, 2026-08-27):
 > topic-api ↔ agent-discovery 경계 — "자연어+맥락 → 토픽"이 어느 쪽 역할인가에 대한 2026-08-26
 > 슬랙 문제 제기와, 세 repo에서 `file:line`으로 확인한 **사실·판단·열린 항목(SB1–SB5)**.
 > 규칙 한 줄 = 데이터 소유자는 사실과 검색 프리미티브, 호출하는 쪽은 해석·정책·실패 계약.
 > 위 facets 문서와 **같은 경계의 다른 절반**이다(값의 소유 ↔ 순위 정책의 소유, §4-2). 기준 문서가
 > 아니고 요청도 발신하지 않았다 — closed beta 이후 항목이다.
+
+> **논의 기록 (결정 아님)** — `recsys_serving_discussion.md` (rev 1, 2026-08-27):
+> topic-api를 토픽 조회로 좁히고 대화 이벤트를 피드백으로 받아 학습하는 그림의 **사실·판단·열린
+> 항목(R1–R8)**, 그리고 **오픈소스 recsys 도입 평가**(§5). 핵심 불변식 = 학습된 요소는 자격을 통과한
+> 집합 안에서 **순서만** 바꾸고 집합에는 넣지 못한다(즐겨찾기 tiebreak 선례의 승계). 위 두 문서의
+> **선결 조건이자 귀결**이다 — holder 인덱스 소유(facets 문서)가 선결이고, SB1(경계 문서)이 귀결이다.
+> 시급한 항목은 R1 하나뿐이다: 후보별 노출·propensity 이벤트는 **서빙 시작 전에** 정해야 나중에
+> 보정이 가능하다.
 
 > **방향 근거는 `topic_api_analysis.md`, 설계 정본은 `recommendation_pipeline_design.md`, 가동 중인
 > 것의 계약은 `impl/`.** `persona_topic_search_design.md`(3차 프레이밍 기록)는 2026-08-24에
