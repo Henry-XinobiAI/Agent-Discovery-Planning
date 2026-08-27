@@ -1,6 +1,6 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 정본 (rev 5.10, 외부 리뷰 5회 반영). 입력 = `topic_api_analysis.md` **rev 8**
+> **문서 지위**: 설계 정본 (rev 5.11, 외부 리뷰 5회 반영). 입력 = `topic_api_analysis.md` **rev 8**
 > (2026-08-25, topic-api HEAD `9ee67f3`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
@@ -115,7 +115,8 @@ bourbon-agent 모델이 대화 언어로 렌더한다"였고, 재료(ko·en 라�
 이 문서의 설계는 (b)/(c) 어느 쪽이 되든 성립하도록 우리 산출물을 `id`(**agent** — S6-0
 변환 후. rev 5.5 정정: 구판의 "owner" 표기는 S6-0과 자기모순) + `expertise` 재료(matched
 topic 라벨 ko·en) + `match_reason` 재료(대표 topic·기여 요지)로 고정해 둔다(rev 5.8: `match_reason`은
-재료에서 **문장**까지로 넓어졌다 — §S6-4).
+재료에서 **문장**까지로 넓어졌다 — §S6-4). `expertise` 재료도 넓어졌다 — rev 5.8에서 각 topic의
+카탈로그 `descriptions`, rev 5.11에서 `owner_notes`(같은 절).
 
 **(b)를 실행 가능하게 만드는 값 — `owner_user_id` 노출**(`결정` rev 5.8, 오너 결정 2026-08-27):
 (b)는 "agent ID로 hydration"인데 **그 조회 경로가 어느 repo에도 없다**. `agent_id =
@@ -278,7 +279,10 @@ probe는 topic/context 파생이라 관심사·개인정보가 실릴 수 있고
 §6.1·§11-17) 이 값은 **provider에 하드코딩하지 않고 호출 인자로 둔다.** 지금 보내는 값은 public
 하나이고, 아이템 tier 검증도 "public 고정"이 아니라 **"요청한 tier 집합 안"**으로 읽는다.
 friends 실사용은 상류 계약 확정 후이며, 그때 **S3 캐시 키에 requester가 들어가야 한다**(같은
-topic도 requester마다 다른 랭킹이 되므로 — 현재 키 설계의 전제가 깨진다).
+topic도 requester마다 다른 랭킹이 되므로 — 현재 키 설계의 전제가 깨진다). **rev 5.11 — 그 결함의
+등급이 올라갔다**: 응답에 보유자가 쓴 문장이 실리므로(`owner_notes`, §S6-5) 같은 캐시 키 버그의
+증상이 "틀린 순위"에서 **"friends 전용 문장을 남에게 노출"**로 바뀐다. friends 채택은 상류 지원을
+본 뒤 결정하되(오너 결정 2026-08-27), 그 판단에 이 항목이 포함된다.
 
 응답에서 보존하는 것(어댑터가 버리지 않는다):
 
@@ -342,7 +346,9 @@ flags: {exhaustive, descendants_dropped, topics_dropped} }`
    "여러 **독립** 관심 축에 걸린 owner가 위로 온다"는 의미를 가진다 — 같은 개념의
    broad+narrow를 둘 다 확정하면 이 단계가 같은 근거를 이중 보상하게 된다(S2-3).
 2. **group contribution 병합**: owner별로 topic마다 {topic_id, contribution, distance,
-   score_detail?, descriptions?}를 모은다 — S6의 재료. `contribution`은 topic-api의 값이라
+   score_detail?, owner_notes}를 모은다 — S6의 재료. 카탈로그 `descriptions`는 여기서 모으지 않는다
+   (rev 5.11 정정 — rev 5.8까지 이 목록의 `descriptions?`는 보유자가 쓴 문장과 구분되지 않았다): 그
+   값은 **확정 topic**에서 오므로 S6가 grounding 결과에서 직접 읽는다. `contribution`은 topic-api의 값이라
    구현에서는 `ranking_contribution`으로 옮긴다(우리 RRF 기여인 `rrf_share`와 한 타입 안에서
    섞이지 않게 — 어댑터가 외부 이름을 내부 의미로 번역한다).
 2-1. **stub 방어 필터**(rev 5, 임시 방어): 대표 매치 item의 `created_at`/`updated_at`이
@@ -437,7 +443,8 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
    크게 기여한 독립 concept group의 topic**(= reciprocal-rank 기여 최대 — 순위 기반이라
    topic 간 비교 가능). raw `contribution`은 topic 간 선택에 쓰지 않고 **그 topic 내부의
    점수 설명 표시에만** 쓴다 — "topic 간 score 스케일을 비교하지 않는다"는 RRF 근거와
-   일관되게. 대표 외 그룹은 개수와 라벨만 요약. 계층 문맥은 matched 트리의 `distance`로
+   일관되게. 대표 외 그룹도 rev 5.8부터 라벨·카탈로그 설명·`relation`을 온전히 싣는다(rev 5.11
+   정정 — 이 줄에 rev 5.7까지의 "개수와 라벨만 요약"이 남아 있었다). 계층 문맥은 matched 트리의 `distance`로
    복원한다 — 노드 위치가 아니라(분석 §2.2 rev 5.1: depth 2는 조상 사슬만 접는다).
 2. **라벨 언어**: matched_topics에 **ko·en 라벨을 병기**해 보내고, 최종 발화 언어는 bourbon-agent
    모델이 대화 언어로 고른다 — 유저가 프로필 화면에서 보는 라벨(topic-api의 pick 규칙)과 갈라지지
@@ -452,14 +459,62 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
    §9-⑨, hydration 키) · `expertise` = 대표+요약 topic 라벨(ko·en) + **각 topic의 카탈로그
    `descriptions`(ko·en)**(rev 5.8 신규 — 상류가 검색 응답에 이미 같이 주는 값이라 새 호출 0.
    이것은 **주제**의 설명이고 agent 설명이 아니므로 `matched_topics` 안에 둬서 오독을 구조로 막는다)
+   + **각 topic의 `owner_notes`**(rev 5.11 신규 — 보유자가 그 주제에 대해 쓴 문장 그대로, 요약 없이
+   list. 계약은 §S6-5)
    · **`relation`**(rev 5.8 신규 · rev 5.9에서 `exact`/`descendant` **2값**으로 정정 — §9-④)
    · `match_reason` = **우리가 쓰는 결정적 템플릿 문장**(rev 5.8: 재료만이 아니라 문장까지. 근거는 §2 "되살아난 것" — 문장이 이상하면 relation이나
    대표 topic 선택이 이상한 것이므로 이 문장 자체가 계측이다. LLM 요약 문장은 ⑴ 피추천자 설명이
-   실제로 존재하는지의 계측 ⑵ 남이 쓴 텍스트를 요약해 내보내는 것의 privacy 판정 뒤로 미룬다).
+   실제로 존재하는지의 계측 ⑵ 남이 쓴 텍스트를 요약해 내보내는 것의 privacy 판정 뒤로 미룬다 —
+   **rev 5.11 정정**: 미룬 것은 **요약** 경로 하나다. 원문을 그대로 싣는 것은 §S6-5에서 채택했고, 요약이
+   아니므로 ⑴은 그 경로에 필요하지 않다).
    `name`·`description`은 계속 **우리 것이 아니다**(§9-⑨ (b)) — 그들 strict 모델의
    `description: str`(non-nullable)은 "현재 항상 NULL"인 데이터 현실과 충돌하므로 어느 경로든 그쪽
    모델이 한 번 움직여야 한다(nullable 또는 빈 문자열 관례). **scalar 점수 비노출**(순위가 곧 응답
    순서).
+
+5. **`owner_notes` — 보유자가 그 주제에 대해 쓴 문장, 그대로**(rev 5.11 신규, 오너 결정 2026-08-27).
+   §S6-4의 `match_reason`이 **우리** 문장인 것과 달리 이것은 **그 사람의** 문장이고, 우리는 옮기기만 한다.
+   privacy 근거는 **동의의 입자 크기**다: `visibility`는 프로필 전체가 아니라 **그 item(주제별 보유)
+   하나**에 붙어 있고(`UserTopicItem`에 `visibility`와 `descriptions`가 같은 객체로 있다), 우리가 요청하는
+   tier는 `public`이므로 "공개로 표시된 문장을 공개한다"가 된다.
+
+   ⒜ **각 note는 자기 topic을 갖는다** — `{topic_id, labels(ko·en), text(ko·en)}`. note는 확정 topic이
+      아니라 **matched 트리의 노드**에 붙어 있고, `matched_topics[]` 항목의 `topic_id`·`labels`는 **확정
+      topic**의 것이다(§S6-1). 둘은 다를 수 있다 — 확정 `커피`, note는 자손 `드립 커피` — 그래서 note를
+      항목 라벨 옆에 그냥 놓으면 **자손의 문장이 상위 주제의 것으로 읽힌다.** rev 5.8 ⑵가 배치로 막은
+      오독의 같은 변종이고, 같은 방법(구조)으로 막는다. note의 topic이 항목의 topic과 같아도 값은 중복해서
+      싣는다 — "비어 있으면 부모와 같다"는 규칙은 읽는 쪽이 틀릴 여지를 남긴다.
+   ⒝ **항목당 최대 3개 · 순서는 대표 노드 규칙 재사용** — `ranking_contribution` 내림차순, 동점이면
+      `distance` 오름차순(= S3의 대표 노드 선택 규칙). 새 정렬 규칙을 만들지 않는 것이 요점이다. 정확한
+      계약은 **"note를 가진 노드만 남긴 뒤 같은 규칙으로 정렬"**이다 — 대표 노드가 note를 안 쓴 경우가
+      있으므로 "`owner_notes[0]`은 항상 대표 노드"라고 쓸 수 없다. 상한에 걸려 잘린 수는 계측.
+   ⒞ **ko·en 병기** — 라벨과 같은 관례다(§S6-2). `UserTopicItem.descriptions`는 열린 언어 맵이라 **ja 단독
+      note가 가능하고 그것은 wire에서 사라진다.** 존재 계측(`holder_description_present`)은 **모든 언어**를
+      세므로(그게 "재료가 있는가"의 올바른 정의다) 두 값은 어긋날 수 있다 → **언어 때문에 탈락한 note 수를
+      따로 센다.** 그 수가 유의미해지면 그때 고칠 것은 wire 모양이고, 계측이 아니다.
+   ⒟ **길이 상한 없음, 원문 그대로**(오너 결정 2026-08-27) — 상류가 이미 짧게 만들어 넣는다는 전제다.
+      자르는 것은 남의 문장을 왜곡하는 것이라 상한보다 나쁘다. 다만 **우리 쪽에 강제 장치가 없는 상류
+      보장**이므로 길이를 계측한다(문서로 쓴 불변식은 강제가 아니다) — 전제가 깨지면 응답 크기보다 로그가
+      먼저 말해야 한다. 최악 크기는 `matched_topics` 3 × note 3 = **9개**이고, 그 곱이 계측이 보는 값이다.
+   ⒠ **이름** — 형제로 `descriptions`(카탈로그)가 있으므로 **명사를 다르게** 둔다. `owner_descriptions`는
+      한 단어 차이라 가드가 약하고, `user_`는 이 wire에서 요청자·owner·agent 셋 다 될 수 있다. `note`는
+      "사람이 쓴 산문"이라는 사실을 이름이 말한다.
+
+   **신뢰 경계**: 이 값은 우리 wire에서 **처음으로 나가는 공격자 제어 자유 텍스트**다 — 그 외에는 우리
+   것이거나 큐레이션된 카탈로그 텍스트다. 호출자가 이것을 자기 LLM 대화에 넣으므로 prompt injection
+   표면이고, **완화 책임은 bourbon-agent가 진다**(오너 결정 2026-08-27). 우리 몫은 경계를 명시해서 넘기는
+   것 하나다: 스키마 필드 설명에 user-authored·untrusted를 적는다. `visibility=public`은 privacy 질문에
+   답하지만 이 질문에는 답하지 않는다.
+
+   **원문이 도메인에 들어온다 — 구현 규율의 반전**(코드 repo `tasks/todo.md` §9 25행 "피추천자가 쓴 텍스트는
+   도메인에도 들이지 않는다"). 근거 둘 중 "소비자가 없는 원문 필드는 예약 hook"은 소비자가 생겨 소멸하고,
+   "제3자 텍스트가 로그·예외·Sentry로 새는 경로"는 **거부 사유에서 방어 요구사항으로 내려온다**: 파싱 실패
+   로그의 pydantic `input` · 우리 예외 메시지 · `ErrorResponse` 세 곳에 이 값이 실리지 않는 것이 이 변경의
+   실제 분량이다.
+
+   **wire에 내는 것 ≠ repo에 커밋하는 것**(rev 5.9 규율 유지): dev 실캡처 fixture의 보유자 문장은 계속
+   placeholder다. 전자는 owner가 public으로 표시한 값을 소비자에게 보내는 것이고, 후자는 git 이력에 영구
+   보존하는 것이라 동의 범위가 다르다. 테스트 데이터는 합성 문장을 쓴다.
 
 **산출물**: `RecommendResponse`.
 
@@ -629,6 +684,9 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
    `owner_user_id`를 싣는다(오너 결정 2026-08-27 — 근거·비용·계약은 §2 아래 문단). 남는 열린 항목은
    **그쪽 strict 모델의 `name`·`description`**이다: 우리는 그 두 값을 보내지 않으므로 bourbon-agent가
    nullable화하거나 owner 조회로 채워야 하고, 그건 그쪽 코드의 변경이다.
+   **rev 5.11 주의**: `owner_notes`(§S6-5)는 이 간극을 메우지 않는다. 그것은 **주제에 대한** 문장이고
+   `description`은 **agent에 대한** 것이라, 카드가 전자를 후자 자리에 넣으면 rev 5.8 ⑵가 구조로 막은
+   오독이 호출자 쪽에서 재발한다.
 10. **probe 언어 배분(원문1+en3+ko2)** (rev 2) — 실측 12쌍 기준 제안값. S1 계측(언어별 히트
    기여)으로 조정.
 
@@ -683,6 +741,25 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 이 절이 거절 근거다.
 
 ## 변경 이력
+
+- **2026-08-27 rev 5.11** — **보유자가 쓴 문장을 원문 그대로 wire에 싣는다**(`owner_notes`, 오너 결정).
+  rev 5.8이 보류한 것은 **LLM 요약 경로**였고, 그 보류가 선택지를 좁게 봤다: 원문 통과는 요약보다 **더**
+  안전하다 — 남의 글이 우리 문장으로 바뀌지 않으니 귀속이 흐려지지 않고, 호출·지연·환각이 없고, 보류
+  조건 ⑴("요약할 재료가 있는가"의 계측)이 아예 필요 없다. privacy 근거는 **동의의 입자 크기**다:
+  `visibility`는 프로필이 아니라 그 주제별 보유 하나에 붙어 있고, 우리는 `public`만 요청한다.
+  ★**값을 놓기 전에 "그 값이 무엇에 붙어 있었는지"를 확인한다.** note는 확정 topic이 아니라 matched 트리의
+  **노드**에 붙어 있어서, 확정 topic으로 만들어진 `matched_topics[]` 밑에 그냥 넣으면 자손의 문장이 상위
+  주제의 것으로 읽힌다. 그래서 note마다 자기 `topic_id`·`labels`를 동봉한다 — rev 5.8 ⑵가 배치로 막은
+  오독의 같은 변종을 같은 방법으로 막는 것이다.
+  나머지 계약은 §S6-5: 항목당 3개 상한 + **대표 노드 선택 규칙 재사용**(새 정렬 규칙을 만들지 않는다) ·
+  ko·en 병기 + **언어 탈락 수 계측**(존재 계측은 모든 언어를 세므로 두 값이 어긋날 수 있다) · **길이 상한
+  없음**(상류가 짧게 만든다는 전제 — 강제 장치가 없으니 길이를 계측한다) · 이름은 `owner_notes`(형제
+  `descriptions`와 명사를 다르게).
+  **책임 두 개를 명시적으로 넘긴다**(오너 결정): prompt injection 완화는 bourbon-agent — 우리 몫은 스키마에
+  untrusted를 적는 것 · friends tier 채택은 상류 지원을 본 뒤. 후자에는 **등급 승격**이 딸린다 — S3 캐시 키에
+  requester가 없는 기존 결함의 증상이 "틀린 순위"에서 "friends 전용 문장 노출"로 바뀐다(§S3).
+  구현 규율로는 코드 repo §9 25행의 반전이고, 실제 분량은 wire 필드가 아니라 **로그·예외·Sentry 세 경로
+  방어**다. rev 5.9의 fixture 규율은 유지된다: **wire에 내는 것 ≠ repo에 커밋하는 것.**
 
 - **2026-08-27 rev 5.10** — **음수 distance 거절을 두 층으로 나눈다**(외부 리뷰 5차, P2 1건 수용). rev 5.9의
   "provider가 거절한다"는 **상류 경로에만** 참이었다: 우리 코드가 음수 attribution을 만들면 투영 함수가
