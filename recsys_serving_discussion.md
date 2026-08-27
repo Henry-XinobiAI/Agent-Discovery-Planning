@@ -1,4 +1,4 @@
-# 추천 시스템 서빙 — 피드백 루프와 오픈소스 recsys 도입 논의 기록 (rev 3, 2026-08-27)
+# 추천 시스템 서빙 — 피드백 루프와 오픈소스 recsys 도입 논의 기록 (rev 4, 2026-08-27)
 
 > **문서 지위: 결정이 아니다.** 2026-08-27 대화에서 나온 구조 방향(topic-api를 토픽 조회로 좁히고,
 > 대화 이벤트를 피드백으로 받아 추천 시스템 자체가 학습하는 그림)과, 그 판단에 필요한 **검증된 사실**,
@@ -11,9 +11,9 @@
 > 사실과 판단을 섞어 쓰지 않는다 — 이 문서의 유일한 지속 가치는 앞의 것이다.
 >
 > **자매 문서**
-> - `facets_ownership_split_discussion.md`(rev 4) — holder 인덱스와 `score` 소유를 producer로 옮기는
+> - `facets_ownership_split_discussion.md`(rev 5) — holder 인덱스와 `score` 소유를 producer로 옮기는
 >   구조. 이 문서 §1의 "topic-api는 토픽만 찾는다"가 성립하면 **그쪽 논의의 답이 선결 조건이 된다**(§6-2).
-> - `service_boundary_discussion.md`(rev 3) — "자연어+맥락 → 토픽"이 어느 쪽 역할인가. 이 문서 §3-1의
+> - `service_boundary_discussion.md`(rev 4) — "자연어+맥락 → 토픽"이 어느 쪽 역할인가. 이 문서 §3-1의
 >   토픽 축 학습이 성립하면 **그쪽 SB1의 답이 정해진다**(우리 쪽, §6-3).
 >
 > **rev 2의 두 전제 (2026-08-27 지시)**
@@ -30,8 +30,14 @@
 > precompute의 경로별 속성(§5-8). **정정 두 건**: §5-5의 ⒝ 해석("topic 없이" ≠ "grounding 없이")과
 > §4-1의 규모 근거(제약은 행 수가 아니라 positive 수).
 >
+> **rev 4가 더한 것** — §2-11: persona는 **이미 생산·저장되고 있다**. bourbon-agent의
+> `persona_extractor`(추출) + `user_persona`(도메인·저장)를 예제까지 포함해 정리했고, 그 결과
+> §4-6이 세 곳에서 강화·정정됐다: 헤딩이 곧 토픽이라 **S1 없이 파싱+S2로 충분**(§4-6-2),
+> kind 분리가 **상류에 이미 있음**(§4-6-3), 그리고 **암호화 때문에 수신 경로가 API여야 함**(§4-6-4).
+> 새 제약 하나 — **헤딩 문자열은 식별자가 아니다**(§4-6-5).
+>
 > 기준 커밋: `bourbon-agent-discovery-api` `d82cd04` · `bourbon-topic-api` `9ee67f3` ·
-> `e3llm-api` (embedding 차단 확인, §2-10).
+> `bourbon-agent` `1029b45a` · `e3llm-api` (embedding 차단 확인, §2-10).
 
 ---
 
@@ -140,7 +146,7 @@ rollup·예산·resolve 단계가 전부 사라진다.
 |---|---|---|
 | topic (카탈로그 조회) | **있다** | `providers/topic_api/client.py` — `/search/topics`·`/topics/{id}/users` 둘 다 배선돼 있고 dev에서 동작한다 |
 | 대화 이벤트 피드백 | 없다 | `rec_signal`·`rec-signal` grep 0건(§2-4). 수신 포트도 스키마도 없다 |
-| persona md | 없다 | 이 repo에 persona를 받는 포트가 없다. `_MAX_GROUPS`·probe는 요청 body의 `topic`+`context`에서만 나온다 |
+| persona md | **우리에게** 없다 (rev 4 정밀화) | 이 repo에 수신 포트가 없다 — probe는 요청 body의 `topic`+`context`에서만 나온다. 그러나 **상류에는 이미 생산·저장되고 있다**(§2-11): 없는 것은 값이 아니라 **경로**다 |
 | user-user 유사도 | 없다 | 위 둘의 파생값이므로 둘이 없으면 없다 |
 
 → **facets와 같은 상황이다.** 정본 §S5의 주 정렬 키가 "나중에 결정된다"로 비어 있는 것과 같은
@@ -155,6 +161,117 @@ rollup·예산·resolve 단계가 전부 사라진다.
 | **우리 런타임에 수치 스택이 없다** | `pyproject.toml:5-20` — numpy·scipy·sklearn 모두 없다. 첫 수치 의존성 도입이 이미지 크기 결정이 된다(§5-6) |
 | **CLI가 서빙과 같은 파이프라인을 in-process로 부른다** | `cli/recommend.py:80` — `async with recommend_pipeline() as pipeline`. precompute의 이음매가 이미 존재한다는 증거(§5-8) |
 | **pod은 spot을 tolerate한다** | 위와 같은 곳. 축출되므로 무상태여야 하고, 큰 모델을 서빙 이미지에 넣지 않을 이유가 된다 |
+
+### 2-11 `사실` (rev 4) persona는 이미 생산·저장되고 있다 — bourbon-agent `persona_extractor`
+
+rev 3 §4-6은 persona를 "미래 입력"으로 다뤘다. **생산 파이프라인은 이미 있다.**
+(`bourbon-agent` HEAD `1029b45a` 확인)
+
+> ⚠ **이름 충돌 주의**: `bourbon_agent/agents/persona/`는 **캐릭터 에이전트**(Cathie Wood,
+> Devil's Advocate 등)이고 이 절과 무관하다. 사용자 persona는 `persona_extractor/`(추출) +
+> `bourbon_agent/user_persona/`(도메인·저장) 두 곳이다.
+
+#### 2-11-1 두 층이고, 아래 층에서 위 층이 렌더된다
+
+| 층 | 타입 | 내용 |
+|---|---|---|
+| **note** (누적기) | `ExtractionNote` (`user_persona/extraction_note.py`) | `bio[]` · `traits.hexaco{}` · `traits.free[]` · `preferences[]` + 방별 커서 + `revision` |
+| **persona** (렌더) | `UserPersona` (`user_persona/persona.py`) | visibility 슬롯 2개 × 텍스트 3종 |
+
+`ExtractionResult`가 "a persona rewrite always rides on a note update"를 검증한다
+(`persona_extractor/structs.py` — `_persona_rides_on_the_note`). 즉 **렌더는 note 전체에서 다시
+쓰이고**, note 없는 persona 변경은 거부된다.
+
+**note 항목의 모양** — 이것이 우리에게 가장 중요하다:
+
+```python
+NoteItem   = {topic: str(min_length=1), digest: str, updated_at: AwareDatetime}
+HexacoSlot = {estimate: float(1.0..5.0), confidence: low|medium|high,
+              n_obs: PositiveInt, digest: str, updated_at: AwareDatetime}
+```
+
+`preferences`는 **`topic` 필드를 가진 항목 리스트**다. HEXACO는 `"<factor>.<facet>"` 키의 닫힌
+25개 카탈로그(`user_persona/hexaco.py` — H·E·X·C·A·O + ALT)이고 관측 가중 평균으로 갱신된다.
+
+#### 2-11-2 `사실` 렌더 텍스트는 **헤딩이 곧 토픽**인 마크다운이다
+
+`persona_extractor/prompt.py:69` — *"Persona texts are markdown, and every `#`-style heading names
+a topic."* 테스트 fixture가 그 형태를 고정한다
+(`tests/bourbon_agent/agents/personal_agent/test_prompt.py:63`):
+
+```python
+UserPersona(sharable=UserPersonaSlot(preferences="## 커피\n- 산미 선호"), private=None)
+```
+
+같은 사실이 note 층에서는 이렇게 보인다(`tests/persona_extractor/test_prompt.py:53`,
+`tests/user_persona/test_extraction_note.py:104`):
+
+```python
+ExtractionNote(preferences=[NoteItem(topic="커피",   digest="산미 선호",        updated_at=...)])
+ExtractionNote(preferences=[NoteItem(topic="coffee", digest="prefers light roast", updated_at=...)])
+ExtractionNote(preferences=[NoteItem(topic="coffee", digest="acidity preferred; espresso untested", ...)])
+```
+
+프롬프트에 들어갈 때는 kind별 태그가 붙는다(`bourbon_agent/context/persona_block.py` `_KIND_TAGS`):
+`bio` → `<bio>`, `traits` → `<personality>`, `preferences` → `<preferences>`.
+
+#### 2-11-3 `사실` visibility 정책 — 우리에게 직접 걸리는 부분
+
+`persona_extractor/prompt.py:138-144`:
+
+| | 정의 |
+|---|---|
+| `sharable` | *"what the agent may say about the owner to OTHER people: general tastes, public facts, style"* |
+| `private` | *"the owner's own conversations only: health, finances, relationships, work specifics"* |
+| 관계 | **상호보완이지 포함이 아니다** — *"content on the sharable side never repeats on the private side"* |
+| 판단 불확실 시 | **fail closed — private으로 간다** (`:144`) |
+
+`UserPersona.private`가 `None`인 것은 "빈 슬롯"이 아니라 **"이 객체는 그 슬롯을 대표하지 않는다"**
+이고(`persona.py` docstring), 읽기 모드가 그것을 결정한다.
+
+★ **이것이 topic-api의 `visibility` tier와 같은 종류의 경계다.** 상류에 이미 fail-closed 정책이
+있으므로 우리가 만들 것이 아니라 **지킬 것**이다.
+
+#### 2-11-4 `사실` 저장 — 암호화되어 있어 테이블 조인이 불가능하다
+
+`user_persona/repository.py` 모듈 docstring:
+
+```
+PK           SK                        attributes
+USER#<uuid>  PERSONA#sharable          doc (Binary: zlib + AES-GCM), revision (Number)
+USER#<uuid>  PERSONA#private           doc (Binary), revision (Number)
+USER#<uuid>  PERSONA_EXTRACTION#note   doc (Binary), revision (Number)
+```
+
+- 테이블은 `BOURBON_AGENT_DYNAMODB_TABLE_NAME`, 파티션은 `SHARED`/`USER#<uuid>`.
+- **`doc`이 zlib + AES-GCM으로 암호화된다.** 키 재료는 HKDF info `PERSONA.doc`이고
+  `BOURBON_AGENT_ENCRYPTION_KEY`에서 파생된다(`scripts/persona/push_markdown.py` usage).
+- `revision`만 평문 — 조건부 쓰기 표현식이 읽어야 하므로.
+- 쓰기는 `revision` compare-and-swap이고 실패는 `UserPersonaConflict`로 올라온다.
+
+★ **따라서 우리가 그들 테이블을 read-only join하는 경로는 없다.** 복호화 키가 bourbon-agent 것이다.
+이것이 R12의 형태를 정한다 — **그들이 소유하는 API를 통해야 한다**(§4-6-4).
+
+#### 2-11-5 `사실` note 층에는 visibility 구분이 아예 없다
+
+`ExtractionNote`의 필드는 `bio`·`traits`·`preferences`·커서·`revision`뿐이고
+**visibility·sharable·private 어느 것도 없다**(grep 0건). 렌더 단계에서 비로소 두 슬롯으로 갈린다.
+
+★ **그러므로 note 층은 sharable 재료와 private 재료가 섞여 있다.** 우리가 소비할 수 있는 것은
+`sharable` 슬롯뿐이고, **note는 아니다.** 구조가 더 좋아 보인다는 이유로 note를 달라고 하면
+privacy 경계를 우리가 무너뜨리는 것이 된다.
+
+#### 2-11-6 `사실` 갱신 시점과 안정성
+
+- **트리거**: owner가 어느 방에서든 메시지를 보낼 때마다 그 방이 pending set에 들어가고 owner의
+  추출 슬롯이 debounce만큼 밀린다. 한 번 실행되면 전체 set을 비운다(`persona_extractor/scheduling.py`).
+  → 주기적 배치가 아니라 **대화에 따라 수시로 갱신된다.**
+- **헤딩은 안정적 식별자가 아니다.** `prompt.py:70` — *"Restructuring is welcome: topics may merge,
+  split, move under broader headings, or be renamed as the evidence grows."*
+  → 헤딩 문자열에 무언가를 키로 걸면 드리프트한다(§4-6-5).
+- **pinned topics는 아직 없다.** 이름이 재작성을 견뎌야 하는 예외 장치인데
+  (`persona_extractor/pinned.py`), `load_pinned_topics`는 `TODO`와 함께 `()`를 반환하는 stub이다.
+- `revision` 증가가 변경 신호로 쓸 수 있는 유일한 값이다.
 
 ---
 
@@ -385,18 +502,24 @@ topic-api `friends` tier).
 
 #### 4-6-2 persona가 "나열"이면 벡터 없이 유사도가 나온다
 
-persona가 "어떤 사람이다"와 "무엇을 선호한다"의 **나열**이라면:
+**(rev 4 강화) 이것은 이제 가정이 아니라 상류 계약이다.** §2-11-2 — 렌더 텍스트는 마크다운이고
+*"every `#`-style heading names a topic"*이 프롬프트에 명시돼 있다. 즉:
 
 ```
-persona 문서 → (기존 S1·S2 재사용) → 토픽 집합 → 집합 유사도(Jaccard / 가중 겹침)
+sharable.preferences 마크다운 → 헤딩 파싱 → 헤딩 문자열을 S2로 ground → 토픽 집합
+                              → 집합 유사도(Jaccard / 가중 겹침)
 ```
 
-우리는 이미 그 기계를 갖고 있다. 그리고 이쪽이 임베딩보다 세 가지가 낫다 — **해석 가능**("두 분 다
-드립 커피와 등산"), **디버깅 가능**, **인프라 0**. §2-10의 임베딩 경로 부재도 이 경로에서는 문제가
-되지 않는다.
+**첫 단계에 LLM이 필요 없다.** rev 3은 "persona 문서 → (S1·S2 재사용) → 토픽 집합"으로 썼는데,
+S1(LLM 질의 확장)이 필요한 줄 알았기 때문이다. 헤딩이 이미 토픽 이름이므로 **파싱 + S2(grounding)면
+충분하다.** S1을 건너뛰면 요청당 LLM 콜이 하나 줄고, 무엇보다 **비신뢰 텍스트가 우리 프롬프트에
+들어가지 않는다**(§4-3의 우려가 이 경로에서는 발생하지 않는다).
 
-임베딩이 필요해지는 조건은 둘이다: 나열이 아니라 자유 산문일 때, 또는 카탈로그에 없는 개념이 많을 때.
-**둘 다 측정으로 확인할 수 있다** — persona 항목의 grounding 성공률이 그 지표다.
+이쪽이 임베딩보다 세 가지가 낫다 — **해석 가능**("두 분 다 드립 커피와 등산"), **디버깅 가능**,
+**인프라 0**. §2-10의 임베딩 경로 부재도 이 경로에서는 문제가 되지 않는다.
+
+임베딩이 필요해지는 조건은 둘이다: 헤딩이 카탈로그에 없는 개념일 때, 또는 헤딩 아래 본문에만 있는
+정보가 필요할 때. **둘 다 측정으로 확인할 수 있다** — 헤딩의 grounding 성공률이 그 지표다.
 
 #### 4-6-3 임베딩을 쓰게 되면 한 벡터가 아니라 두 벡터다
 
@@ -414,8 +537,43 @@ persona 문서 → (기존 S1·S2 재사용) → 토픽 집합 → 집합 유사
 보조는 둘 다. 이것은 `embedding-disentanglement-ladder`(anchor 파티션 → stance-only embed →
 projection layer)의 첫 칸과 같은 사다리다.
 
+**(rev 4) 이 분리는 상류에 이미 있다.** §2-11-1대로 `UserPersonaSlot`은 `bio`·`traits`·`preferences`
+**세 개의 별도 문자열**이다. 즉 우리가 문서를 잘라 나눌 필요가 없고, kind별로 그대로 쓰면 된다 —
+`preferences`가 취향, `bio`+`traits`가 정체성 쪽이다. rev 3이 "섹션별로 나눈다"고 쓴 것은 문서가
+하나라고 가정했기 때문이고, **분리 작업 자체가 불필요하다.**
+
 모델 요건: **다국어 · 대칭 유사도(문서-문서) · CPU급**. persona는 짧으므로 긴 컨텍스트는 불필요하다.
 요청 경로가 아니라 **persona 갱신 시 배치**이고, §2-10 때문에 서빙 이미지에 넣지 않는다.
+
+#### 4-6-4 `판단` (rev 4) 수신 경로는 API여야 한다 — 선택지가 아니다
+
+§2-11-4대로 `doc`이 AES-GCM으로 암호화되어 있고 복호화 키는 bourbon-agent 것이다. **테이블
+read-only join 경로가 존재하지 않는다.** 그러므로 R12는 "어떻게 받을까"가 아니라 **"그들이 무엇을
+내주는 API를 만들까"**이고, 협의 대상은 그 응답의 모양이다.
+
+`판단` 우리가 요청할 것은 **`sharable` 슬롯의 세 kind와 `revision`**이다. 근거:
+
+- §2-11-5 — **note 층은 요청하지 않는다.** 구조가 더 좋아 보이지만 visibility 구분이 없어서
+  private 재료가 섞여 있다. 구조를 이유로 note를 달라고 하는 것은 우리가 privacy 경계를 무너뜨리는
+  것이다.
+- §2-11-3 — `private`은 요청하지 않는다. 상류가 이미 fail-closed로 분류해 두었고, 그 판정을 우리가
+  다시 할 이유가 없다.
+- `revision`은 변경 신호로 필요하다(§2-11-6). 우리가 캐시하거나 precompute할 때(§5-8) 무효화 키다.
+
+#### 4-6-5 `판단` (rev 4) 헤딩 문자열을 키로 쓰면 안 된다
+
+§2-11-6 — *"topics may merge, split, move under broader headings, or be renamed as the evidence
+grows."* 재구조화가 **장려된다.** 그러므로:
+
+- 헤딩 문자열은 **그 시점의 표현**이고 식별자가 아니다. 캐시 키·조인 키·학습 feature의 카테고리
+  값으로 쓰면 조용히 드리프트한다.
+- 우리가 키로 쓸 수 있는 것은 **ground된 `topic_id`**다 — 카탈로그가 소유하는 안정적 식별자이고,
+  §4-6-2의 파이프라인이 정확히 그것을 만든다. 헤딩이 바뀌어도 같은 토픽으로 ground되면 같은 키다.
+- 예외 장치가 pinned topics(이름이 재작성을 견딘다)인데 §2-11-6대로 **아직 stub이다.** 그것에
+  의존하는 설계는 지금 쓸 수 없다.
+
+★ 이것이 §3-0-1의 "이음매는 만들고 정책은 만들지 않는다"의 한 사례다: 수신 포트는 지금 정의할 수
+있지만, 헤딩을 무엇으로 정규화할지는 **ground 성공률을 측정한 뒤**에 정한다.
 
 ---
 
@@ -621,7 +779,7 @@ composition root를 in-process로 부른다(§2-10). CronJob이 이것을 유저
 |---|---|---|
 | R1 | 후보별 노출·propensity 이벤트 스키마 (§4-1) | **미설계. 이 문서에서 유일하게 시급한 항목** — 서빙 시작 전에 정해야 한다 |
 | R2 | 라벨 정의 (§4-2 표) | 초안만. "재방문"·"같은 토픽 재질의"의 관측 가능성이 bourbon-agent 쪽 이벤트에 달려 있다 — 미협의 |
-| R3 | persona md 수신 계약 (출처·갱신·크기·언어) | 미협의. §4-3의 비신뢰 취급이 선결 |
+| R3 | persona md 수신 계약 | **(rev 4) R14로 흡수.** rev 1이 "출처·갱신·크기·언어"를 열어 뒀는데 §2-11이 출처와 갱신을 답했고(§2-11-4·§2-11-6), 남은 것은 API 요청 하나이므로 두 항목으로 둘 이유가 없다 |
 | R4 | (A) 토픽 축 재순위의 진입 지점 | S2 어디인지 미설계. `grounding_select`의 rule pass와 LLM pick 사이인지, 그 뒤인지 |
 | R5 | (B) 홀더 축 공급처가 `OrderingStrategy`에 들어오는 형태 | §3-3 불변식은 정해졌으나 인터페이스 미설계 |
 | R6 | popularity-bias 지표를 eval ratchet에 추가 (§5-1) | 미착수. §5-1 두 항목 중 **이것이 먼저다** — 금지 규율에 강제점이 없다 |
@@ -630,7 +788,9 @@ composition root를 in-process로 부른다(§2-10). CronJob이 이것을 유저
 | R9 | 학습이 순서만 바꾸는가 집합도 고르는가 (§3-3 ⒜/⒝) | **지금 고르지 않는다.** 두 경우의 이음매가 같다(§3-0-1). 데이터 축적 후 측정으로 결정 |
 | R10 | topic 없는 요청의 후보 생성 방법 (§5-5-1 ⑴/⑵/⑶) | **(rev 3 정정) R1보다 먼저 답할 필요가 없어졌다.** ⑴이면 후보가 계속 유계이므로 R1 스키마가 그대로다. ⑵·⑶을 열어 둘 때만 R1보다 앞선다 — 그리고 현재 근거로는 ⑵·⑶을 고를 이유가 없다 |
 | R11 | precompute 경로의 visibility 재확인 단계 (§5-8-1) | **미설계. precompute를 하기로 하면 선결이다** — 없으면 하루 동안 남의 비공개 보유를 노출한다 |
-| R12 | persona 임베딩 경로 (§2-10 · §4-6-3) | 미협의. e3llm의 embedding 차단을 풀 것인지 별도 배치로 갈 것인지. **단 §4-6-2가 먼저다** — grounding으로 되면 이 항목 자체가 불필요하다 |
+| R12 | persona 임베딩 경로 (§2-10 · §4-6-3) | 미협의. e3llm의 embedding 차단을 풀 것인지 별도 배치로 갈 것인지. **단 §4-6-2가 먼저다** — grounding으로 되면 이 항목 자체가 불필요하다. **(rev 4) 임베딩을 쓰게 되어도 kind 분리는 상류에 이미 있어 우리 몫이 아니다** |
+| R14 | bourbon-agent에 persona 조회 API 요청 (§4-6-4) | **미발신.** 요청 내용은 정해졌다 — `sharable` 슬롯의 세 kind + `revision`. note 층과 `private`은 요청하지 않는다(§2-11-5·§2-11-3). 암호화 때문에 대안 경로가 없다 |
+| R15 | 헤딩의 grounding 성공률 측정 (§4-6-2 · §4-6-5) | 미착수. 이 수치가 임베딩 필요 여부(R12)와 정규화 정책 둘을 결정한다. **R14 없이는 측정할 데이터가 없다** |
 | R13 | `HoldingEvidence`의 세 값을 `GroupContribution`까지 배선 (§4-5-2) | 미착수. feature 후보를 6개에서 9개로 늘리는 일이고, §4-5-1의 상한 때문에 **positive가 늘어난 뒤**에 의미가 있다 |
 
 ### 6-2 `열린 항목` 선결 조건 — holder 인덱스는 누가 갖는가
@@ -655,8 +815,14 @@ composition root를 in-process로 부른다(§2-10). CronJob이 이것을 유저
   아니라 "grounding 우회"다(§5-5-1).
 - **(rev 3) positive 수가 10³을 넘으면** §5-6-1의 모델 선택이 LR에서 GBDT로 넘어간다. 이것은 판단이
   아니라 관측으로 결정되는 지점이며, §4-1이 남기는 분모가 그 관측을 가능하게 한다.
-- **(rev 3) persona 항목의 grounding 성공률이 낮으면** §4-6-2가 무너지고 R12(임베딩 경로)가 필요해진다.
-  이 역시 측정으로 답이 나오는 항목이다.
+- **(rev 3) persona 헤딩의 grounding 성공률이 낮으면** §4-6-2가 무너지고 R12(임베딩 경로)가
+  필요해진다. 이 역시 측정으로 답이 나오는 항목이며 R15가 그 측정이다.
+- **(rev 4) 상류가 pinned topics를 구현하면**(§2-11-6의 stub) §4-6-5가 완화된다 — 이름이 재작성을
+  견디는 헤딩이 생기므로, 그 부분집합에 대해서는 헤딩 문자열을 키로 쓸 수 있다. 다만 전체가 아니라
+  pinned된 것만이다.
+- **(rev 4) 상류가 note 층에 visibility를 넣으면**(§2-11-5) note를 요청하는 것이 정당해지고, 구조화된
+  `{topic, digest}`를 직접 받을 수 있어 §4-6-2의 파싱 단계가 불필요해진다. **우리가 요청할 일은
+  아니다** — 그쪽의 필요가 생길 때의 이야기다.
 - **라벨 규모가 두 자리 커지면**(외부 공개·트래픽 증가) 원칙 ⑴의 전제가 깨지고 학습 스택 도입이
   다시 검토 대상이 된다. 기준은 라벨 수가 아니라 **A/B를 돌릴 트래픽이 있는가**다.
 - **§3-2**: pool이 유한하다는 전제가 깨지면(홀더 수천 명) 자기강화 루프의 심각도가 커진다. R9 ⒝를
@@ -687,6 +853,10 @@ composition root를 in-process로 부른다(§2-10). CronJob이 이것을 유저
 - **(rev 3) persona 임베딩 모델을 고르지 않았다.** §4-6-3의 요건(다국어·대칭·CPU급)만 적었고, §4-6-2가
   먼저 확인되어야 이 선택 자체가 필요한지 알 수 있다.
 - **(rev 3) precompute를 결정하지 않았다.** 경로별 속성임을 밝히고 대가(R11)를 등재했을 뿐이다.
+- **(rev 4) bourbon-agent에 요청을 발신하지 않았다.** §4-6-4가 요청의 *내용*을 정했을 뿐이고 R14는
+  미발신이다.
+- **(rev 4) persona를 읽어 보지 않았다.** §2-11의 예제는 전부 그 repo의 **테스트 fixture와 프롬프트
+  텍스트**에서 온 것이고, 실제 사용자 데이터는 암호화되어 있어 접근하지 않았다.
 
 ## 변경 이력
 
@@ -734,6 +904,22 @@ composition root를 in-process로 부른다(§2-10). CronJob이 이것을 유저
   ⑽ **같은 값을 두 곳에서 계산하면 그 결함은 테스트로 잡히지 않는다**(§5-7-1). 양쪽 테스트가 각자의
   구현을 고정하기 때문이다 — training/serving feature skew가 그 사례다.
   ⑾ **문서 상호 참조에 rev를 고정하면 cascade가 생긴다.** 한쪽을 올리면 상대의 참조가 stale해지고,
-  그것을 고치려 상대를 올리면 이쪽이 다시 stale해진다. 이번에 세 문서가 한 커밋에서 발행되므로 그 안에서
-  fixpoint를 잡았다 — **규칙: 같은 커밋에서 함께 발행되는 문서들끼리는 서로의 최종 rev를 적고, 그
-  갱신을 별도 rev로 세지 않는다.** 다른 커밋의 문서를 가리킬 때만 rev를 고정한다.
+  그것을 고치려 상대를 올리면 이쪽이 다시 stale해진다. rev 3에서 "같은 커밋 안에서 fixpoint를 잡는다"로
+  규칙을 적었는데, **rev 4에서 곧바로 재발했다** — 이 문서만 다시 올라갔기 때문이다. 규칙이 틀렸다:
+  fixpoint는 커밋 단위로 잡을 수 있는 것이 아니다. **정정된 규칙 — 활발히 움직이는 문서를 가리킬 때는
+  rev를 고정하지 않는다.** 자매 문서 쪽의 pin을 rev 4에서 제거했고, 그것으로 cascade가 끝난다.
+  ★일반화: **동기화를 규율로 유지하려 하기 전에, 동기화가 필요 없게 만들 수 있는지 본다.**
+- **2026-08-27 rev 4** — persona 생산·저장 경로를 상류에서 확인해 §2-11로 정리(예제 포함,
+  `bourbon-agent` HEAD `1029b45a`). 두 층(note 누적기 → persona 렌더), `NoteItem = {topic, digest,
+  updated_at}`, 닫힌 25 HEXACO facet, visibility 2슬롯 × kind 3종, 마크다운 헤딩 = 토픽 계약,
+  DynamoDB 키와 **AES-GCM 암호화**, note 층의 visibility 부재, debounce 트리거, pinned topics stub.
+  그 결과 §4-6이 강화·정정: ⑴ 헤딩이 이미 토픽이므로 **S1 없이 파싱+S2로 충분**하고 비신뢰 텍스트가
+  우리 프롬프트에 들어가지 않는다 ⑵ identity/preference 분리가 **상류에 이미 있어** 우리 작업이 아니다
+  ⑶ 암호화 때문에 **수신 경로가 API 하나뿐**이다. 신설 §4-6-4·§4-6-5, R14·R15, §2-9 persona 행 정밀화.
+  ★규율 두 개:
+  ⑿ **"입력이 없다"를 확인할 때는 값이 없는 것인지 경로가 없는 것인지 구분한다.** rev 2·3이 persona를
+  "없다"로 적었는데 상류에는 이미 생산되고 있었고, 없는 것은 **우리 쪽 경로**였다. 둘은 필요한 작업이
+  전혀 다르다 — 앞은 기다리는 것이고 뒤는 요청하는 것이다.
+  ⒀ **더 구조화된 표현이 있다고 해서 그것을 요청해도 되는 것은 아니다**(§2-11-5). note 층은
+  `{topic, digest}`로 우리에게 훨씬 편하지만 visibility 구분이 없어 private 재료가 섞여 있다. 편의를
+  근거로 상류의 fail-closed 분류를 우회하면 그 경계를 무너뜨리는 쪽이 우리가 된다.
