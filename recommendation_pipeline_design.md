@@ -1,6 +1,6 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 정본 (rev 5.9, 외부 리뷰 4회 반영). 입력 = `topic_api_analysis.md` **rev 8**
+> **문서 지위**: 설계 정본 (rev 5.10, 외부 리뷰 5회 반영). 입력 = `topic_api_analysis.md` **rev 8**
 > (2026-08-25, topic-api HEAD `9ee67f3`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
@@ -597,6 +597,15 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
    이유**가 된다. ancestor 보유자까지 추천하려는 제품 요구가 생기면 그것은 enum 문제가 아니라
    **topic-api 랭킹 범위를 넓히는 별도 설계**이고, 그때 이 거절이 그것을 크게 알린다.
 
+   `결정`(rev 5.10, 외부 리뷰 5차) **거절은 두 층이고, 나누는 기준은 귀속이다.** rev 5.9의 ⑶은 상류 경로만
+   덮었다 — 우리 코드가 음수 attribution을 만들면 투영이 조용히 `descendant`를 답했다. 그래서: **상류가
+   음수 item을 보냄 → provider `UpstreamContractViolation` → 503**(그들의 계약 위반) · **우리가 음수
+   attribution을 만듦 → 도메인 타입이 `ValueError` → 500**(우리 결함) · 관계를 명명하는 함수도 단어를
+   고르지 않고 거절한다(두 가드 뒤라 도달 불가지만, 도달 불가의 대안이 "안전"이 아니라 "`descendant`를
+   답한다"이므로 남긴다). **상류의 값을 나르는 중간 타입(`HoldingEvidence`·`GroupContribution`)에는 넣지
+   않는다** — 거기서 거절하면 상류의 계약 위반이 우리 500으로 기록돼 §S1 계측의 귀속 규율(우리 잘못을
+   상류 장애로, 또는 그 반대로 세지 않는다)을 어긴다.
+
    `규율` **상류 fixture는 그 endpoint의 의미 계약이 아니다.** rev 5.8의 오류는 우리 fixture(topic-api의
    `SearchResponse` **컴포넌트 예시**)의 item 노드에 우리가 음수를 심어 만든 테스트에서 나왔다. shape
    검증에는 유효하지만 "그 값이 이 endpoint에서 나온다"의 증거로는 쓸 수 없다. 의미 계약은 **랭킹 코드**나
@@ -674,6 +683,12 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 이 절이 거절 근거다.
 
 ## 변경 이력
+
+- **2026-08-27 rev 5.10** — **음수 distance 거절을 두 층으로 나눈다**(외부 리뷰 5차, P2 1건 수용). rev 5.9의
+  "provider가 거절한다"는 **상류 경로에만** 참이었다: 우리 코드가 음수 attribution을 만들면 투영 함수가
+  조용히 `descendant`를 답했고, 그것은 이 트랙이 없애려던 바로 그 **틀린 이유**다. 기준은 **귀속**이다 —
+  그들의 답변이면 503, 우리가 만든 값이면 500, 그리고 상류의 값을 나르는 중간 타입에는 가드를 넣지 않는다
+  (넣으면 그들의 계약 위반이 우리 결함으로 기록된다). 상세는 §9-④의 `결정`(rev 5.10).
 
 - **2026-08-27 rev 5.9** — **`relation`을 2값으로 정정**(외부 리뷰 4차, P2 1건 수용). rev 5.8이 하루도 안
   돼 틀린 것을 고친다: `ancestor`는 `/topics/{id}/users`에서 **생성될 수 없는 값**이었다. topic-api 랭킹은
