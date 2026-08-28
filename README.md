@@ -54,6 +54,11 @@
 > 위 설계에 이르기까지의 논의. 설계는 새 문서로 옮겼고, **여기에만 남은 것**은 §2의 `file:line`
 > 사실들, §3-4(계약을 내렸을 때 남는 것과 사라지는 것), §6-2·§6-3(holder 인덱스 소유와 SB1)이다.
 
+> **오픈소스 recsys 기술 검토 (결정 아님)** — [`recsys_opensource/`](recsys_opensource/README.md):
+> Gorse·Cornac·Surprise·implicit의 실제 입력/출력, requester User ↔ candidate Personal Agent 역할 분리,
+> topic·bio·traits, `public/friends/private` gate, 우리 pipeline의 배치 위치와 PoC 합격선을 도구별로
+> 정리한다. 도입 결정은 아니며 현행 제안은 `recommendation_scoring_design.md`가 소유한다.
+
 > **방향 근거는 `topic_api_analysis.md`, 설계 정본은 `recommendation_pipeline_design.md`, 가동 중인
 > 것의 계약은 `impl/`.** `persona_topic_search_design.md`(3차 프레이밍 기록)는 2026-08-24에
 > `archive/`(§2e)로 이동했다. 이전 프레이밍의
