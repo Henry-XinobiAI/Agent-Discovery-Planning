@@ -15,21 +15,49 @@
 | 문서 | 레이어 | 다루는 것 | 핵심 단위 |
 |---|---|---|---|
 | **`topic_api_analysis.md`** | **분석 + 방향 결정 기록 (rev 8, 2026-08-25 — topic-api HEAD `9ee67f3`, 상류 이동 감사법은 부록 B-4)** | `bourbon-topic-api` 전수 분석(검색 메커니즘·카탈로그 실측·성능/비용·프라이버시 모델) + **축 이전 결정** + rev 14 폐기/승계 목록 + 열린 질문. **재설계의 입력이며 설계 문서가 아니다** | 사실/결정/열린 질문 |
-| **`recommendation_pipeline_design.md`** | **설계 정본 rev 5.12 (2026-08-27, 외부 리뷰 5회 반영 + 응답 wire 확장: 4값 + `owner_notes`)** | topic-api 소비 기반 추천 파이프라인 S1–S6: 단계별 동작·topic-api endpoint·산출물·실패 3분기. `persona_topic_search_design.md`(rev 14)를 대체(2026-08-24 archive) — 열린 결정은 §9 | 파이프라인 단계 산출물 |
+| **`recommendation_pipeline_design.md`** | **설계 정본 rev 5.12 (2026-08-27, 외부 리뷰 5회 반영 + 응답 wire 확장: 4값 + `owner_notes`)** | topic-api 소비 기반 추천 파이프라인 S1–S6: 단계별 동작·topic-api endpoint·산출물·실패 3분기. `persona_topic_search_design.md`를 대체(2026-08-24 archive) — 열린 결정은 §9 | 파이프라인 단계 산출물 |
 | **`serving_surface_design.md`** | **설계 rev 3.3 (2026-08-24, §7 열린 결정 전부 해소)** | 노출 표면: internal-only(`/api/internal/svc/agent-discovery/` 단독) + edge-auth 관례 채택 + topic-api 레퍼런스 이디엄 차용. **신규 repo = `bourbon-agent-discovery-api`** (project-template-python scaffold, 기존 repo는 전환 후 archive). x-user-id 금지·신원=body·label 유지·surface boundary 테스트. **표면 정비는 코드 repo에 반영 완료**(`4176b0a`·`05ec707`·`d861b5f`) — §7 열린 결정 전부 해소 — dispatch 등록 PR도 준비(bourbon-api `0eb55b6`)·순서 제약 없음 | 표면 계약 / template 델타 |
 | **`impl/` (README + `01`–`11`)** | **현행 shipped 시스템의 구현 계약 (전환 전까지 유효)** | memory-api 기반의 실제 가동 중 시스템: 데이터 계약·provider 경계·grounding·gate/ranking·serving·eval. 전환 시 삭제 패스의 기준선이기도 하다 | typed struct / phase |
 
-> **논의 기록 (결정 아님)** — `facets_ownership_split_discussion.md` (rev 1, 2026-08-26):
+> **문서 참조 규약**: **살아 있는 문서를 가리킬 때는 rev를 적지 않는다.** 버전은 파일 자신의 첫 줄에
+> 있으므로 참조에 적어도 정보가 늘지 않고, 한쪽이 올라갈 때마다 나머지가 stale해지는 연쇄만 생긴다
+> (2026-08-27~28에 이 연쇄를 세 번 쫓아다닌 뒤 정한 규약). 가리키는 대상이 좁으면 rev 대신 **절 번호**를
+> 적는다 — 절 포인터는 rev가 올라가도 참이다.
+> **예외 둘**: ⑴ `archive/`로 얼린 문서는 rev를 적는다 — 다시 움직이지 않으므로 stale해질 수 없고,
+> "어느 버전을 대체했는가"가 정보다(정본 헤더의 `persona_topic_search_design.md`(rev 14)가 그 예다).
+> ⑵ 변경 이력 줄의 rev는 그때의 기록이므로 그대로 둔다.
+
+> **논의 기록 (결정 아님)** — `facets_ownership_split_discussion.md`:
 > topic-api에서 `score`/`score_detail`을 떼어 facet producer가 소유하는 DynamoDB로 옮기고
 > agent-discovery가 읽기 전용으로 join하는 구조의 **사실·판단·열린 항목**. 기준 문서가 아니고
 > 어떤 계약도 이것으로 바뀌지 않았다 — 착수 자격은 측정값 셋이 준다(§7-1). 결정이 생기면 정본 §S3·§S4·§9로 올라간다.
 
-> **논의 기록 (결정 아님)** — `service_boundary_discussion.md` (rev 1, 2026-08-27):
+> **논의 기록 (결정 아님)** — `service_boundary_discussion.md`:
 > topic-api ↔ agent-discovery 경계 — "자연어+맥락 → 토픽"이 어느 쪽 역할인가에 대한 2026-08-26
 > 슬랙 문제 제기와, 세 repo에서 `file:line`으로 확인한 **사실·판단·열린 항목(SB1–SB5)**.
 > 규칙 한 줄 = 데이터 소유자는 사실과 검색 프리미티브, 호출하는 쪽은 해석·정책·실패 계약.
 > 위 facets 문서와 **같은 경계의 다른 절반**이다(값의 소유 ↔ 순위 정책의 소유, §4-2). 기준 문서가
 > 아니고 요청도 발신하지 않았다 — closed beta 이후 항목이다.
+
+> **설계 제안 (결정 아님)** — `recommendation_scoring_design.md`:
+> 추천 스코어링 구조 — **하나의 점수식 + 표면별 가중치**. 신호 4종(주제 관련도·persona 누적 취향·
+> 상호작용 이력·유사 사용자)을 나란히 두고 표면마다 가중치만 바꾼다. 자격 판정(gate)은 점수 밖에 두고,
+> 무엇을 왜 보여줬는지를 처음부터 기록한다(노출·propensity + 탐색 슬롯 = N1, 유일한 시급 항목).
+> 콜드 스타트는 별도 시스템이 아니라 가중치 상태다. 입력 소스 현황은 §8 — topic-api는 있고, persona는
+> bourbon-agent에 **이미 있으나 암호화되어 API가 유일한 경로**이며, 대화 이벤트는 없다.
+> **§10 = 도입했을 때의 시스템 구조**(배포 단위·저장소·모듈 트리·이미지 분리·요청 경로 변화·열화·
+> 올인원 대조). 구조를 결정하는 선택은 하나다 — **모델은 서비스가 아니라 파일**이라, 요청 경로에
+> 새 의존이 생기지 않고 학습 계층이 죽어도 추천이 나온다.
+> 아래 `recsys_serving_discussion.md`의 논의(rev 1부터 rev 4까지)를 승계한다.
+
+> **작업 기록 (승계됨)** — `recsys_serving_discussion.md`:
+> 위 설계에 이르기까지의 논의. 설계는 새 문서로 옮겼고, **여기에만 남은 것**은 §2의 `file:line`
+> 사실들, §3-4(계약을 내렸을 때 남는 것과 사라지는 것), §6-2·§6-3(holder 인덱스 소유와 SB1)이다.
+
+> **오픈소스 recsys 기술 검토 (결정 아님)** — [`recsys_opensource/`](recsys_opensource/README.md):
+> Gorse·Cornac·Surprise·implicit의 실제 입력/출력, requester User ↔ candidate Personal Agent 역할 분리,
+> topic·bio·traits, `public/friends/private` gate, 우리 pipeline의 배치 위치와 PoC 합격선을 도구별로
+> 정리한다. 도입 결정은 아니며 현행 제안은 `recommendation_scoring_design.md`가 소유한다.
 
 > **방향 근거는 `topic_api_analysis.md`, 설계 정본은 `recommendation_pipeline_design.md`, 가동 중인
 > 것의 계약은 `impl/`.** `persona_topic_search_design.md`(3차 프레이밍 기록)는 2026-08-24에
