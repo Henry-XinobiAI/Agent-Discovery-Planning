@@ -6,7 +6,7 @@
 
 > 개인이 자기 agent와 대화하며 **지식·관점(persona: topic·claim)**을 쌓는다 → 그중 **공개 가능한 것**이 검색 가능해진다 → 다른 유저가 정답 문서가 아니라 **그 topic을 잘 아는 agent를 발견하고 대화하며 소비**한다.
 
-> **프레이밍 메모 (4차, 2026-08-21):** ⑴ 초기 SKL(Topic Space + Perspective Index) → ⑵ `Agent_Memory_Vision.md`의 4계층 지식그래프 + **Wikidata anchor**(memory-api 소스) → ⑶ **persona extractor 체인**(우리가 topic/claim을 소유하고 AOSS에 색인) → ⑷ **`bourbon-topic-api`로 축 이전**(2026-08-21 확정) — 토픽 저장·검색·랭킹의 주체가 이미 구현된 별도 서비스이고, 우리는 소비자 + 얇은 보정층이 된다. 앞 두 프레이밍의 문서는 `archive/`에 있고, ⑷의 근거·결정 기록은 `topic_api_analysis.md`, 설계 정본은 `recommendation_pipeline_design.md`다. ⑶의 문서(`persona_topic_search_design.md`)는 2026-08-24 `archive/`(§2e)로 이동했다. **⑵ 기반의 shipped 시스템은 전환 완료 전까지 계속 가동**되며 그 구현 계약은 `impl/`이 소유한다.
+> **프레이밍 메모 (4차, 2026-08-21):** ⑴ 초기 SKL(Topic Space + Perspective Index) → ⑵ `Agent_Memory_Vision.md`의 4계층 지식그래프 + **Wikidata anchor**(memory-api 소스) → ⑶ **persona extractor 체인**(우리가 topic/claim을 소유하고 AOSS에 색인) → ⑷ **`bourbon-topic-api`로 축 이전**(2026-08-21 확정) — 토픽 저장·검색·랭킹의 주체가 이미 구현된 별도 서비스이고, 우리는 소비자 + 얇은 보정층이 된다. 앞 두 프레이밍의 문서는 `archive/`에 있고, ⑷의 근거·결정 기록은 `topic_api_analysis.md`, 설계 정본은 `recommendation_pipeline_design.md`다. ⑶의 문서(`persona_topic_search_design.md`)는 2026-08-24 `archive/`(§2e)로 이동했다. **⑵ 기반의 shipped 시스템의 구현 계약이던 `archive/impl/`은 2026-09-01 `archive/impl/`로 보관됐다**(§2f) — 갱신이 오래 끊겼고 그 사이 시스템이 크게 바뀌었다. 필요해지면 재작성한다.
 
 ---
 
@@ -17,7 +17,6 @@
 | **`topic_api_analysis.md`** | **분석 + 방향 결정 기록 (rev 8, 2026-08-25 — topic-api HEAD `9ee67f3`, 상류 이동 감사법은 부록 B-4)** | `bourbon-topic-api` 전수 분석(검색 메커니즘·카탈로그 실측·성능/비용·프라이버시 모델) + **축 이전 결정** + rev 14 폐기/승계 목록 + 열린 질문. **재설계의 입력이며 설계 문서가 아니다** | 사실/결정/열린 질문 |
 | **`recommendation_pipeline_design.md`** | **설계 정본 rev 5.12 (2026-08-27, 외부 리뷰 5회 반영 + 응답 wire 확장: 4값 + `owner_notes`)** | topic-api 소비 기반 추천 파이프라인 S1–S6: 단계별 동작·topic-api endpoint·산출물·실패 3분기. `persona_topic_search_design.md`를 대체(2026-08-24 archive) — 열린 결정은 §9 | 파이프라인 단계 산출물 |
 | **`serving_surface_design.md`** | **설계 rev 3.3 (2026-08-24, §7 열린 결정 전부 해소)** | 노출 표면: internal-only(`/api/internal/svc/agent-discovery/` 단독) + edge-auth 관례 채택 + topic-api 레퍼런스 이디엄 차용. **신규 repo = `bourbon-agent-discovery-api`** (project-template-python scaffold, 기존 repo는 전환 후 archive). x-user-id 금지·신원=body·label 유지·surface boundary 테스트. **표면 정비는 코드 repo에 반영 완료**(`4176b0a`·`05ec707`·`d861b5f`) — §7 열린 결정 전부 해소 — dispatch 등록 PR도 준비(bourbon-api `0eb55b6`)·순서 제약 없음 | 표면 계약 / template 델타 |
-| **`impl/` (README + `01`–`11`)** | **현행 shipped 시스템의 구현 계약 (전환 전까지 유효)** | memory-api 기반의 실제 가동 중 시스템: 데이터 계약·provider 경계·grounding·gate/ranking·serving·eval. 전환 시 삭제 패스의 기준선이기도 하다 | typed struct / phase |
 
 > **문서 참조 규약**: **살아 있는 문서를 가리킬 때는 rev를 적지 않는다.** 버전은 파일 자신의 첫 줄에
 > 있으므로 참조에 적어도 정보가 늘지 않고, 한쪽이 올라갈 때마다 나머지가 stale해지는 연쇄만 생긴다
@@ -48,9 +47,9 @@
 > **§10 = 도입했을 때의 시스템 구조**(배포 단위·저장소·모듈 트리·이미지 분리·요청 경로 변화·열화·
 > 올인원 대조). 구조를 결정하는 선택은 하나다 — **모델은 서비스가 아니라 파일**이라, 요청 경로에
 > 새 의존이 생기지 않고 학습 계층이 죽어도 추천이 나온다.
-> 아래 `recsys_serving_discussion.md`의 논의(rev 1부터 rev 4까지)를 승계한다.
+> 아래 `archive/recsys_serving_discussion.md`의 논의(rev 1부터 rev 4까지)를 승계한다.
 
-> **작업 기록 (승계됨)** — `recsys_serving_discussion.md`:
+> **작업 기록 (승계됨)** — `archive/recsys_serving_discussion.md`:
 > 위 설계에 이르기까지의 논의. 설계는 새 문서로 옮겼고, **여기에만 남은 것**은 §2의 `file:line`
 > 사실들, §3-4(계약을 내렸을 때 남는 것과 사라지는 것), §6-2·§6-3(holder 인덱스 소유와 SB1)이다.
 
@@ -59,8 +58,8 @@
 > topic·bio·traits, `public/friends/private` gate, 우리 pipeline의 배치 위치와 PoC 합격선을 도구별로
 > 정리한다. 도입 결정은 아니며 현행 제안은 `recommendation_scoring_design.md`가 소유한다.
 
-> **방향 근거는 `topic_api_analysis.md`, 설계 정본은 `recommendation_pipeline_design.md`, 가동 중인
-> 것의 계약은 `impl/`.** `persona_topic_search_design.md`(3차 프레이밍 기록)는 2026-08-24에
+> **방향 근거는 `topic_api_analysis.md`, 설계 정본은 `recommendation_pipeline_design.md`, 가려는 곳은
+> `recommendation_scoring_design.md`.** 구현 계약이던 `archive/impl/`은 `archive/impl/`로 보관됐다(§2f). `persona_topic_search_design.md`(3차 프레이밍 기록)는 2026-08-24에
 > `archive/`(§2e)로 이동했다. 이전 프레이밍의
 > 설계 근거 문서들(directions·implementation·Agent_Memory_Vision·technology_selection_evidence)은
 > 2026-08-20에 `archive/`(§2d)로 이동했다 — 현행 시스템이 *왜 그렇게 지어졌는지*가 궁금할 때만
@@ -85,26 +84,26 @@
 
 ### 2b. 빌드 문서 (superseded)
 
-Alpha 구현이 진행되며 실측·계약 기준이 `impl/`로 이동해 대체된 빌드 문서들. **히스토리 기록**으로만 남긴다(상단에 archived masthead).
+Alpha 구현이 진행되며 실측·계약 기준이 `archive/impl/`로 이동해 대체된 빌드 문서들. **히스토리 기록**으로만 남긴다(상단에 archived masthead).
 
 | 문서 | 당시 역할 | 현재 대체 |
 |---|---|---|
-| `archive/Agent_Discovery_Recommendation_Roadmap.md` | 초기 제품 빌드 페이징·로드맵·검토 항목 | `impl/11-forward-roadmap.md` (+ `impl/README.md`) |
-| `archive/agent_discovery_recommendation_build_plan.md` | Phase 1–7 실행 계획(레포 레이아웃·모듈·순서) | `impl/` + 코드 레포 `tasks/todo.md` |
-| `archive/agent_discovery_recommendation_walkthrough.md` | 초기 동작 설명(요청→응답 시나리오) | `impl/README.md` + `impl/01`–`11` |
+| `archive/Agent_Discovery_Recommendation_Roadmap.md` | 초기 제품 빌드 페이징·로드맵·검토 항목 | `archive/impl/11-forward-roadmap.md` (+ `archive/impl/README.md`) |
+| `archive/agent_discovery_recommendation_build_plan.md` | Phase 1–7 실행 계획(레포 레이아웃·모듈·순서) | `archive/impl/` + 코드 레포 `tasks/todo.md` |
+| `archive/agent_discovery_recommendation_walkthrough.md` | 초기 동작 설명(요청→응답 시나리오) | `archive/impl/README.md` + `archive/impl/01`–`11` |
 
 ### 2c. 외부 협의·결정 이력
 
-타 팀(memory-api·bourbon-api)과의 협의 문서 중 **더 이상 열린 요청이 아닌 것**. 결정의 *내용*은 `impl/`과
+타 팀(memory-api·bourbon-api)과의 협의 문서 중 **더 이상 열린 요청이 아닌 것**. 결정의 *내용*은 `archive/impl/`과
 아래 active 레지스터가 갖고, 여기 있는 문서는 **무엇을 왜 요청했고 어떻게 착지했는지**의 경위를 보존한다
 (각각 상단에 masthead).
 
 | 문서 | 당시 다루던 것 | 성격 / 현재 위치 |
 |---|---|---|
 | `archive/memory_api_statement_attribution_request.md` | statement `owner_asserted: bool` 필드 + 검색 필터 (K-A1 rev 3) | **채택되지 않은 초안** — 필드는 미생성. assertion-source `confidence` tier를 `attribution` enum으로 투영하는 형태로 착지 |
-| `archive/memory_api_statement_attribution_followup.md` | 위 협의의 종결 기록 (K-A1 rev 5) | **채택된 종결 결정** — 의미론 + server-side 필터 둘 다 착지(`#129`/`3e4e7c1`, `f246f93`). 계약 요약은 `impl/00`, 잔여 테스트 공백은 R2, 연기된 리스크는 R7 |
-| `archive/memory_api_agent_recommendation_requirements.md` | memory-api가 제공해야 할 최소 계약 (2026-07-14 이전) | **이전 협의 기록** — 현재 계약 아님. 현재 상태는 `impl/findings-real-anchor-grounding-ties.md` / `impl/11-forward-roadmap.md` |
-| `archive/persona_api_discovery_requests.md` | persona 팀에 걸 데이터·API 요청서 (rev 15, 2026-08-13) | **폐기된 트랙 (2026-08-19)** — persona-api를 소스로 삼는 전환 자체가 폐기됐다. 요청·열린 질문 전부 무효. rev 16과 실사 문서 `persona_source_review.md`는 미머지 폐기(태그 `discarded/persona-api-ownership-split`) |
+| `archive/memory_api_statement_attribution_followup.md` | 위 협의의 종결 기록 (K-A1 rev 5) | **채택된 종결 결정** — 의미론 + server-side 필터 둘 다 착지(`#129`/`3e4e7c1`, `f246f93`). 계약 요약은 `archive/impl/00`, 잔여 테스트 공백은 R2, 연기된 리스크는 R7 |
+| `archive/memory_api_agent_recommendation_requirements.md` | memory-api가 제공해야 할 최소 계약 (2026-07-14 이전) | **이전 협의 기록** — 현재 계약 아님. 현재 상태는 `archive/impl/findings-real-anchor-grounding-ties.md` / `archive/impl/11-forward-roadmap.md` |
+| `archive/persona_api_discovery_requests.md` | persona 팀에 걸 데이터·API 요청서 (rev 15, 2026-08-13) | **폐기된 트랙 (2026-08-19)** — persona-api를 소스로 삼는 전환 자체가 폐기됐다. 요청·열린 질문 전부 무효. rev 16과 실사 문서 `persona_source_review.md`는 **미머지 폐기**되어 이 repo에 들어온 적이 없다 — 복원용 로컬 태그 `discarded/persona-api-ownership-split`도 2026-08-20 삭제되어 **두 문서 모두 남아 있지 않다** |
 | `archive/persona_api_endpoint_summary.md` | 위 요청서의 endpoint 요약 — persona 팀에 **실제 공유됨** | **폐기된 트랙 (2026-08-19)** — 공유한 문서라 폐기 사실을 persona 팀에 별도 통지해야 한다 |
 | `archive/bourbon_api_discovery_open_requests.md` | bourbon-api 요청 레지스터 (B1–B2, 미발신 초안) | **종결 (2026-08-24)** — B1(owner→agent uuid5 producer-side pin)은 발신하지 않기로 결정: 파생은 bourbon-api 지정 고정 계약이며 명문화는 `recommendation_pipeline_design.md` S6-0. B2(신뢰된 requester identity)는 호출자가 bourbon-agent로 바뀐 새 wire 계약(`requester_user_id`)으로 대체 |
 
@@ -112,7 +111,7 @@ Alpha 구현이 진행되며 실측·계약 기준이 `impl/`로 이동해 대�
 
 2026-08-19 아키텍처 재변경(persona extractor 체인 확정)으로 **전제가 폐기된** 2차 프레이밍
 (4계층 + Wikidata anchor)의 기준 문서들. 각 상단 masthead 참조. 현행 shipped 시스템의 계약은
-계속 `impl/`이 소유하므로, 이 문서들은 "그 시스템이 왜 그렇게 설계됐는지"의 기록이다.
+계속 `archive/impl/`(보관됨 §2f)이 소유했으므로, 이 문서들은 "그 시스템이 왜 그렇게 설계됐는지"의 기록이다.
 
 | 문서 | 당시 역할 | 현재 대체 |
 |---|---|---|
@@ -134,13 +133,52 @@ Alpha 구현이 진행되며 실측·계약 기준이 `impl/`로 이동해 대�
 
 ---
 
+### 2f. 갱신 정지로 보관 (2026-09-01) — 현행 shipped 시스템의 구현 계약
+
+`impl/` (README + `00`–`12` + findings 3종) → **`archive/impl/`**.
+
+memory-api 기반으로 실제 가동 중이던 시스템의 구현 계약이었다. 마지막 갱신이 2026-08-24이고 그 뒤로
+코드 repo(`bourbon-agent-discovery-api`)가 크게 바뀌어 **문서와 시스템이 어긋난 상태**가 되었다.
+어긋난 계약 문서는 없는 것보다 나쁘다 — 읽는 사람이 그것을 현재로 믿는다.
+
+`판단` **갱신하지 않고 보관한다.** 다시 필요해지면 그때의 코드에서 재작성하는 편이 맞다.
+`archive/` 안의 다른 문서들이 이것을 "현재 대체"로 가리키고 있는데, 그 참조들은 **그때의 사실이므로
+고쳐 쓰지 않는다**(로그를 재작성하지 않는 것과 같은 이유). 경로만 `archive/impl/`로 바뀌었다.
+
+| 무엇 | 지금 그 자리를 무엇이 답하나 |
+|---|---|
+| 데이터 계약·provider 경계·grounding·gate/ranking | `recommendation_pipeline_design.md` (설계 정본) |
+| serving·decision log | `serving_surface_design.md` · `recsys_opensource/off_policy.md` §3 |
+| eval harness·metrics | 코드 repo `tasks/todo.md` |
+| forward roadmap | `recommendation_scoring_design.md` §11 |
+
+---
+
+### 2g. 루트 정리 (2026-09-01)
+
+| 문서 | 사유 | 지금 그 자리 |
+|---|---|---|
+| `archive/recsys_serving_discussion.md` | **승계됨** — 설계는 `recommendation_scoring_design.md`로 옮겼다. 문서 자신의 ⛔ masthead가 승계 시점과 바뀐 판단 셋을 적고 있다 | 설계는 scoring design. **여기에만 남은 것**은 §2 `file:line` 사실 · §3-4 · §6-2 · §6-3이고, 자매 문서 둘이 그 절들을 가리킨다 |
+| `archive/Agent_Discovery_Recommendation_Roadmap_notion.md` | **중복** — `archive/Agent_Discovery_Recommendation_Roadmap.md`의 Notion 공유용 변형. 33줄 차이가 전부 내부 문서 참조를 지운 것이고 새 내용이 없다. `.gitignore`의 `*_notion.md` 정책대로 **추적되지 않는 로컬 파일**이며, 루트 정리 차원에서 옮겼을 뿐 추적 상태는 그대로다 | 원본(같은 디렉토리) |
+
+`판단` **변경 이력 줄의 옛 경로는 고치지 않았다.** 그때의 기록이므로 로그를 재작성하지 않는 것과
+같은 이유다. 살아 있는 포인터 5곳만 `archive/` 경로로 갱신했다.
+
+`판단` **함께 검토했으나 보관하지 않은 것**:
+
+| 문서 | 왜 남기나 |
+|---|---|
+| `service_boundary_discussion.md` · `facets_ownership_split_discussion.md` | 전제("topic-api가 후보를 공급한다")가 2026-09-01 논의로 **의문시됐을 뿐 결정되지 않았다.** 방향이 채택되면 그때 함께 처분한다. 지금 보관하면 열린 항목(SB1–SB5·F1–F5)이 같이 묻힌다 |
+| `topic_api_analysis.md` | 상류 사실의 단일 소스. 프레이밍과 무관하게 유효 |
+| `serving_surface_design.md` | 표면 계약. 이벤트 수신 라우트가 생기면 **갱신 대상**이지 보관 대상이 아니다 |
+
+---
+
 ## 3. 읽는 순서
 
-1. **`recommendation_pipeline_design.md`** — 확정된 방향(설계 정본). §0 요약 → S1–S6(§3) → §9 열린 결정 순. 서빙 표면은 `serving_surface_design.md`.
-2. **`topic_api_analysis.md`** — 그 설계의 입력. topic-api의 사실·실측·결정·열린 질문(§11).
-3. **`impl/README.md` → `impl/01`–`11`** — 지금 가동 중인 시스템의 계약(전환 전까지 유효, 전환 시 삭제 패스 기준선).
-4. 위 두 문서의 열린 결정(설계 §9)·열린 질문(분석 §11) — 타 팀에 걸려 있는 항목.
-5. 현행 시스템이 *왜* 그렇게 지어졌는지 → `archive/`의 프레이밍 문서들(§2d·§2e). 그보다 앞 계보는 §2a.
+**[`HOW_TO_READ.md`](HOW_TO_READ.md)** 가 소유한다. 목적별로 진입점이 다르므로 한 줄 목록으로는 답이
+되지 않아 별도 문서로 뺐다 — 전체 그림 · recsys 도입 논의 · 타 팀 발신 · 도구 근거 · 경계 논쟁
+다섯 갈래다.
 
 ---
 
@@ -158,7 +196,7 @@ framing이 SKL → anchor 그래프 → persona extractor 체인 → topic-api �
 
 ## 5. 구현 형태 (how it's wired) — 현행 shipped 시스템 기준
 
-> **이 절은 전환 전까지 가동되는 현행 시스템의 wiring이다** (구현 계약은 `impl/`, 설계 근거 기록은 `archive/agent_discovery_recommendation_directions.md`). 전환 후 형태는 `recommendation_pipeline_design.md` §0. API-first·thin client·moderation-gated push라는 골격은 전환 후에도 유지된다.
+> **이 절은 전환 전까지 가동되는 현행 시스템의 wiring이다** (구현 계약이던 `archive/impl/`은 보관됨 §2f, 설계 근거 기록은 `archive/agent_discovery_recommendation_directions.md`). 전환 후 형태는 `recommendation_pipeline_design.md` §0. API-first·thin client·moderation-gated push라는 골격은 전환 후에도 유지된다.
 
 discovery는 호출 가능한 **백엔드 서비스(API)**로 구현한다 — 버전된 공유 인덱스(anchor 파티션·stance space·contested axes), cross-agent 집계, lifecycle 이벤트 기반 갱신이 필요해 호출마다 재구축할 수 없기 때문이다. 두 모드는 이 엔진을 부르는 *경로*가 다르다.
 

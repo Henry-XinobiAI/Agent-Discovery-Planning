@@ -1,5 +1,14 @@
 # 구현 이해 가이드 — bourbon-agent-recommendation-api (Alpha)
 
+> **📦 보관됨 (2026-09-01) — 갱신 정지.** memory-api 기반 shipped 시스템의 구현 계약이었다.
+> 마지막 갱신이 2026-08-24이고 그 뒤로 코드 repo(`bourbon-agent-discovery-api`)가 크게 바뀌어
+> **문서와 시스템이 어긋난 상태**다. 갱신하지 않고 보관하며, 다시 필요해지면 그때의 코드에서
+> 재작성한다. **여기 적힌 것을 현재 계약으로 읽지 말 것.**
+>
+> 지금 그 자리를 답하는 문서: 설계 정본 `../../recommendation_pipeline_design.md` ·
+> 표면 `../../serving_surface_design.md` · 가려는 곳 `../../recommendation_scoring_design.md` ·
+> 노출 필드 `../../recsys_opensource/off_policy.md` §3. 보관 사유는 `../../README.md` §2f.
+
 이 문서는 지금까지(Phase 0–8A + 재설계된 8B 폴백 사다리 Track 1–4 + 8-5/8-7·stance ④a·Phase 10 real edge slice) 구현한 것을 **개념이 쌓이는 순서**로 정리한 것입니다.
 빌드 순서(Phase 0→7)는 "계약을 먼저 얼리고 의존성 역순으로 짓는" 순서라서 처음 이해하기엔
 거꾸로입니다. 아래는 "무엇을 왜 만드는가 → 무엇이 흐르는가 → 어떻게 처리하는가 →
