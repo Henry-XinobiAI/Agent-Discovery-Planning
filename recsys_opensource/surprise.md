@@ -3,6 +3,9 @@
 > **결론**: Surprise는 explicit rating 예측을 배우기 쉬운 기준선이다. 현재 필요한 implicit behavior,
 > topic/bio feature, requester-aware 후보를 직접 지원하지 않으므로 주 학습 도구로는 맞지 않는다. 명시적
 > 만족도 계약이 생기면 sanity baseline으로 쓴다.
+>
+> **역할**: 이 문서는 [`recommendation_scoring_design.md` §9](../recommendation_scoring_design.md)의
+> explicit-rating 기준선 범위 근거다. 제품 요구사항이나 도입 결정을 여기서 새로 만들지 않는다.
 
 ## 1. 성격과 범위
 
@@ -38,6 +41,34 @@ data = Dataset.load_from_df(ratings[["user", "item", "rating"]], reader)
 
 카드 노출, 클릭, 대화 시작·길이, 재질의, 추정된 해결 여부는 rating이 아니다. positive-only이거나 맥락에
 따라 부호가 달라지는 implicit event다.
+
+### 이번 요청 topic은 rating이 아니다
+
+A가 평소 영화·위스키에 관심이 있지만 커피 agent를 한 번 요청했다는 사실은 다음 어느 rating도 만들지
+않는다.
+
+```text
+(A, coffee-agent, 5)  # 요청했으니 좋아함 — 잘못됨
+(A, coffee-agent, 1)  # 아직 선택하지 않았으니 싫어함 — 잘못됨
+```
+
+Surprise는 query feature를 받지 않으므로 discovery가 커피 후보를 먼저 만든다. 그 뒤 기존 explicit rating
+model이 허용된 pair만 예측한다.
+
+```python
+coffee_candidates = grounding_and_gate(topic="coffee", requester="user-a")
+predictions = [
+    algo.predict("user-a", agent_id)
+    for agent_id in coffee_candidates
+]
+```
+
+이 호출은 추론일 뿐 Trainset과 A의 profile을 변경하지 않는다. 사용자가 나중에 실제 rating UI에서
+coffee-agent에 점수를 제출한 경우에만 다음 snapshot의 `(user, item, rating)` 행이 된다. 선택·대화 같은
+implicit event는 Surprise rating으로 자동 변환하지 않고 별도 행동 모델의 원본으로 둔다.
+
+따라서 Surprise에서 커피 요청은 **예측할 pair 집합을 제한**할 뿐이며, 학습값은 오직 명시적 rating 계약에서
+온다.
 
 ## 3. 출력
 
@@ -137,19 +168,24 @@ def rank_eligible(
     *,
     requester_user_id: str,
     eligible_agent_ids: tuple[str, ...],
+    known_user_ids: frozenset[str],
+    known_agent_ids: frozenset[str],
     limit: int,
 ):
+    if requester_user_id not in known_user_ids:
+        return None  # cold requester: rating signal 자체가 없다.
     predictions = [
         algo.predict(requester_user_id, agent_id)
         for agent_id in eligible_agent_ids
+        if agent_id in known_agent_ids
     ]
-    known = [
-        prediction
-        for prediction in predictions
-        if not prediction.details.get("was_impossible", False)
-    ]
-    return sorted(known, key=lambda p: (-p.est, p.iid))[:limit]
+    return sorted(predictions, key=lambda p: (-p.est, p.iid))[:limit]
 ```
+
+`Prediction.details["was_impossible"]`로 known 여부를 판정하지 않는다. Surprise의 SVD는 unknown user/item의
+bias와 factor를 0으로 놓고 estimate를 반환할 수 있어 `was_impossible=False`인 default-like prediction이
+생긴다. [SVD 계약](https://surprise.readthedocs.io/en/latest/matrix_factorization.html) raw ID가 train
+snapshot에 있었는지는 별도 ID 집합으로 판정한다.
 
 `eligible_agent_ids`는 Surprise가 만들지 않는다.
 
@@ -348,9 +384,7 @@ class SurpriseRatingScorer:
         for agent_id in eligible_agent_ids:
             item_known = agent_id in trainset._raw2inner_id_items
             prediction = self._model.predict(requester_user_id, agent_id)
-            known = requester_known and item_known and not prediction.details.get(
-                "was_impossible", False
-            )
+            known = requester_known and item_known
             result.append(
                 RatingSignal(
                     personal_agent_id=agent_id,

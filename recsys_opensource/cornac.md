@@ -2,6 +2,9 @@
 
 > **결론**: Cornac은 production service가 아니라 모델·modality·평가 방법을 같은 데이터로 비교하는
 > 오프라인 실험 하네스다. 학습 이미지/CronJob에만 두고 요청 경로에는 넣지 않는다.
+>
+> **역할**: 이 문서는 [`recommendation_scoring_design.md` §9-1](../recommendation_scoring_design.md)의
+> Cornac 판정과 Q6 종결 근거다. 제품 요구사항이나 도입 결정을 여기서 새로 만들지 않는다.
 
 ## 1. 성격
 
@@ -44,26 +47,46 @@ user_modality = FeatureModality(
 topic·traits를 multi-hot/수치/embedding으로 만드는 로직은 우리 소유다. `GraphModality`의
 `(source_user, target_user, value)`로 friendship 실험도 가능하지만 관계 feature와 authorization은 다르다.
 
+### 이번 요청 topic은 user modality나 UIRT 행이 아니다
+
+A의 장기 feature가 영화·위스키이고 이번 요청만 커피라고 하자.
+
+```text
+Cornac user modality(A) = movie, whisky, ko, concise
+request query           = coffee
+```
+
+커피 요청 한 건 때문에 user feature vector의 coffee bit를 1로 바꾸지 않는다. request topic은 discovery가
+커피 agent 후보를 만들 때 사용하고, Cornac scorer는 그 candidate indices 안에서 A의 기존 model score를
+계산한다.
+
+```python
+coffee_candidates = grounding_and_gate(topic="coffee", requester="user-a")
+ranked, scores = model.rank(
+    user_idx=user_index["user-a"],
+    item_indices=[item_index[agent_id] for agent_id in coffee_candidates],
+    k=-1,
+)
+```
+
+추천 요청 자체도 UIRT interaction을 만들지 않는다.
+
+```text
+recommend(topic=coffee)          → UIRT 없음
+agent가 실제 노출됨              → exposure dataset에 기록
+agent 선택·대화·해결             → aggregation 규칙을 통과하면 UIRT positive 후보
+사용자가 coffee interest를 추가  → 다음 profile snapshot의 user modality 변경
+```
+
+Cornac offline experiment에서 query topic을 사용하려면 request replay dataset의 context/candidate-set column으로
+보존한다. 그것을 user modality로 합치면 한 번의 탐색이 영구 선호처럼 모든 미래 요청에 적용된다.
+
 ### 2-1 원본 event에서 UIRT를 만드는 예
 
 ```python
 from collections import defaultdict
-from datetime import datetime, timezone
 
-
-def confidence(events: list[dict]) -> float:
-    """예시일 뿐 결정된 제품 식이 아니다."""
-    score = 0.0
-    for event in events:
-        if event["event_type"] == "selected":
-            score += 1.0
-        elif event["event_type"] == "conversation_started":
-            score += 2.0
-        elif event["event_type"] == "resolved":
-            score += 3.0
-        elif event["event_type"] == "requery_other_agent":
-            score -= 2.0
-    return max(score, 0.0)
+from agent_discovery.scoring.features import aggregate_behavioral_confidence
 
 
 def to_uirt(events: list[dict]) -> list[tuple[str, str, float, int]]:
@@ -73,7 +96,7 @@ def to_uirt(events: list[dict]) -> list[tuple[str, str, float, int]]:
 
     rows = []
     for (user_id, agent_id), pair_events in grouped.items():
-        value = confidence(pair_events)
+        value = aggregate_behavioral_confidence(pair_events)
         if value <= 0:
             continue
         latest = max(event["occurred_at"] for event in pair_events)
@@ -135,7 +158,11 @@ index·score를 반환한다.
 
 ```python
 item_ids = model.recommend("user-a", k=10, remove_seen=True, train_set=train_set)
-ranked, scores = model.rank(user_idx, item_indices=candidate_indices, k=10)
+ranked, scores_in_input_order = model.rank(
+    user_idx,
+    item_indices=candidate_indices,
+    k=-1,
+)
 ```
 
 점수는 모델 간 공통 척도가 아니다. wire에 노출하거나 고정 threshold로 읽지 않고 model version과 함께
@@ -173,17 +200,24 @@ class CornacScorer:
         if not known:
             return None
 
-        ranked_indices, all_scores = self._model.rank(
+        candidate_indices = [index for _, index in known]
+        ranked_indices, scores_in_input_order = self._model.rank(
             user_index,
-            item_indices=[index for _, index in known],
-            k=len(known),
+            item_indices=candidate_indices,
+            k=-1,
         )
-        # 실제 adapter는 rank()의 score 배열이 어느 index 순서와 대응하는지 모델 계약 테스트로 고정한다.
-        return map_scores_back_to_raw_ids(known, ranked_indices, all_scores)
+        score_by_index = dict(zip(candidate_indices, scores_in_input_order, strict=True))
+        raw_by_index = {index: raw_id for raw_id, index in known}
+        return {
+            raw_by_index[index]: float(score_by_index[index])
+            for index in ranked_indices
+        }
 ```
 
 위 코드는 구조 예시다. Cornac의 internal mapping을 직접 추측하지 말고 선택한 model과 저장한 train set으로
-round-trip fixture를 만들어 raw ID 복원을 검증한다.
+round-trip fixture를 만들어 raw ID 복원을 검증한다. `ranked_indices`는 점수순이지만 반환 score 배열은
+입력 `item_indices` 순서에 대응하므로 둘을 단순 zip하지 않는다. candidate subset에서는 `k=-1`로 전부
+정렬한 뒤 우리 코드가 top-K를 자른다. 조사·구현 시 Cornac 버전을 pin하고 이 계약을 테스트로 고정한다.
 
 ## 4. 역할, topic, bio
 
@@ -200,13 +234,15 @@ column agent-a = candidate representation owned by user-a
 | friendship | GraphModality | gate 대체 금지 |
 | conversation | UIR/UIRT | exposure와 positive 분리 |
 
-모든 모델이 모든 modality를 읽지는 않는다. 한 번에 하나씩 축을 추가한다.
+모든 모델이 모든 modality를 읽지는 않는다. 한 번에 하나씩 축을 추가하되 candidate 생성 변화와
+reranker 변화를 같은 축에 놓지 않는다.
 
 ```text
-B0 현재 topic 규칙
-B1 interaction-only BPR/WMF
-B2 B1 + public topic feature
-B3 B2 + sharable persona feature
+candidate axis: C0 현재 topic-api + gate / C1 이후 승인된 추가 source
+reranker axis: R0 현재 RRF
+               R1 LR(topic·surface·missingness)
+               R2 R1 + interaction model score (D8 통과 시)
+               R3 R1 + 승인된 public modality
 ```
 
 ## 5. visibility
@@ -250,7 +286,7 @@ known = [
 ranked_indices, candidate_scores = model.rank(
     user_idx,
     item_indices=[index for _, index in known],
-    k=len(known),
+    k=-1,
 )
 ```
 
@@ -295,7 +331,7 @@ working memory가 추가된다. text embedding 768차원을 item 1억 개에 그
   ├─ head/tail topic stratified sample
   ├─ cold requester/agent holdout
   └─ friends/public visibility strata
-        → Cornac B0/B1/B2/B3 비교
+        → candidate snapshot C* × reranker R* 교차 비교
 ```
 
 표본 실험에서 이긴 모델만 목표 active snapshot으로 단계 확대한다.
@@ -371,9 +407,10 @@ Cornac은 `train` dependency group과 CronJob image에만 둔다. serving image�
 못하게 boundary test를 둔다. artifact에는 model/feature/ID-map version, train window, visibility projection,
 metrics를 기록한다.
 
-Cornac의 all-catalog split/metric을 그대로 쓰지 않을 수 있다. 우리 문제는 요청마다 grounding과 gate가
+Cornac의 all-catalog split/metric을 그대로 **쓰지 않는다**. 우리 문제는 요청마다 grounding과 gate가
 candidate set을 바꾸는 group ranking이다. 모델 구현은 재사용하되 실제 request candidate set 재생과
-gold/exposure 대조는 우리 harness가 소유한다.
+gold/exposure 대조는 우리 harness가 소유한다. 비교표도 CF 모델 목록 하나가 아니라
+`candidate/retrieval snapshot × reranker variant` 두 축으로 기록한다.
 
 ### 6-1 프레임워크이므로 필요한 배포 구성
 
@@ -435,11 +472,12 @@ coverage를 바꾸고 후자는 order만 바꾸므로 같은 지표 한 줄로 �
 
 1. 노출·feedback event schema가 생긴 뒤 시작한다.
 2. 시간 분할과 requester/agent ID map을 고정한다.
-3. BPR·WMF를 현재 topic/RRF 규칙과 비교한다.
-4. public topic modality는 interaction-only 다음 challenger다.
-5. request candidate subset에서 NDCG, correct gain, false adoption, regression을 잰다.
-6. cold requester/agent를 별도 stratum으로 본다.
-7. artifact load 실패 시 현재 ordering으로 열화한다.
+3. candidate snapshot(C0, 이후 C1)과 reranker(R0~R3)를 별도 축으로 기록한다.
+4. BPR·WMF score는 D8 밀도 gate를 통과한 뒤 R1의 optional feature challenger로 비교한다.
+5. public topic modality는 R1 다음 challenger고, 승인된 source만 쓴다.
+6. request candidate subset에서 NDCG, correct gain, false adoption, regression을 잰다.
+7. cold requester/agent를 별도 stratum으로 본다.
+8. artifact load 실패 시 현재 ordering으로 열화한다.
 
 모델 교체 비용이 낮아지고 auxiliary modality가 재현 가능한 이득을 내면 채택한다. adapter/evaluation 수정이
 모델보다 커지거나 작은 LR/GBDT가 같은 품질을 내면 benchmark 전용으로 축소한다.

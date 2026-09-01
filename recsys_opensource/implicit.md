@@ -1,8 +1,12 @@
 # implicit 활용 검토
 
-> **결론**: `implicit`은 대화 시작·재방문·선택처럼 별점이 없는 행동 데이터로 첫 collaborative baseline을
-> 만들기에 가장 직접적이다. bio/traits와 visibility는 직접 지원하지 않으므로 discovery gate와 자체
-> feature score를 유지한 채 personalization 신호 하나로 사용한다.
+> **결론**: `implicit`은 대화 시작·재방문·선택처럼 별점이 없는 행동 데이터의 collaborative feature를
+> 만들기에 직접적이다. 다만 requester-agent 재방문과 그래프 밀도가 사전 gate를 넘을 때만 실험하고,
+> 최종 모델이 아니라 surface-aware ranker의 personalization feature로 사용한다. bio/traits와 visibility는
+> 직접 지원하지 않으므로 discovery gate가 계속 소유한다.
+>
+> **역할**: 이 문서는 [`recommendation_scoring_design.md` §11 D8](../recommendation_scoring_design.md)의
+> CF feature 자격 판정 근거다. 제품 요구사항이나 도입 결정을 여기서 새로 만들지 않는다.
 
 ## 1. 성격
 
@@ -28,20 +32,62 @@ model = implicit.als.AlternatingLeastSquares(factors=64)
 model.fit(user_items)
 ```
 
-event projection의 예시는 다음과 같다. 숫자는 결정값이 아니다.
+event projection의 의미는 다음과 같다. 실제 수치·중복·포화·감쇠는
+[`recommendation_scoring_design.md` §5·N2](../recommendation_scoring_design.md)가 소유하며, 모든 도구가
+공용 `aggregate_behavioral_confidence()`를 사용한다.
 
 ```text
 exposure only                         0
-card selected                         +1
-conversation started                  +2
-resolved without re-query             +3
-same topic re-queried elsewhere       별도 negative/weight 정책
+card selected                         positive 후보
+conversation started                  positive 후보
+resolved without re-query             더 강한 positive 후보
+same topic re-queried elsewhere       부호·귀속 미결
 ```
 
 - 0은 “싫어함”이 아니라 대부분 “관측하지 않음”이다.
 - exposure 없이 선택 기회가 없었던 agent를 negative로 학습하지 않는다.
 - 대화 깊이는 목적에 따라 부호가 달라 단독 positive로 쓰지 않는다.
 - 시간 감쇠와 event aggregation은 공용 feature extractor가 소유한다.
+
+### 이번 요청 topic은 CSR interaction이 아니다
+
+A의 장기 interests가 영화·위스키인데 이번에만 커피 agent를 요청해도 CSR에는 아무 nonzero가 추가되지
+않는다.
+
+```text
+query(topic=coffee)
+  ≠ user_items[A, coffee-agent] += 1
+```
+
+query는 현재 request의 `items=` allowlist를 만든다. 기존 user factor가 그 커피 후보들의 순서를 보조한다.
+
+```python
+coffee_candidates = grounding_and_gate(topic="coffee", requester="user-a")
+candidate_indices = np.asarray(
+    [item_to_idx[agent_id] for agent_id in coffee_candidates if agent_id in item_to_idx]
+)
+ids, scores = model.recommend(
+    user_idx,
+    user_items[user_idx],
+    N=len(candidate_indices),
+    items=candidate_indices,
+    filter_already_liked_items=False,
+)
+```
+
+호출 이후에도 model과 CSR은 그대로다.
+
+```text
+추천 요청              interaction 없음
+실제 노출              exposure 분모, positive confidence 0
+선택                   정의된 경우 positive 후보
+대화 시작·재방문·해결  별도 weight·dedupe 규칙 후 다음 batch CSR에 반영
+명시적 interest 추가   profile store 변경, CSR 변경은 아님
+```
+
+여러 후속 행동이 모델에 반영되어도 그것은 “A가 이 agent와 상호작용하는 경향”이라는 latent preference다.
+이를 A의 공개 interest 목록에 coffee로 되쓰지 않는다. behavioral model과 declared profile은 서로 다른
+source of truth다.
 
 문자열 ID를 integer index로 바꾸는 versioned map도 artifact 일부다.
 
@@ -70,14 +116,12 @@ class Interaction:
     occurred_at: datetime
 
 
-EVENT_CONFIDENCE = {
-    "card_selected": 1.0,
-    "conversation_started": 2.0,
-    "resolved": 3.0,
-}
+from agent_discovery.scoring.features import aggregate_behavioral_confidence
 ```
 
 ```python
+from collections import defaultdict
+
 import numpy as np
 from scipy.sparse import coo_matrix
 
@@ -88,15 +132,19 @@ def build_matrix(interactions: list[Interaction]):
     user_to_idx = {raw: idx for idx, raw in enumerate(user_ids)}
     item_to_idx = {raw: idx for idx, raw in enumerate(item_ids)}
 
-    # 같은 pair의 여러 positive event는 이 예시에서 합한다. 실제 상한·감쇠는
-    # event 계약으로 별도 결정한다.
-    rows, cols, values = [], [], []
+    by_pair = defaultdict(list)
     for interaction in interactions:
-        confidence = EVENT_CONFIDENCE.get(interaction.event)
-        if confidence is None:
+        by_pair[(interaction.requester_user_id, interaction.personal_agent_id)].append(
+            interaction
+        )
+
+    rows, cols, values = [], [], []
+    for (requester_user_id, personal_agent_id), pair_events in by_pair.items():
+        confidence = aggregate_behavioral_confidence(pair_events)
+        if confidence <= 0:
             continue
-        rows.append(user_to_idx[interaction.requester_user_id])
-        cols.append(item_to_idx[interaction.personal_agent_id])
+        rows.append(user_to_idx[requester_user_id])
+        cols.append(item_to_idx[personal_agent_id])
         values.append(confidence)
 
     matrix = coo_matrix(
@@ -107,9 +155,9 @@ def build_matrix(interactions: list[Interaction]):
     return matrix, user_ids, item_ids
 ```
 
-Alice가 Bob agent를 선택하고 대화까지 시작했다면 같은 cell은 `3.0`이 된다. 이 합산은 예시이지 자동으로
-옳은 의미가 아니다. `card_selected`가 `conversation_started`의 전제라면 둘을 더하는 것이 같은 funnel을
-이중 보상할 수 있다. `max(event confidence)` 또는 event별 별도 실험이 더 맞을 수 있다.
+같은 pair의 여러 사건을 단순 합하지 않는다. `card_selected`가 `conversation_started`의 전제라면 둘을
+더하는 것이 같은 funnel을 이중 보상할 수 있다. 공용 extractor가 request/pair 단위 dedupe·포화·해소를
+함께 적용하고, 그 값은 데이터가 생긴 뒤 정한다.
 
 ### 2.2 public/friends/private가 행렬에 들어가는가
 
@@ -189,15 +237,23 @@ interaction으로 만들지 않는다.
           → 모든 coffee agent와 상호작용했다고 행 생성
 ```
 
-이는 실제 행동과 content prior를 섞고 평가가 자기 입력을 재발견하게 한다. late fusion을 쓴다.
+이는 실제 행동과 content prior를 섞고 평가가 자기 입력을 재발견하게 한다. 서로 다른 출처는 공용
+feature extractor에서 나누어 ranker에 넣는다.
 
 ```text
-score = w_topic   × grounded topic relevance
-      + w_persona × role-compatible trait score
-      + w_engage  × implicit model score
+features = {
+  topic_relevance,
+  persona_compatibility,
+  implicit_score,          # interaction graph가 충분할 때만 존재
+  implicit_score_missing,
+  surface,
+}
+score = ranker.predict(features)  # 초기 LR, 이후 검증된 GBDT challenger
 ```
 
-첫날 `w_engage`는 부재/0이고 interaction이 쌓인 뒤 실험으로 비중을 정한다.
+첫날 `implicit_score`는 0이 아니라 부재다. interaction 수뿐 아니라 requester당 distinct agent,
+agent당 requester, requester-agent 쌍 재방문율을 확인한 뒤에만 feature를 연다. 기준과 최종 ranker 계약은
+[`recommendation_scoring_design.md` §11 D8](../recommendation_scoring_design.md)가 소유한다.
 
 ## 5. visibility와 개인정보
 
@@ -561,25 +617,27 @@ factor matrix는 각 API worker가 하나씩 읽으면 worker 수만큼 메모�
 
 ## 7. 모델 선택
 
-- **ALS**: confidence-weighted positive matrix의 첫 baseline. 관측되지 않은 값을 다루는 가정과 exposure
+- **ALS**: confidence-weighted positive matrix의 조건부 feature baseline. 관측되지 않은 값을 다루는 가정과 exposure
   편향을 함께 검토한다.
 - **BPR**: pairwise ordering에 가깝지만 negative sampling에서 미노출 agent를 negative로 뽑지 않게 한다.
 - **item-item BM25/TF-IDF**: “함께 사용된 agent” baseline으로 설명하기 쉽지만 cold requester fallback이
   필요하다.
 
-첫 PoC는 ALS와 item-item 하나면 충분하다.
+밀도 gate를 통과한 뒤의 첫 PoC는 ALS와 item-item 하나면 충분하다.
 
 ## 8. PoC와 판정
 
-1. exposure가 있는 pair만 평가 negative 후보로 쓸 수 있게 한다.
-2. 시간 분할하고 마지막 resolved/select event를 test로 둔다.
-3. 현재 topic ordering, item-item, ALS를 같은 request candidate set에서 비교한다.
-4. cold requester/agent/저활동 user를 별도 stratum으로 본다.
-5. popularity concentration과 신규 agent coverage를 함께 잰다.
-6. artifact 없음, unknown ID, ID-map mismatch에서 규칙 기반으로 열화한다.
-7. `items=` 제한을 제거하는 mutation이 privacy-ineligible candidate test에서 잡히게 한다.
+1. requester당 distinct agent·agent당 requester·requester-agent 쌍 재방문율을 먼저 낸다. 사전 gate 미달이면
+   아래 모델 실험을 열지 않는다.
+2. exposure가 있는 pair만 평가 negative 후보로 쓸 수 있게 한다.
+3. 시간 분할하고 마지막 resolved/select event를 test로 둔다.
+4. 같은 request candidate set에서 LR baseline과 `LR + item-item/ALS feature`를 비교한다.
+5. cold requester/agent/저활동 user를 별도 stratum으로 본다.
+6. popularity concentration과 신규 agent coverage를 함께 잰다.
+7. artifact 없음, unknown ID, ID-map mismatch에서 implicit feature를 부재로 두고 baseline으로 열화한다.
+8. `items=` 제한을 제거하는 mutation이 privacy-ineligible candidate test에서 잡히게 한다.
 
-interaction positive와 exposure 로그가 충분하고 작은 artifact가 안정적인 개인화 이득을 내면 채택한다.
+interaction positive·exposure와 쌍 재방문이 충분하고 작은 artifact feature가 안정적인 추가 이득을 내면 채택한다.
 matrix가 비어 있거나 exposure가 없어 negative sampling을 정직하게 할 수 없으면 library를 미리 배선하지
 않고 event/log 계약부터 만든다.
 
