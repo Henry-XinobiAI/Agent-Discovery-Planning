@@ -14,6 +14,8 @@
 > 조용한 제외다(6-1).
 > **② `negative`는 "다시 보여주지 마라"에만 쓴다** — replacement로도 돌아오지 않는다(2-5).
 > **③ 이진 판단은 `Value`와 식으로 미룬다** — 임계값은 나중에 소급 변경된다(6-2).
+> **④ `auto_insert_*`를 끄고, 투영을 재실행 가능한 pass로 만든다** — 켜 두면 Gorse가 우리
+> 카탈로그 경계를 넘어 실체를 만들고, 그냥 끄면 순서 경합에서 조용히 유실된다(§7).
 >
 > **문서 지위**: 조사 자료. 채택·기각은 설계 문서가 소유한다.
 > [`gorse.md` §7-5](gorse.md)가 "Gorse는 이 이름의 의미를 대신 정해 주지 않는다"에서 멈춘 지점의
@@ -21,9 +23,9 @@
 > 근거가 된다. **이 문서는 어떤 이벤트가 positive인지 정하지 않는다** — 정할 때 무엇을 알고 정해야
 > 하는지만 적는다.
 >
-> **증거 등급**: `문서`(v0.5.11 **소스 직접 확인** — 파일:줄 표기, 재현은 §8) · `실측`(인용, 원본은
+> **증거 등급**: `문서`(v0.5.11 **소스 직접 확인** — 파일:줄 표기, 재현은 §9) · `실측`(인용, 원본은
 > [`gorse.md` §11](gorse.md)) · `판단` · `열린 항목`.
-> ⚠ **소스 독해이지 실행 검증이 아니다.** `gorse.md` §11의 실측과 등급이 다르다. 채택 전 §7의 F5·F8은 컨테이너로
+> ⚠ **소스 독해이지 실행 검증이 아니다.** `gorse.md` §11의 실측과 등급이 다르다. 채택 전 §8의 F5·F8은 컨테이너로
 > 확인해야 한다.
 
 ---
@@ -236,7 +238,7 @@ PUT  /api/feedback   →  insertFeedback(overwrite=true)    server/rest.go:343
   에서 복원할 수 없다. [`inbound_event_contract.md` §3-4](../inbound_event_contract.md)의 "Gorse에
   보내는 것은 투영이고 원본이 아니다"가 스키마 수준에서 강제된다.
 - **ClickHouse backend만 다르다.** upsert 없이 `tx.Create(rows)`로 append한다(`sql.go:1628`, `:1644`).
-  이 문서의 3장 전체가 ClickHouse에서는 성립하지 않는다 → §7 F8.
+  이 문서의 3장 전체가 ClickHouse에서는 성립하지 않는다 → §8 F8.
 
 ---
 
@@ -333,7 +335,106 @@ type = "fm"                          # replacement가 이것을 요구한다 (2-
 
 ---
 
-## 7. `열린 항목`
+## 7. 자격 없는 agent·user에 대한 feedback
+
+### 7-1 `auto_insert`는 양날이고, 기본값이 켜져 있다
+
+```toml
+[server]
+auto_insert_user = true    # 기본값
+auto_insert_item = true    # 기본값
+```
+
+feedback을 POST하면 모르는 user/item을 **자동으로 만든다.** 만들어지는 Item은
+`Labels: "null"`, `Categories: "null"`이고 `IsHidden`은 Go zero value라 **`false` — 즉시 추천
+가능한 상태**다 (`storage/data/sql.go:1600`).
+
+끄면 반대쪽 실패가 있다. 모르는 item의 feedback은 **조용히 버려지고**(`sql.go:1614`), 응답은
+쓴 개수가 아니라 **보낸 개수**를 돌려준다:
+
+```go
+Ok(response, Success{RowAffected: len(feedback)})   // server/rest.go:1615
+```
+
+⚠ **200 OK에 `RowAffected: 1`인데 한 줄도 안 쓰인 경우를 호출자가 구분할 수 없다.**
+
+### 7-2 한 스위치로 뭉뚱그려지는 네 경우
+
+| # | 상황 | feedback은 유효한가 | Gorse Item |
+|---|---|---|---|
+| (a) | catalogue 이벤트가 아직 도착하지 않음 (순서 경합) | **유효** | 곧 생길 예정 |
+| (b) | 공개 topic 없음 | 유효 — 사건은 실제로 일어났다 | **의도적으로 없음** |
+| (c) | suspended | 유효 — 정지 전에 일어난 일 | 있음, 추천에서만 제외 |
+| (d) | deleted | 역사적 사실이나 보존하면 안 됨 | 제거 대상 |
+
+`auto_insert`를 켜면 넷 다 유령 Item을 만들고, 끄면 넷 다 조용히 버린다. **(a)는 유실이고
+(b)는 [`README.md` §5](README.md)가 닫아 둔 구멍이 다시 열리는 것**이므로 둘 다 틀렸다.
+
+### 7-3 권고
+
+**① `auto_insert_item = false`, `auto_insert_user = false`로 고정한다.**
+
+Gorse가 우리 카탈로그 경계를 넘어 실체를 만들지 못하게 한다. §5의 "가장 강한 보호는 받지 않는
+것"이 이 설정 한 줄에 걸려 있다. `auto_insert_user`도 함께 꺼야 한다 — [`gorse.md`
+§8-3](gorse.md)이 "unknown requester를 가짜 평균 user로 기록하지 않음"으로 정해 둔 것을 기본값이
+정확히 위반한다.
+
+**② Gorse에 "있느냐"고 묻지 않는다.**
+
+물어도 답을 주지 않고(7-1), 읽기로 검증하면 왕복이 배가 된다.
+
+★ **투영 워커는 자기가 무엇을 투영했는지 이미 안다.** Gorse는 이 질문의 진실 출처가 아니다.
+
+**③ 투영을 forward-write가 아니라 우리 store에 대한 재실행 가능한 pass로 만든다.**
+
+```text
+행동 이벤트 → 우리 store에 append (조건 없이)
+                    ↓
+            투영 pass (재실행 가능)
+                    ↓
+     Item이 있는 것만 Gorse Feedback으로
+```
+
+(a)에서 투영이 스킵되어도 **유실이 아니다** — row는 우리 store에 있고, catalogue 이벤트가 도착한
+뒤 pass를 다시 돌리면 잡힌다. **deferq에 재시도가 없다는 제약이 여기서 무해해지고, 재시도 큐를
+따로 만들 필요가 없다.**
+
+[`gorse.md` §8-1](gorse.md)의 "projection worker를 다시 실행해 재구축할 수 있어야 한다"와 같은
+요구다. 다만 그 요구가 **우리 이벤트 store에 "시간 범위 replay"를 강제한다**는 것은 아직 어디에도
+적혀 있지 않다 → §8 F9.
+
+**④ 케이스별 처리**
+
+| 상황 | 우리 store | Gorse 투영 |
+|---|---|---|
+| (a) 경합 | append | **스킵.** 다음 pass가 잡는다 |
+| (b) 공개 topic 없음 | append | **스킵.** 나중에 공개되면 그때 소급 투영된다(§5-1) |
+| (c) suspended | append | **투영한다.** Item을 `IsHidden=true`로 두면 추천에서만 빠지고 이력은 살아 있어, 복귀가 콜드 스타트로 돌아가지 않는다 |
+| (d) deleted | append — 사건은 사실이다 | **투영하지 않고 기존 row도 정리**([`inbound_event_contract.md` §3-3](../inbound_event_contract.md)) |
+
+(b)가 가장 미묘하고, 스킵이 맞다. 공개 topic이 없는 사람을 Gorse에 넣는 것의 문제는 그 사람이
+추천 가능해지는 것이 아니라 **그 사람에 대한 사실이 우리 색인에 존재하게 되는 것**이다. §5의
+논지가 정확히 그것이다.
+
+**⑤ 삭제는 row 삭제로 끝나지 않는다.**
+
+feedback row를 지워도 학습된 가중치는 다음 재학습까지 남는다.
+`recsys_adoption_discussion.md` §7-1이 "주간 재학습이면 삭제 요청이 모델 안에서 일주일 산다"로
+이미 지적한 축이다.
+
+★ **삭제 SLA는 row 삭제 시각이 아니라 재학습 완료 시각으로 정의되어야 한다** → §8 F10.
+
+### 7-4 감수하는 손실
+
+(b)·(d)를 스킵하면 **requester 쪽 신호도 함께 잃는다.** "이 사람이 이런 상대와 대화했다"는
+requester의 취향에 대한 정보인데, 상대가 색인에 없으면 CF에 기여하지 못한다.
+
+우리 store에는 남으므로 나중에 다른 축(예: topic 단위 집계)으로 쓸 수 있고, 손실은 Gorse 투영에
+한정된다. `판단` **의도적으로 감수하는 것으로 적어 두면 되고, 사고로 잃는 것과는 다르다.**
+
+---
+
+## 8. `열린 항목`
 
 | # | 항목 | 성격 |
 |---|---|---|
@@ -345,10 +446,12 @@ type = "fm"                          # replacement가 이것을 요구한다 (2-
 | **F6** | `POST`/`PUT` 선택 — `gorse.md` §7-3이 열어 둔 것을 event contract가 닫아야 한다 | §3이 근거를 추가함 |
 | **F7** | 제외 집합이 시간 하한 없이 자라는 것(2-2)이 우리 규모에서 언제 문제가 되는가 | 측정. `storage_sizing.md` §8의 `U_active`와 같은 축 |
 | **F8** | backend를 ClickHouse로 두는 선택지 — §3 전체가 달라진다 | `storage_sizing.md` §5의 후보에 없던 축 |
+| **F9** | 우리 이벤트 store가 **시간 범위 replay**를 지원해야 한다 — §7-3 ③의 전제이자 `gorse.md` §8-1의 재구축 요구가 함의하는 것. `docs/recsys-intent.md`가 고른 DynamoDB의 키 설계가 여기 걸린다 | 설계. 미기재 |
+| **F10** | 삭제 SLA를 **재학습 완료 시각**으로 정의 — row 삭제만으로는 모델 안에 남는다 | 제품·운영 결정. §7-3 ⑤ |
 
 ---
 
-## 8. 재현
+## 9. 재현
 
 v0.5.11 태그의 소스를 직접 읽었다. 확인 명령:
 
@@ -376,3 +479,6 @@ done
 | write-back이 모든 결과에 row를 씀 | `server/rest.go:909-919` |
 | digest 불일치 시 즉시 재계산 | `master/tasks.go:844`, `:908`, `:941` · `config/config.go:288`, `:314`, `:343` |
 | TTL이 스캔 필터임 | `master/tasks.go:308` |
+| `auto_insert`가 만드는 Item의 모양 | `storage/data/sql.go:1600-1610` |
+| 모르는 item의 feedback이 조용히 버려짐 | `storage/data/sql.go:1614-1624` |
+| `RowAffected`가 쓴 개수가 아니라 보낸 개수 | `server/rest.go:1615` |
