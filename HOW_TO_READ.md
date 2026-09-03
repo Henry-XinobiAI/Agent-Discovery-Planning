@@ -103,6 +103,7 @@ recsys_opensource/README.md §2 배치표에서 관심 있는 칸을 찾고
 | `recsys_opensource/ranking.md` | LR → GBDT 재순위 | 초안 |
 | `recsys_opensource/off_policy.md` | 반사실 평가 | 초안. **노출 필드 계약을 소유** |
 | `recsys_opensource/concentration_metrics.md` | 집중도·공급 지표 | 초안 |
+| `recsys_opensource/storage_sizing.md` | 저장소 규모·비용 (1억 전제) · managed 대 자체 운영 | 초안. **결론은 §6·§7이 아니라 §11에 걸린다** |
 
 `recsys_opensource/README.md` §9(우리가 계속 소유할 것)와 §10(도구별 운영 책임)이 도입 판단에서
 실제로 비교할 두 표다.
