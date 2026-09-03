@@ -14,6 +14,9 @@
 > ② 뒤집힌 결정은 설계 문서 **본문에서 삭제**하고 §2에 세 줄로 남긴다. 본문에 옛 결론을 남기지 않는다.
 > ③ 결정되지 않은 것은 결정된 것처럼 쓰지 않는다. 문서 간 충돌은 결정 부재의 신호이므로 §3에 모은다.
 > ④ 열린 항목은 각 문서가 갖되 **ID에 문서 접두사**를 붙인다(§5).
+> ⑤ **각 결정에 출처를 적는다** — `오너`(오너가 직접 말한 것) · `승계`(이전 문서가 이미 결정으로
+> 갖고 있던 것) · `분석`(이번 조사가 근거를 만들어 올린 것, **오너 확인 전**). 규칙 ③을 지키려면
+> 셋이 같은 무게로 보여서는 안 된다.
 >
 > **마지막 갱신**: 2026-09-03
 
@@ -23,49 +26,48 @@
 
 ### surface와 도메인
 
-| # | 결정 | 근거·상세 | 확정 |
-|---|---|---|---|
-| **D01** | **surface가 둘이다.** 쿼리가 있는 surface 1과 쿼리가 없는 surface 2는 다른 문제다 | `recsys_opensource/README.md` §1 | 2026-09-01 |
-| **D02** | **surface 2는 응답 형태가 다르다.** 기존 `/recommend`는 topic이 있는 경우로 한정한다 | D08 — surface 2에는 붙일 근거 topic이 없다 | 2026-09-03 |
-| **D03** | `UserId = requester_user_id`, `ItemId = personal_agent_id`(owner에서 결정론적 유도) | `recsys_opensource/README.md` §3 | 2026-09-01 |
-| **D04** | **visibility는 feature weight가 아니라 gate다.** 금지된 tier가 후보 생성이나 점수에 들어가면 순위 자체가 그 사실을 누설한다 | `recsys_opensource/README.md` §5 | 2026-09-01 |
-| **D05** | **self-exclusion은 우리 후처리로 한다.** 서버측 `exclude_user_ids` 요청은 철회했다 | `recommendation_pipeline_design.md` §1 | 2026-08-24 |
+| # | 결정 | 근거·상세 | 출처 | 확정 |
+|---|---|---|---|---|
+| **D01** | **surface가 둘이다.** 쿼리가 있는 surface 1과 쿼리가 없는 surface 2는 다른 문제다 | `recsys_opensource/README.md` §1 | 승계 | 2026-09-01 |
+| **D02** | **surface 2는 응답 형태가 다르다.** 기존 `/recommend`는 topic이 있는 경우로 한정한다 | D08 — surface 2에는 붙일 근거 topic이 없다 | 오너 | 2026-09-03 |
+| **D03** | `UserId = requester_user_id`, `ItemId = personal_agent_id`(owner에서 결정론적 유도) | `recsys_opensource/README.md` §3 | 승계 | 2026-09-01 |
+| **D04** | **visibility는 feature weight가 아니라 gate다.** 금지된 tier가 후보 생성이나 점수에 들어가면 순위 자체가 그 사실을 누설한다 | `recsys_opensource/README.md` §5 | 승계 | 2026-09-01 |
+| **D05** | **self-exclusion은 우리 후처리로 한다.** 서버측 `exclude_user_ids` 요청은 철회했다 | `recommendation_pipeline_design.md` §1 | 승계 | 2026-08-24 |
 
 ### 엔진
 
-| # | 결정 | 근거·상세 | 확정 |
-|---|---|---|---|
-| **D06** | **Gorse를 채택한다.** surface 2는 통째로, surface 1은 후보 생성기로 | `recsys_opensource/README.md` §2·§6 · `gorse.md` §11 실측 | 2026-09-03 |
-| **D07** | **surface 1에서도 Gorse가 후보 소스다.** topic-api의 보유자 랭킹(`/topics/{id}/users`)을 후보 생성에 쓰지 않는다 | `gorse.md` §11-2 경로 C. topic당 100명 컷·페이징 없음이라는 상한이 사라진다 | 2026-09-03 |
-| **D08** | **미보유자 필터는 필수다.** 쿼리 topic을 증명 가능하게 보유하지 않은 후보는 근거를 붙일 수 없으므로 **응답을 만들 수 없다.** 판정은 Gorse 점수가 아니라 우리 데이터로 한다 | `gorse.md` §11-3 | 2026-09-03 |
-| **D09** | Gorse에 보내는 것은 **프로젝션**이고 원본은 우리 이벤트 스트림이다. Gorse store는 파생물이며 재실행으로 재구축 가능해야 한다 | `gorse.md` §8-1 · `inbound_event_contract.md` §3-4 | 2026-09-01 |
+| # | 결정 | 근거·상세 | 출처 | 확정 |
+|---|---|---|---|---|
+| **D06** | **Gorse를 채택한다.** surface 2는 통째로, surface 1은 후보 생성기로 | `recsys_opensource/README.md` §2·§6 · `gorse.md` §11 실측 | 오너 | 2026-09-03 |
+| **D07** | **surface 1에서도 Gorse가 후보 소스다.** topic-api의 보유자 랭킹(`/topics/{id}/users`)을 후보 생성에 쓰지 않는다 | `gorse.md` §11-2 경로 C. topic당 100명 컷·페이징 없음이라는 상한이 사라진다 | 오너 | 2026-09-03 |
+| **D08** | **미보유자 필터는 필수다.** 쿼리 topic을 증명 가능하게 보유하지 않은 후보는 근거를 붙일 수 없으므로 **응답을 만들 수 없다.** 판정은 Gorse 점수가 아니라 우리 데이터로 한다 | `gorse.md` §11-3 | 오너 | 2026-09-03 |
+| **D09** | Gorse에 보내는 것은 **프로젝션**이고 원본은 우리 이벤트 스트림이다. Gorse store는 파생물이며 재실행으로 재구축 가능해야 한다 | `gorse.md` §8-1 · `inbound_event_contract.md` §3-4 | 승계 | 2026-09-01 |
 
 ### 저장
 
-| # | 결정 | 근거·상세 | 확정 |
-|---|---|---|---|
-| **D10** | **우리는 공개 보유의 복제본을 유지한다.** 델타가 아니라 전체 집합 + `revision` | `inbound_event_contract.md` §2-⓵ (발신 측 수용 가능 확인) | 2026-09-01 |
-| **D11** | **복제본이 주지 못하는 값이 다섯 개다** — `owner_notes` · `relation` · `descriptions` · `deep_holdings_observed` · `ranking_contribution`. 앞의 넷은 topic-api가 답하는 **matched 트리**에서 오고 복제본은 평평한 목록이다. **따라서 최종 N명에 대한 topic-api 조회는 최적화가 아니라 필수다** | `recommendation_pipeline_design.md` §S6-5. 이 조회는 `inbound_event_contract.md` §4의 서빙 시점 재확인과 **같은 호출**이고, 그래서 D21이 성립한다 | 2026-09-03 |
-| **D12** | **공개 프로젝션만 받는다.** `friends`·`private` 보유는 애초에 받지 않는다 — 가장 강한 보호는 받지 않는 것이다 | `inbound_event_contract.md` §2-⓶ | 2026-09-01 |
-| **D13** | **원천 관측값을 받고 파생은 우리 feature 함수가 한다.** 상류가 계산한 판단값을 받지 않는다 | `inbound_event_contract.md` §2-⓷ | 2026-09-01 |
-| **D14** | **과거 로그의 `topic_id`를 재작성하지 않는다.** topic 병합·분할은 매핑 테이블로 해석한다 | `inbound_event_contract.md` §6 EVT-E6 | 2026-09-01 |
+| # | 결정 | 근거·상세 | 출처 | 확정 |
+|---|---|---|---|---|
+| **D10** | **우리는 공개 보유의 복제본을 유지한다.** 델타가 아니라 전체 집합 + `revision` | `inbound_event_contract.md` §2-⓵ (발신 측 수용 가능 확인) | 승계 | 2026-09-01 |
+| **D11** | **복제본이 주지 못하는 값이 다섯 개다** — `owner_notes` · `relation` · `descriptions` · `deep_holdings_observed` · `ranking_contribution`. 앞의 넷은 topic-api가 답하는 **matched 트리**에서 오고 복제본은 평평한 목록이다. **따라서 최종 N명에 대한 topic-api 조회는 최적화가 아니라 필수다** | `recommendation_pipeline_design.md` §S6-5. 다섯 값이 사실이라는 것은 확인됐고 "그러므로 필수"는 이번 분석의 결론이다. **다만 다섯 값을 응답에서 빼기로 하더라도 호출은 남는다** — `inbound_event_contract.md` §4의 서빙 시점 재확인이 **같은 호출**이고 그쪽은 안전 요구다(D21) | **분석** | 2026-09-03 |
+| **D12** | **공개 프로젝션만 받는다.** `friends`·`private` 보유는 애초에 받지 않는다 — 가장 강한 보호는 받지 않는 것이다 | `inbound_event_contract.md` §2-⓶ | 승계 | 2026-09-01 |
+| **D13** | **원천 관측값을 받고 파생은 우리 feature 함수가 한다.** 상류가 계산한 판단값을 받지 않는다 | `inbound_event_contract.md` §2-⓷ | 승계 | 2026-09-01 |
+| **D14** | **과거 로그의 `topic_id`를 재작성하지 않는다.** topic 병합·분할은 매핑 테이블로 해석한다 | `inbound_event_contract.md` §6 EVT-E6 | 승계 | 2026-09-01 |
 
 ### 행동 데이터와 feedback
 
-| # | 결정 | 근거·상세 | 확정 |
-|---|---|---|---|
-| **D15** | **`decision_id`는 우리가 응답에 실어 보낸 값을 그대로 돌려받는 것**이다. 발신 측이 만드는 값이 아니다 | `inbound_event_contract.md` §3-4. **소급 불가** | 2026-09-01 |
-| **D16** | **`auto_insert_user`·`auto_insert_item`을 끈다.** 그리고 프로젝션을 forward-write가 아니라 **우리 store에 대한 재실행 가능한 pass**로 만든다 | `recsys_opensource/feedback_semantics.md` §7-3 | 2026-09-03 |
-| **D17** | **`negative`는 영구 제외**이므로 명시적 거부에만 쓴다. 퍼널 단계를 negative로 프로젝션하지 않는다 | `recsys_opensource/feedback_semantics.md` §2-5·§6-3 | 2026-09-03 |
-| **D18** | **추천으로 만나 써 본 상대도 다시 추천될 수 있어야 한다.** `enable_replacement = true`가 강제되고, 쿨다운·시간 감쇠는 Gorse가 주지 못하므로 우리 rerank가 소유한다 | `recsys_opensource/feedback_semantics.md` §2 | 2026-09-03 |
-| **D19** | **의미가 정해지지 않은 이벤트는 Gorse에 보내지 않는다.** 버킷 미지정은 중립이 아니라 조용한 제외다. 원본은 우리 스트림에 있으므로 늦게 프로젝션하는 비용이 없다 | `recsys_opensource/feedback_semantics.md` §6-1 | 2026-09-03 |
+| # | 결정 | 근거·상세 | 출처 | 확정 |
+|---|---|---|---|---|
+| **D15** | **`decision_id`는 우리가 응답에 실어 보낸 값을 그대로 돌려받는 것**이다. 발신 측이 만드는 값이 아니다 | `inbound_event_contract.md` §3-4. **소급 불가** | 승계 | 2026-09-01 |
+| **D16** | **`auto_insert_user`·`auto_insert_item`을 끈다.** 그리고 프로젝션을 forward-write가 아니라 **우리 store에 대한 재실행 가능한 pass**로 만든다 | `recsys_opensource/feedback_semantics.md` §7-3 | **분석** | 2026-09-03 |
+| **D18** | **추천으로 만나 써 본 상대도 다시 추천될 수 있어야 한다.** `enable_replacement = true`가 강제되고, 쿨다운·시간 감쇠는 Gorse가 주지 못하므로 우리 rerank가 소유한다 | `recsys_opensource/feedback_semantics.md` §2 | 오너 | 2026-09-03 |
+| **D19** | **의미가 정해지지 않은 이벤트는 Gorse에 보내지 않는다.** 버킷 미지정은 중립이 아니라 조용한 제외다. 원본은 우리 스트림에 있으므로 늦게 프로젝션하는 비용이 없다 | `recsys_opensource/feedback_semantics.md` §6-1 | **분석** | 2026-09-03 |
 
 ### 실패 규율
 
-| # | 결정 | 근거·상세 | 확정 |
-|---|---|---|---|
-| **D20** | **저하는 허용하되 침묵하지 않는다. 거짓말은 금지한다.** 답을 만들 수 없으면 503, 덜 좋은 답이면 200 + 저하 선언, **"없다"는 실제로 보았을 때만** 한다 | 아래 표 | 2026-09-03 |
-| **D21** | **차단·삭제·철회 재확인만은 fail-closed다.** 재확인하지 못한 후보는 답에서 **뺀다**. 전부 빠지면 200 + `verification_unavailable`이며, 이것을 `no_public_holders`로 부르지 않는다 | `inbound_event_contract.md` §4 상단 등급 | 2026-09-03 |
+| # | 결정 | 근거·상세 | 출처 | 확정 |
+|---|---|---|---|---|
+| **D20** | **저하는 허용하되 침묵하지 않는다. 거짓말은 금지한다.** 답을 만들 수 없으면 503, 덜 좋은 답이면 200 + 저하 선언, **"없다"는 실제로 보았을 때만** 한다 | 아래 표 | **분석**(위임) | 2026-09-03 |
+| **D21** | **차단·삭제·철회 재확인만은 fail-closed다.** 재확인하지 못한 후보는 답에서 **뺀다**. 전부 빠지면 200 + `verification_unavailable`이며, 이것을 `no_public_holders`로 부르지 않는다 | `inbound_event_contract.md` §4 상단 등급 | **분석**(위임) | 2026-09-03 |
 
 의존별 동작:
 
@@ -116,6 +118,7 @@
 | `relation` enum **3값** (`exact`/`descendant`/`ancestor`) | **2값** | `ancestor`는 이 endpoint에서 생성될 수 없다. rev 5.9 | `recommendation_pipeline_design.md` 변경 이력 L827 |
 | surface별 **고정 가중치** | **surface를 입력으로 받는 LR → GBDT ranker** | 코드 분기가 아니라 함수 입력. scoring rev 3 | `README.md` L42–45 · `HOW_TO_READ.md` L23 |
 | S3 부분 실패·불완전성 플래그 → **503** | **저하 선언 후 계속** (D20) | 그 규칙은 *남의 랭킹을 소비할 때*의 것이었고, D07이 랭킹 소비를 없앴다. 2026-09-03 | `recommendation_pipeline_design.md` §4 · §S3 · `recommendation_scoring_design.md` §10-7 · `gorse.md` §8-3 |
+| **`D17`** — `negative`는 명시적 거부에만 | **결정이 아니었다 → `C10` 열린 항목** | 오너가 *"앞으로 정해야할 부분"*이라고 열어 둔 것을 결정으로 올렸다(규칙 ③ 위반). 번호는 회수하지 않는다. 2026-09-03 | `decisions.md` §1 · `gorse.md` §7-5 |
 | `degraded`를 wire에 실을지 | **필드 삭제 — 도달 불가** → **D20이 다시 도달 가능하게 만듦. 되살린다** | rev 5.5가 지운 이유가 "전부 503이라 발생할 수 없는 값"이었고 그 전제가 사라졌다. 2026-09-03 | `recommendation_pipeline_design.md` §9 ⑧ (열린 결정으로 남아 있음 — **D20·D21이 닫는다**) |
 
 ---
@@ -181,7 +184,7 @@ D07 이후 이 지연은 "순위 품질"이 아니라 **"가시성"** 문제가 
 
 ### C8 — owner 쪽 행동 이벤트가 없다 `열린 항목`
 
-퍼널 전체가 requester 키다. 추천받은 쪽의 거절·무응답을 나르는 이벤트가 없어 D17의 `negative`에 넣을
+퍼널 전체가 requester 키다. 추천받은 쪽의 거절·무응답을 나르는 이벤트가 없어 `C10`의 `negative`에 넣을
 후보가 사실상 비어 있다. **버킷 배정은 나중에 바꿔도 소급되지만 이벤트 자체는 소급이 안 된다** —
 D15와 같은 성질이다.
 
@@ -190,6 +193,21 @@ D15와 같은 성질이다.
 목표 p50/p95/p99가 코드·설정·문서 어디에도 없다. `RECOMMEND_DEADLINE_SECONDS = 20.0` 하나뿐이고
 스스로 "provisional"이라고 적혀 있다. D11이 최종 N명 조회를 필수로 만들었으므로 예산이 없으면 그
 왕복 수를 판단할 근거가 없다.
+
+### C10 — `negative`에 무엇을 넣는가 `열린 항목`
+
+**2026-09-03 D17을 내렸다.** 규칙 ③ 위반이었다 — 오너가 *"싫어요에 해당하는 데이터 이벤트는
+고민을 해봐야해. 아직 모든 feedback을 확정한게 아니니 앞으로 정해야할 부분"*이라고 **열어 둔 것**을
+결정으로 올려 두었다. `feedback_semantics.md` `FBK-F2`도 같은 것을 열어 두고 있었으므로 두 문서가
+어긋나 있었다.
+
+**정해진 것은 기전뿐이다**(결정이 아니라 사실): `negative`는 `enable_replacement`와 무관하게
+**영구 제외**다(`feedback_semantics.md` §2-5, v0.5.11 소스 확인). 그래서 이 항목은 되돌릴 수 없는
+성질을 가지며, **정할 때까지 아무것도 negative로 보내지 않는다**(`D19`가 이미 그렇게 시킨다).
+
+`판단` 지금 후보로 보이는 것들 중 `requery.other_agent`처럼 **가장 negative처럼 보이는 항목이
+가장 넣으면 안 되는 항목**이다. C8(owner 쪽 행동 이벤트 없음)이 닫히기 전에는 명시적 거부 신호
+자체가 사실상 없다.
 
 ---
 

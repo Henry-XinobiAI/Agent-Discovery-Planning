@@ -458,7 +458,7 @@ auto_insert_item = false
 [recommend.data_source]
 positive_feedback_types = ["conversation_started", "depth_reached>=N"]
 read_feedback_types     = ["exposed"]
-negative_feedback_types = []      # D17 — 영구 제외이므로 명시적 거부에만
+negative_feedback_types = []      # C10 미결 — 영구 제외라 정할 때까지 비운다
 
 [recommend.replacement]
 enable_replacement = true         # D18 — 제품 요구가 강제한다
@@ -476,7 +476,7 @@ type = "fm"                       # replacement가 이것을 요구한다
 
 **값은 우리 결정이 아니지만 모양은 결정이다**(rev 2). `conversation_started`가 항상 positive인지,
 `resolved`를 누가 생산하는지, `N`이 얼마인지는 측정 대상이다. 반면 위 네 블록의 **존재**는
-`D16`·`D17`·`D18`과 `D07`이 정했다 — rev 1의 예시는 `[[recommend.user-to-user]] type="tags"`를
+`D16`·`D18`과 `D07`이 정했다(negative는 `C10`으로 미결) — rev 1의 예시는 `[[recommend.user-to-user]] type="tags"`를
 보여줬는데 실제로 동작하는 경로는 `item-to-item`이고, `[recommend.replacement]`가 아예 없었으며,
 `negative_feedback_types = ["not_interested"]`는 그 쌍을 영구히 죽이는 값이었다.
 
