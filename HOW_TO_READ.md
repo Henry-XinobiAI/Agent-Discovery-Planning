@@ -16,6 +16,7 @@
 ## A. 전체 그림
 
 ```text
+0. decisions.md                       ★ 지금 유효한 결정 전부. 다른 문서와 어긋나면 이쪽이 맞다
 1. README.md                          프레이밍 4차 · 문서 지도 · §4 제품 불변식
 2. recommendation_pipeline_design.md  ★ 설계 정본 — 지금 실제로 도는 것
                                         §0 요약 → S1–S6 → §9 열린 결정
@@ -132,7 +133,8 @@ facets_ownership_split_discussion.md  값의 소유            ← 같은 경계
 
 | 지위 | 뜻 |
 |---|---|
-| **설계 정본** | 지금 가동 중인 것을 서술. 다른 문서와 어긋나면 이쪽이 맞다 |
+| **결정 대장** | `decisions.md` 하나뿐. **결정에 관해서는 어떤 문서보다 우선한다** |
+| **설계 정본** | 지금 가동 중인 것을 서술. 설계에 관해 다른 문서와 어긋나면 이쪽이 맞다 |
 | **설계 제안** | 가려는 곳. 코드가 이것을 근거로 바뀌지 않았다 |
 | **논의 기록** | 결정이 아니다. `사실` 절만 판단 변경에도 살아남는다 |
 | **조사 자료** | 도구의 계약·비용·반례. 채택·기각은 설계 문서가 소유 |
@@ -152,8 +154,10 @@ facets_ownership_split_discussion.md  값의 소유            ← 같은 경계
 
 | 어디 | 무엇 |
 |---|---|
-| `recommendation_scoring_design.md` §11–§12 | N1–N5(지금 만들 것) · D1–D6(나중에 정할 것) · Q1–Q10 |
+| **`decisions.md` §3** | **결정이 없어서 문서가 갈라진 자리 C1–C9.** 여기부터 본다 — 충돌은 결정 부재의 신호다 |
+| **`decisions.md` §5** | 열린 항목 레지스터가 어느 문서에 있는지의 지도 + ID 접두사 규약 |
+| `recommendation_scoring_design.md` §11–§12 | N1–N5(지금 만들 것) · D1–D8(나중에 정할 것) · Q1–Q14 |
 | `inbound_event_contract.md` §6 | E1–E6 협의 상태. **E1이 임계경로** |
-| `recsys_opensource/README.md` §13 | R1–R7. **R1이 Gorse 채택의 전제** |
+| `recsys_opensource/README.md` §13 | R1–R7. **R1은 여전히 표면 2의 전제**(friends까지 근거로 삼으면 전역 label이 성립하지 않는다). **R4는 배포 전 게이트로 승격**(`decisions.md` §4) |
 | `recsys_adoption_discussion.md` §9 | 논의에서 남은 항목 |
 | 코드 repo `tasks/todo.md` | 구현 plan의 단일 소스 (이 repo에 병렬 plan을 두지 않는다) |

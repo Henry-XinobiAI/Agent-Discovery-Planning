@@ -14,9 +14,15 @@
 
 | 문서 | 레이어 | 다루는 것 | 핵심 단위 |
 |---|---|---|---|
+| **[`decisions.md`](decisions.md)** | **결정 대장** | **현재 유효한 결정 전부(D01–D19) · 뒤집힌 결정 · 결정이 없어서 문서가 갈라진 자리 · 열린 항목 레지스터 지도.** 설계 문서와 어긋나면 이쪽이 맞다 | 결정 |
 | **`topic_api_analysis.md`** | **분석 + 방향 결정 기록 (rev 8, 2026-08-25 — topic-api HEAD `9ee67f3`, 상류 이동 감사법은 부록 B-4)** | `bourbon-topic-api` 전수 분석(검색 메커니즘·카탈로그 실측·성능/비용·프라이버시 모델) + **축 이전 결정** + rev 14 폐기/승계 목록 + 열린 질문. **재설계의 입력이며 설계 문서가 아니다** | 사실/결정/열린 질문 |
 | **`recommendation_pipeline_design.md`** | **설계 정본 rev 5.12 (2026-08-27, 외부 리뷰 5회 반영 + 응답 wire 확장: 4값 + `owner_notes`)** | topic-api 소비 기반 추천 파이프라인 S1–S6: 단계별 동작·topic-api endpoint·산출물·실패 3분기. `persona_topic_search_design.md`를 대체(2026-08-24 archive) — 열린 결정은 §9 | 파이프라인 단계 산출물 |
 | **`serving_surface_design.md`** | **설계 rev 3.3 (2026-08-24, §7 열린 결정 전부 해소)** | 노출 표면: internal-only(`/api/internal/svc/agent-discovery/` 단독) + edge-auth 관례 채택 + topic-api 레퍼런스 이디엄 차용. **신규 repo = `bourbon-agent-discovery-api`** (project-template-python scaffold, 기존 repo는 전환 후 archive). x-user-id 금지·신원=body·label 유지·surface boundary 테스트. **표면 정비는 코드 repo에 반영 완료**(`4176b0a`·`05ec707`·`d861b5f`) — §7 열린 결정 전부 해소 — dispatch 등록 PR도 준비(bourbon-api `0eb55b6`)·순서 제약 없음 | 표면 계약 / template 델타 |
+
+> **결정의 소유**: 어떤 설계 문서도 결정을 소유하지 않는다. [`decisions.md`](decisions.md)가 소유하고,
+> 설계 문서는 `Dnn`을 인용한다. 이 규약은 2026-09-03 전수 감사 뒤에 생겼다 — 같은 사안(가장 크게는
+> Gorse 채택)이 문서마다 다르게 결정되어 있었고, 원인은 "어느 문서가 그 결정을 소유하는가"가
+> 문서마다 달랐던 것이다.
 
 > **문서 참조 규약**: **살아 있는 문서를 가리킬 때는 rev를 적지 않는다.** 버전은 파일 자신의 첫 줄에
 > 있으므로 참조에 적어도 정보가 늘지 않고, 한쪽이 올라갈 때마다 나머지가 stale해지는 연쇄만 생긴다
