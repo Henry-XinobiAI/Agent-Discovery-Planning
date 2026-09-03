@@ -21,7 +21,7 @@
 2. recommendation_pipeline_design.md  ★ 설계 정본 — 지금 실제로 도는 것
                                         §0 요약 → S1–S6 → §9 열린 결정
 3. serving_surface_design.md          노출 표면 · 위협 모델
-4. recommendation_scoring_design.md   ★ 가려는 곳 — 신호 4종 · 표면별 가중치
+4. recommendation_scoring_design.md   ★ 가려는 곳 — 신호 4종을 하나의 랭커에 (surface = 입력)
                                         §1 한 문장 → §2 다섯 단계 → §11 지금/나중
 ```
 

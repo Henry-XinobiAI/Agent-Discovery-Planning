@@ -367,6 +367,11 @@ rerank (우리):  coverage + depth + focus + 언어 + 활동성 + 권한        
 
 ## §5-5 `판단` 이 구조가 요구하는 이벤트 계약
 
+> ⚠ **이 절의 `E1`–`E6`은 이 논의 시점의 스냅샷이고 현재 계약이 아니다**(2026-09-03 표시).
+> 살아 있는 레지스터는 [`inbound_event_contract.md` §6](inbound_event_contract.md)의 **`EVT-E1`–`EVT-E6`**이고
+> 내용이 다르다 — 여기 `E1`은 `request_id`, 그쪽 `EVT-E1`은 `decision_id`다.
+> 결정은 [`decisions.md`](decisions.md)가 소유한다.
+
 §5-3의 형태로 간다고 할 때 **받아야 할 이벤트와 그 페이로드**. 아직 어느 팀과도 협의하지 않았다.
 
 ### 원칙 넷

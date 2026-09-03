@@ -278,6 +278,10 @@ GSI SK에 score가 없으면 R1이 성립하지 않고, 그러면 §4의 ⓐ밖�
 
 ### 7-2 협의가 필요한 항목
 
+> ⚠ **여기의 `F1`–`F5`는 이 논의의 항목이고,
+> [`recsys_opensource/feedback_semantics.md` §8](recsys_opensource/feedback_semantics.md)의
+> `FBK-F1`–`FBK-F10`과 무관하다**(2026-09-03 표시). 이 문서의 항목을 가리킬 때는 `FACET-`을 붙인다.
+
 | # | 항목 | 상대 |
 |---|---|---|
 | F1 | `score_detail`만 옮기나, **`score`까지** 옮기나 (§5-1) | topic-api · producer |
