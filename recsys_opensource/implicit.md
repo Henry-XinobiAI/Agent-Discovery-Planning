@@ -623,7 +623,16 @@ factor matrix는 각 API worker가 하나씩 읽으면 worker 수만큼 메모�
 - **item-item BM25/TF-IDF**: “함께 사용된 agent” baseline으로 설명하기 쉽지만 cold requester fallback이
   필요하다.
 
-밀도 gate를 통과한 뒤의 첫 PoC는 ALS와 item-item 하나면 충분하다.
+> ⚠ `실측` **item-item BM25를 topic 질의에 쓰면 안 된다**(2026-09-03 추가 — 근거는
+> [`README.md` §7-1](README.md)). 실제로 돌려 보니 `drip` 질의에서 6주제 보유 generalist가 .82로
+> 1등이고 **drip 전담이 .20으로 꼴찌**였다. `generalist`는 누구와도 비슷하므로 항상 이긴다 —
+> **교과서적 인기도 편향**이다.
+>
+> ★ **`implicit`의 BM25는 *CF 가중치*이지 정보검색의 BM25가 아니다.** 이름이 같아서 "질의-문서
+> 매칭"으로 읽히지만 계산하는 것이 다르다. 이 문서는 §1–§7이 전부 `문서` 조사라 이 사실이 여기
+> 본문에 없었고, 요약 문서에만 있었다.
+
+밀도 gate를 통과한 뒤의 첫 PoC는 **ALS 하나**로 한다. item-item은 위 이유로 뺀다.
 
 ## 8. PoC와 판정
 
