@@ -1,14 +1,17 @@
 # Gorse 활용 검토
 
-> **결론**: Gorse는 추천 운영 서비스를 가장 빨리 얻는 선택이다. public-only 개인화 baseline에는 잘
-> 맞지만 requester-dependent friends/private gate, surface-aware ranker, propensity 노출 로그를 그대로 맡길 수는
-> 없다. 포크보다 후보·행동 신호 공급자로 제한하는 하이브리드를 먼저 검증한다.
+> **결론**: **채택했다**(`decisions.md` `D06`). 표면 2는 Gorse가 하는 일 그 자체이므로 통째로 쓰고,
+> 표면 1에서는 **후보 생성기**로 쓴다(`D07`) — 더미 topic item의 이웃을 라벨별로 물어 가중합하는
+> 경로가 실제로 동작한다(§11-2). requester-dependent friends/private gate, surface-aware ranker,
+> propensity 노출 로그는 **계속 우리 것**이고, 그 경계가
+> [`README.md` §9](README.md)의 "도구와 무관하게 우리가 계속 소유할 것" 표다.
 >
-> **역할**: 이 문서는 [`recommendation_scoring_design.md` §9-2](../recommendation_scoring_design.md)의
-> Gorse 판정 근거다. 제품 요구사항이나 도입 결정을 여기서 새로 만들지 않는다.
+> **역할**: 조사 자료. 결정은 [`decisions.md`](../decisions.md)가 소유한다.
 >
-> **§1–§10은 `문서` 근거, §11은 `실측`이다.** §11이 앞 절의 서술 다섯 개를 뒤집거나 넓히므로,
-> §6-1·§6-2·§9를 읽을 때 §11을 같이 본다.
+> **§1–§10은 `문서` 근거, §11은 `실측`이다.** rev 2(2026-09-03)에서 **§11이 뒤집은 자리는 앞 절
+> 본문을 고쳐 썼다** — 이전 판은 경고만 달고 옛 서술을 남겨 두었고, 그 방식이 §6-1에서 실제로
+> 오독을 만들었다(`decisions.md` 규칙 ②). §11-1의 M 표는 "문서에 없는 동작은 실행이 답한다"는
+> 교훈으로 남긴다.
 
 ## 1. 성격과 실행 구조
 
@@ -98,9 +101,12 @@ A의 Gorse User labels가 영화·위스키라고 해도 이번 `topic=coffee` �
   context = 집에서 드립 커피를 시작하고 싶다
 ```
 
-Gorse의 표준 recommendation endpoint는 이 자연어 query를 직접 받지 않는다. 따라서 discovery가 커피
-후보를 만들고 Gorse의 장기 개인화 결과와 교차하거나, 안정적인 category가 있으면 `category=coffee`를
-사용한다. 어느 경우에도 요청 한 건을 다음 update로 바꾸지 않는다.
+Gorse의 표준 recommendation endpoint는 이 자연어 query를 직접 받지 않는다. **그러나 질의를 받을 수
+있는 경로가 따로 있다** — 확정 topic을 더미 item으로 두고 그 이웃을 라벨별로 물어 가중합하면
+topic별 후보 검색이 된다(§11-2 경로 C, `D07`). `?category=`는 후보 집합은 정확히 좁히지만 **순서가
+인기도**라 쓰지 않는다(§11-2 경로 A).
+
+어느 경우에도 요청 한 건을 다음 update로 바꾸지 않는다.
 
 ```json
 {
@@ -142,10 +148,13 @@ GET /api/recommend/user-a?n=3
 일부 세부 API는 `[{"Id": ..., "Score": ...}]`도 반환한다. 최종 agent 카드는 우리 서비스가 hydrate하고
 discovery 근거를 결합한다. [REST API](https://gorse.io/docs/api/restful-api)
 
-표준 사용자 추천 요청은 `user-id`, `n`, `offset`, `category` 정도를 받고 우리의 `topic`·자연어 `context`를
-받지 않는다. 따라서 Gorse의 기본 함수는 “이 사용자가 평소 좋아할 agent”이고, 현재 discovery의 함수는
-“이 사용자의 이번 topic/context에 맞는 agent”다. Gorse를 직접 대체재로 놓지 않고 discovery가 만든
-request candidate를 보강하거나, 홈/탐색 surface의 일반 개인화에 쓰는 이유다.
+표준 사용자 추천 요청(`GET /api/recommend/{user-id}`)은 `user-id`·`n`·`offset`·`category`를 받고
+자연어 `context`를 받지 않는다. 그 함수는 "이 사용자가 평소 좋아할 agent"이고, **표면 2가 정확히 그
+질문**이므로 여기서는 통째로 쓴다(`D06`).
+
+표면 1의 질문("이번 topic/context에 맞는 agent")은 이 endpoint가 아니라 **item-to-item 이웃 질의**로
+답한다(§11-2 경로 C). 두 표면이 Gorse의 서로 다른 경로를 쓰고, **표면 1의 경로는 feedback을 읽지
+않는다**([`feedback_semantics.md` §1-3](feedback_semantics.md)).
 
 ## 4. user-to-user와 역할 분리
 
@@ -191,24 +200,20 @@ public 후보와의 merge, attribution은 우리 책임이다.
 
 ### 6-1 제외와 후보 pool 지원 범위
 
-Gorse는 몇 가지 필터를 자체 지원하지만, 표준 추천 API가 임의의 requester별 candidate ID 집합을 받아 그
-안에서만 점수화하는 형태는 아니다.
+표준 추천 API는 임의의 requester별 candidate ID 집합을 받아 그 안에서만 점수화하지 않는다. 그러나
+**topic별 후보 검색은 다른 경로로 된다**(§11-2 경로 C).
 
-| 요구 | Gorse 기본 지원 | 범위 |
+| 요구 | 실제 동작 | 우리 쪽 결론 |
 |---|---|---|
-| 모든 사용자에게서 item 제거 | `IsHidden=true` | 전역 제외. 삭제·판매 중단·법적 차단에 적합 |
-| category 안에서 추천 | `GET /api/recommend/{user-id}?category=...` | item의 `Categories`를 이용한 coarse filter |
-| 이미 읽은 item 제외 | read feedback와 관련 설정 | Gorse가 알고 있는 read 이력 기준 |
-| 추천 결과를 read로 기록 | `write-back-type`, `write-back-delay` | 편의 기능. 실제 노출과 다를 수 있음 |
-| 요청별 arbitrary allowlist | 표준 endpoint에 없음 | 외부에서 교집합하거나 별도 integration 필요 |
-| 요청별 arbitrary denylist | 표준 endpoint에 없음 | 외부에서 제거해야 함 |
+| 모든 사용자에게서 item 제거 | `IsHidden=true` | 전역 제외에 쓴다. **단 이웃 질의 경로에서는 숨긴 item의 이웃도 계산·서빙된다**(§11-1 M1) — 질의용 더미 item을 숨겨 두는 데 쓸 수 있다는 뜻이고, **가림막으로 믿으면 안 된다는 뜻이기도 하다** |
+| topic별 후보 검색 | **더미 topic item + 라벨별 이웃 질의 + 가중합** | `D07`의 경로. `?category=`는 후보를 정확히 좁히지만 **순서가 인기도**라 쓰지 않는다(§11-2 A) |
+| 이미 본 사람 제외 | **feedback row가 하나라도 있으면 타입 불문 영구 제외** | 우리 요구와 **정면 충돌**한다. `enable_replacement`가 유일한 레버이고 쿨다운은 우리 것이다([`feedback_semantics.md` §2](feedback_semantics.md) · `D18`) |
+| 추천 결과를 read로 기록 | `write-back-type` — **반환한 모든 item에 row를 쓴다** | **쓰지 않는다.** 실제 렌더와 다를 수 있는 데다 위 행 때문에 부작용이 크다(`feedback_semantics.md` §2-6) |
+| 요청별 arbitrary allowlist·denylist | 표준 endpoint에 없음 | 우리 gate가 소유한다 |
 
-> ⚠ **§11-1 M1·M2가 이 표의 다섯째 행을 넓힌다.** 표준 endpoint에 인자가 없는 것은 맞지만,
-> **더미 topic item의 이웃을 묻는 경로로 topic별 후보 검색이 된다**(숨긴 item도 동작). 다만
-> **질의와 태그 집합이 같은 후보가 제외되는 미문서화 동작**이 있어 질의를 라벨 단위로 쪼개야 한다.
-
-[공식 data model](https://gorse.io/docs/concepts/data-source)에 따르면 `IsHidden=true`는 즉시 추천에서
-제외되고, 다시 `false`로 돌린 item은 refresh 주기를 거쳐 복귀한다.
+[공식 data model](https://gorse.io/docs/concepts/data-source)은 `IsHidden=true`가 즉시 추천에서
+제외되고 `false`로 되돌린 item은 refresh 주기를 거쳐 복귀한다고 적는다. **이웃 질의 경로는 예외라는
+것이 §11-1 M1이다.**
 
 ```json
 {
@@ -224,48 +229,35 @@ requester마다 달라지는 차단이나 `friends` 권한에 `IsHidden`을 쓰�
 분류에는 쓸 수 있지만 `friends-of-alice` 같은 동적 권한 집합을 category로 만들면 관계 수만큼 category와
 cache invalidation이 생긴다.
 
-#### 우리 요청에서의 권장 흐름
+#### 우리 요청에서의 흐름 (rev 2 — `D07`)
 
 ```text
-Gorse recommendation IDs (coarse category, 충분히 overfetch)
-            ∩
-topic grounding이 만든 후보
-            ∩
+확정 topic (grounding)
+   ↓
+라벨별 개별 질의 + 가중합        Gorse item-to-item, tags       ← 후보를 만드는 곳
+   ↓
+미보유자 필터                    우리 복제본으로 판정 (D08·D10)
+   ↓
 requester-aware visibility/safety/self gate
-            ↓
-허용된 결과만 현재 ordering에 사용
+   ↓
+정렬
+   ↓
+최종 N명 hydrate + 재확인        topic-api /users/{id}/topics (D11·D21)
 ```
 
-```python
-gorse_ids = await gorse.recommend(
-    requester_user_id,
-    category="personal-agent",
-    limit=overfetch_limit,
-)
-eligible_ids = {
-    candidate.personal_agent_id
-    for candidate in discovery_candidates
-    if candidate.is_visible_to(requester_user_id)
-}
-usable_ids = [agent_id for agent_id in gorse_ids if agent_id in eligible_ids]
-```
+★ **rev 1의 흐름은 `Gorse ∩ topic grounding 후보`였고 삭제했다.** 교집합은 topic-api가 이미 준
+사람만 남기므로 그들 랭킹의 상위 100명 컷을 그대로 물려받는다 — 그러면 Gorse를 쓰는 이유가
+없어진다. 뒤집힌 경위는 [`decisions.md` §2](../decisions.md).
 
-이 방식은 결과 노출을 fail-closed로 막지만 단점이 있다. Gorse 상위 N이 모두 gate에서 떨어지면 뒤에 있던
-허용 후보를 알 수 없고, overfetch를 늘려도 충분한 결과를 보장하지 못한다. 즉 Gorse는 이 구성에서 exact
-candidate-pool reranker라기보다 **general recommendation source**다.
-
-Gorse의 external recommender로 우리 endpoint에서 candidate ID를 공급할 수는 있다. 그러나 이것은 표준
-recommend 호출에 매 요청 allowlist를 직접 넘기는 것과 같지 않다. 동기 HTTP 의존성과 script 계약이
-생기므로 별도 PoC에서 latency·실패·권한 freshness를 검증한다.
+**Gorse의 external recommender**로 우리 endpoint에서 candidate ID를 공급하는 길도 있지만 채택하지
+않았다. 동기 HTTP 의존성과 script 계약이 생기고, `D07`의 경로가 그것 없이 성립한다.
 
 #### 결론
 
-- 전역 삭제/차단은 `IsHidden`으로 Gorse에도 동기화한다.
-- 안정적인 coarse 분류는 category filter를 사용할 수 있다.
-- read 제외는 제품의 “이미 봄” 정의와 Gorse feedback 정의가 같을 때만 사용한다.
-- requester별 visibility, block list, 현재 topic 후보 pool은 우리 gate가 소유한다.
-- exact allowlist 안에서만 모델 점수를 얻는 것이 핵심 요구라면 Gorse 표준 API보다 `implicit.items`나
-  Cornac `rank(item_indices=...)`가 직접적이다.
+- 전역 삭제/차단은 `IsHidden`으로 동기화하되 **이웃 질의 경로에서는 가림막이 아니다**(M1).
+- **requester별 visibility, block list, 재추천 정책, 최종 자격 판정은 우리 gate가 소유한다.**
+- 후보 pool은 Gorse가 만들고 **증명은 우리 복제본이 한다**(`D08`) — 근거 topic을 붙일 수 없는
+  후보는 응답 자체를 만들 수 없기 때문이다(§11-3).
 
 ### 6-2 확장성: 전체 사용자 pool 1억
 
@@ -283,7 +275,7 @@ offline recommendation을 만들어 cache database에 저장한다.
 100,000,000 users × cached top 100 = 10,000,000,000 recommendation entries
 ```
 
-entry당 ID와 score를 16 bytes로만 가정해도 160 GB의 payload 하한이다. 실제 DB row/key/index/replication
+entry당 ID와 score를 16 bytes로 가정하면 160 GB의 payload 하한이다. **그 가정은 정수 ID의 것이고 우리 `ItemId`는 UUID라 실제로는 560 GB, 복제본까지 1.1 TB다** — 계산과 backend별 비용은 [`storage_sizing.md` §2](storage_sizing.md)가 소유한다. 실제 DB row/key/index/replication
 overhead와 fallback·neighbor·ranker cache는 포함하지 않은 값이다. cache K가 500이면 entry 수는 500억으로
 늘어난다.
 
@@ -362,12 +354,15 @@ model shard key로 자동 승격하지 않는다.
 5. 독립 cluster가 필요해질 경우 cross-cluster recommendation이 없다는 제품 경계가 먼저 존재한다.
 
 Gorse의 장점은 이 규모에서 우리가 직접 scheduler/cache/API를 만들 필요를 줄일 가능성이다. 반대로 exact
-request pool을 직접 받지 않으므로 cache된 상위 결과와 현재 gate의 교집합에서 recall이 얼마나 떨어지는지도
+request pool을 직접 받지 않으므로 cache된 상위 결과와 현재 gate를 함께 걸었을 때 recall이 얼마나 떨어지는지도
 함께 측정해야 한다. 운영 확장성만 좋고 허용 후보를 충분히 반환하지 못하면 현재 제품에는 맞지 않는다.
 
 ## 7. 최소 실행 예제
 
 아래는 API 모양을 보여주는 예시다. 실제 endpoint port와 API key는 배포 설정을 따른다.
+
+> ⚠ **`--playground`로 띄우면 재시작마다 설정 파일이 재생성되고 데이터가 재임포트된다**(§11-1 M5).
+> 설정을 바꾸려면 playground 없이 띄우고 config를 주입해야 한다.
 
 ### 7-1 requester 등록
 
@@ -434,43 +429,56 @@ curl 'http://gorse-server:8087/api/recommend/user-a?n=20' \
   -H 'X-API-Key: ***'
 ```
 
-```python
-gorse_ids = await gorse.recommend(requester_user_id, limit=20)
-topic_candidates = await discovery.ground_and_retrieve(topic, context)
+위는 **표면 2**의 호출이다. 표면 1은 §11-2 경로 C(라벨별 이웃 질의)를 쓴다.
 
-eligible = gate(
-    union(gorse_ids, topic_candidates),
-    requester=requester_user_id,
-    friendships=friendships,
-)
-ordered = score(eligible, surface="topic_search")
-return assemble(ordered[:max_results])
+```python
+# 표면 1
+topics = await ground(topic, context)                    # topic-api /search/topics
+candidates = await gorse.neighbors_weighted(topics)      # 라벨별 질의 + 가중합
+held = filter_by_mirror(candidates, topics)              # 미보유자 제거 (D08·D10)
+eligible = gate(held, requester=requester_user_id)
+ordered = rank(eligible)                                 # 자르지 않는다
+return await hydrate_and_verify(ordered, max_results)    # D11·D21 — 여기서 자른다
 ```
 
-Gorse가 반환한 ID가 삭제·숨김·권한 변경으로 stale할 수 있으므로 hydrate 실패를 upstream 계약 위반으로
-오귀속하지 않고 stale candidate로 계측해 제거한다.
+`hydrate_and_verify`가 `D11`(복제본이 못 주는 다섯 값)과 `D21`(차단·삭제·철회 재확인)을 **한 번의
+왕복으로** 처리한다. 읽지 못한 후보는 stale로 계측해 제거하고 뒤에서 채운다 — upstream 계약 위반으로
+오귀속하지 않는다. **rev 1의 `union(gorse_ids, topic_candidates)`는 삭제했다**(`D07` — 합집합이 아니라
+표면마다 단일 소스다).
 
 ### 7-5 설정의 의미
 
 실제 설정은 현재 버전 template에서 시작한다. 개념적으로는 다음을 결정한다.
 
 ```toml
-[recommend.data_source]
-positive_feedback_types = ["conversation_started", "resolved"]
-read_feedback_types = ["exposed"]
-negative_feedback_types = ["not_interested"]
+[server]
+auto_insert_user = false          # D16 — 켜 두면 우리 카탈로그 경계를 Gorse가 넘는다
+auto_insert_item = false
 
-[[recommend.user-to-user]]
-name = "shared_public_topics"
-type = "tags"
-column = "user.Labels.public_topics"
+[recommend.data_source]
+positive_feedback_types = ["conversation_started", "depth_reached>=N"]
+read_feedback_types     = ["exposed"]
+negative_feedback_types = []      # D17 — 영구 제외이므로 명시적 거부에만
+
+[recommend.replacement]
+enable_replacement = true         # D18 — 제품 요구가 강제한다
+positive_replacement_decay = 0.8
+read_replacement_decay     = 0.6
+
+[[recommend.item-to-item]]        # 표면 1의 경로 (§11-2 C)
+name   = "topic_neighbors"
+type   = "tags"
+column = "item.Labels.topics"
 
 [recommend.ranker]
-type = "fm"
+type = "fm"                       # replacement가 이것을 요구한다
 ```
 
-이 예시는 우리 결정값이 아니다. `conversation_started`가 항상 positive인지, `resolved`를 누가 생산하는지,
-read가 노출과 같은지부터 측정해야 한다. Gorse는 이 이름의 의미를 대신 정해 주지 않는다.
+**값은 우리 결정이 아니지만 모양은 결정이다**(rev 2). `conversation_started`가 항상 positive인지,
+`resolved`를 누가 생산하는지, `N`이 얼마인지는 측정 대상이다. 반면 위 네 블록의 **존재**는
+`D16`·`D17`·`D18`과 `D07`이 정했다 — rev 1의 예시는 `[[recommend.user-to-user]] type="tags"`를
+보여줬는데 실제로 동작하는 경로는 `item-to-item`이고, `[recommend.replacement]`가 아예 없었으며,
+`negative_feedback_types = ["not_interested"]`는 그 쌍을 영구히 죽이는 값이었다.
 
 > **[`feedback_semantics.md`](feedback_semantics.md)가 여기서부터를 이어받는다.** v0.5.11 소스에서
 > 확인한 것 셋만 미리 적으면: 버킷은 이름 목록이 아니라 `read>=3` 같은 **식**이고, `read`는 제외가
@@ -519,7 +527,7 @@ source of truth에서 다시 확인해야 한다. friends-only feature를 Gorse�
 
 | 장애 | 권장 동작 |
 |---|---|
-| Gorse timeout/unavailable | 현재 topic/RRF ordering으로 계속, personalization absent 계측 |
+| Gorse timeout/unavailable | **표면 1: topic-api 보유자 랭킹으로 후보 생성 + `candidates_fallback` 선언**(`D20`). rev 1의 "현재 ordering으로 계속"은 `D07` 이후 성립하지 않는다 — 잃는 것이 개인화가 아니라 후보 자체다. **표면 2: 표면이 없다** |
 | feedback sync 실패 | durable retry; 추천 요청은 실패시키지 않음 |
 | catalogue sync 지연 | online gate/hydration이 stale ID 제거 |
 | unknown requester | public/content fallback, 가짜 평균 user로 기록하지 않음 |
@@ -539,13 +547,17 @@ Gorse API 인증은 network/service credential이고 requester authorization을 
 > A안이 그대로 맞는다 — 거기서는 topic grounding도 표면별 질의도 없다. 남는 전제는
 > [`README.md` §3 R1](README.md)(그 표면이 `friends` 보유까지 근거로 삼는가) 하나다.
 
-### B. Gorse 후보 + 우리 gate/rerank — 우선 PoC
+### B. Gorse 후보 + 우리 gate/rerank — **채택**(`D06`·`D07`)
 
 ```text
-Gorse public/behavior candidates ┐
-topic-api topic candidates        ├→ gate → our score → response/log
-friends external candidates      ┘
+표면 1   확정 topic → Gorse 라벨별 질의 + 가중합 ─┐
+                                                  ├→ 미보유자 필터 → gate → 정렬 → hydrate → 응답
+표면 2   requester id → Gorse /api/recommend ─────┘
+                                                     └ 표면 2는 근거 topic이 없어 응답 형태가 다르다 (D02)
 ```
+
+rev 1의 세 갈래(`Gorse public/behavior` + `topic-api topic` + `friends external`)는 삭제했다 —
+합집합이 아니라 **표면마다 단일 소스**이고, 그래서 합집합 규칙(SCORE-Q5)이 닫혔다.
 
 ### C. core fork
 
@@ -554,12 +566,16 @@ dashboard까지 변경된다. 포크가 작고 upstream 가능하며 Go owner가
 
 ## 10. PoC와 판정
 
-1. public topics와 최소 interaction만 적재한다.
-2. 같은 discovery candidate set에서 Gorse score를 보조 키로 적용한다.
-3. cold user/agent, sparse feedback, cache staleness를 측정한다.
+채택은 끝났고(`D06`) 남은 것은 **배포 전 게이트**다.
+
+1. **`SURV-R4` — 실제 보유 데이터에서 §11-2 경로 C의 품질.** 지금 근거는 합성 6명 fixture에서 확인한
+   *메커니즘*뿐인데 `D07`이 후보 생성 전체를 여기 맡긴다. **이것이 최우선이다.**
+2. public topics와 최소 interaction만 적재한다.
+3. cold user/agent, sparse feedback, cache staleness를 측정한다(§11-4).
 4. 친구가 아닌 requester에게 friends-only topic이 영향 주지 않는 leakage test를 둔다.
-5. Gorse unavailable 시 기존 ordering으로 열화한다.
-6. 운영비와 품질이 로컬 artifact 방식보다 나은지 비교한다.
+5. **Gorse unavailable 시 `candidates_fallback`으로 열화한다**(`D20`) — 기존 ordering이 아니라
+   기존 *후보 생성*으로 돌아가는 것이다.
+6. **`FBK-F5` — config 핫리로드 여부.** 버킷 변경이 재시작을 요구하는지 미확인이다.
 
 현재 공식 문서에서 dashboard의 pipeline 편집·모니터링·데이터 관리는 확인되지만, 실험군 배정부터
 노출·전환 분석까지 갖춘 일반적인 A/B 플랫폼 계약은 확인하지 못했다. A/B를 도입 근거로 삼기 전에 현재
@@ -671,7 +687,7 @@ M2가 두 가지로 해소된다.
 하는 전제**다. 없으면 교집합(topic-api가 이미 준 사람만)으로 후퇴해야 하고, 그러면 Gorse는
 재정렬기이지 후보 생성기가 아니다.
 
-★ **판정은 Gorse 점수가 아니라 우리 데이터로 한다.** §11-2의 원점수는 `매칭 여부 × 1/‖d‖` 구조라
+★ **판정은 Gorse 점수가 아니라 우리 복제본으로 한다**(`D08`·`D10`). §11-2의 원점수는 `매칭 여부 × 1/‖d‖` 구조라
 임계값이 후보의 보유 폭에 따라 움직인다. 대신 [`inbound_event_contract.md`
 §3-2](../inbound_event_contract.md)가 이미 받기로 한 `public_topics`의 **`topic_id` 목록을 우리
 store에 함께 두면 로컬 집합 연산**이 되고 왕복이 0이다.
