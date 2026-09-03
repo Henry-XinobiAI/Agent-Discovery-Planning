@@ -210,8 +210,8 @@ applyReplacementDecay      worker/pipeline.go:253   ← 랭킹 "후"에 Score *=
 `WithEndTime(now)`이므로 그 시각이 지나기 전에는 보이지 않는다. 이것이 `write-back-delay`의 구현이다.
 
 ⚠ 이 기능을 켜면 **추천된 모든 item에 row가 생긴다.** replacement가 꺼져 있으면 2-1에 의해 한 번
-추천된 것은 전부 영구 제외된다. `gorse.md` §6-1이 "편의 기능. 실제 노출과 다를 수 있음"으로 적어 둔
-것보다 부작용이 크다.
+추천된 것은 전부 영구 제외된다. `gorse.md` §6-1은 rev 1에서 이것을 "편의 기능"으로만 적었다 — rev 2에서 이 문서의 발견을
+반영해 "반환한 모든 item에 row를 쓴다"로 고쳤다.
 
 ---
 

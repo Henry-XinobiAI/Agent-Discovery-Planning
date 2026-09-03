@@ -545,7 +545,7 @@ Gorse API 인증은 network/service credential이고 requester authorization을 
 
 > ⚠ **이 기각은 쿼리가 있는 surface를 전제로 한 것이다.** 쿼리 없는 surface(사용자 활동 기반 추천)에는
 > A안이 그대로 맞는다 — 거기서는 topic grounding도 surface별 쿼리도 없다. 남는 전제는
-> [`README.md` §3 R1](README.md)(그 surface가 `friends` 보유까지 근거로 삼는가) 하나다.
+> [`README.md` §13 `SURV-R1`](README.md)(그 surface가 `friends` 보유까지 근거로 삼는가) 하나다.
 
 ### B. Gorse 후보 + 우리 gate/rerank — **채택**(`D06`·`D07`)
 

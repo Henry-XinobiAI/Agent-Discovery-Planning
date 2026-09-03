@@ -107,7 +107,7 @@ Tier 1 inline만으로 판정이 어려운 후보에 대해, 관련 stance evide
   - **★ verdict → ranker adapter (LOCK · 배포됨)**: judge verdict는 **proposition에 대한 절대 입장**이다(요청 방향과 무관). **need 필터** (ranker C2): `NeedType.FOR → verdict=supports만 유지` · `NeedType.AGAINST → verdict=opposes만 유지`. 배포된 계약:
     1. **Candidate의 query-time 필드는 `stance_proposition`·`stance_position`·`stance_confidence`**(`discovery/structs/recommend.py`)로, evaluator가 judge 결과로 채운다 — `stance_proposition = Query.proposition` · `stance_position` = judge verdict(`StancePosition` = supports/opposes) · `stance_confidence` = judge graded_confidence. (relative `stance_axis`/`stance_dir` 모델은 폐기 — 방향은 Candidate가 아니라 `need_type` 필터가 적용한다.)
     2. **ranker의 stance filter/정렬 key/confidence gate는 edge가 아니라 이 Candidate 값을 소비**한다(edge에서 stance를 읽던 경로 제거 완료).
-    3. **`AgentTopicEdge`는 변경하지 않음**(memory 소유·stance 저장 안 함). [00 pipeline-io](../../../impl/00-pipeline-io-reference.md) 참조.
+    3. **`AgentTopicEdge`는 변경하지 않음**(memory 소유·stance 저장 안 함). [00 pipeline-io](../../../archive/impl/00-pipeline-io-reference.md) 참조.
 
 ### D5. judge = for/against의 유일 엔진 · 플래그 · judge-off silence
 

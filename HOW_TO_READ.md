@@ -82,7 +82,7 @@
 | 노출 필드 협의 | `recsys_opensource/off_policy.md` §3 | decision · 노출 · 보상 행 |
 
 `inbound_event_contract.md`는 **논의 기록을 읽지 않아도 되게** 썼다 — 배너에 범위와 지위가 있고
-§6에 E1–E6 상태가 표로 있다.
+§6에 `EVT-E1`–`E9` 상태가 표로 있다.
 
 ★ **E1(`decision_id` 회신)이 임계경로다.** 소급 불가 항목이므로 가장 먼저 닫는다.
 
@@ -157,7 +157,7 @@ facets_ownership_split_discussion.md  값의 소유            ← 같은 경계
 | **`decisions.md` §3** | **결정이 없어서 문서가 갈라진 자리 C1–C9.** 여기부터 본다 — 충돌은 결정 부재의 신호다 |
 | **`decisions.md` §5** | 열린 항목 레지스터가 어느 문서에 있는지의 지도 + ID 접두사 규약 |
 | `recommendation_scoring_design.md` §11–§12 | N1–N5(지금 만들 것) · D1–D8(나중에 정할 것) · Q1–Q14 |
-| `inbound_event_contract.md` §6 | E1–E6 협의 상태. **E1이 임계경로** |
-| `recsys_opensource/README.md` §13 | R1–R7. **R1은 여전히 surface 2의 전제**(friends까지 근거로 삼으면 전역 label이 성립하지 않는다). **R4는 배포 전 게이트로 승격**(`decisions.md` §4) |
-| `recsys_adoption_discussion.md` §9 | 논의에서 남은 항목 |
+| `inbound_event_contract.md` §6 | `EVT-E1`–`E9` 협의 상태. **E1이 임계경로** |
+| `recsys_opensource/README.md` §13 | `SURV-R1`–`R11`. **R1은 여전히 surface 2의 전제**(friends까지 근거로 삼으면 전역 label이 성립하지 않는다). **R4는 배포 전 게이트로 승격**(`decisions.md` §4) |
+| ~~`recsys_adoption_discussion.md` §9~~ | **레지스터가 아니다**(`decisions.md` §5). 논의 기록이고 번호가 `SURV-R`과 겹치되 뜻이 다르다 |
 | 코드 repo `tasks/todo.md` | 구현 plan의 단일 소스 (이 repo에 병렬 plan을 두지 않는다) |

@@ -108,15 +108,18 @@
 **2026-09-03: 아래 여덟 건의 본문 정리를 모두 마쳤다.** 마지막 열은 그때 무엇을 고쳤는지의 기록이고,
 현재 그 위치에 옛 서술은 없다. 각 문서의 변경 이력이 상세를 갖는다.
 
+참조에 **줄번호를 쓰지 않는다** — 아래 다섯 칸이 적은 그날 이미 어긋나 있었다(2026-09-03 확인).
+절 번호는 rev가 올라가도 참이다(`README.md`의 참조 규약과 같은 이유).
+
 | 무엇이 | 무엇으로 | 왜·언제 | 정리한 곳 (2026-09-03 완료) |
 |---|---|---|---|
 | Gorse 기각 — *"현재 query형 파이프라인의 기본 선택은 아니다"* | **D06 채택** | 표준 endpoint로 topic별 후보 검색이 된다는 것이 실측으로 확인됨(`gorse.md` §11-1 M1). 2026-09-03 | `recommendation_scoring_design.md` §9-2 · §10-8 |
-| Gorse 결과 **∩** topic grounding 후보 (재정렬기) | **D07 후보 소스** | 같은 M1. 교집합은 topic-api의 100명 컷을 그대로 물려받아 Gorse를 쓰는 이유가 사라진다. 2026-09-03 | `gorse.md` §6-1 (229–268) · §7-4 (437–448) · §9-B (544–548) · §10 |
-| *"우리 topic 저장소·인덱스·스트림 없음"* | **D10 복제본 유지** | 델타는 한 건만 유실돼도 영구히 어긋나고, 카운트·최근성은 우리 feature다. 2026-09-01 | `recommendation_pipeline_design.md` L71 · L585 · `recommendation_scoring_design.md` §10-3 · 코드 레포 `docs/recsys-intent.md` |
-| 이미 읽은 item 제외 = **read feedback 기준** | **모든 feedback 타입, 시간 하한 없이 영구** | v0.5.11 소스 확인. `enable_replacement`가 유일한 레버(D18). 2026-09-02 | `gorse.md` §6-1 표 (201–202) |
-| surface 2 캐시 payload **160 GB** | **560 GB** (UUID id 전제) | `storage_sizing.md` §2. 3.5× | `gorse.md` §6-2 (286) · `recsys_opensource/README.md` §11 (372) |
-| `relation` enum **3값** (`exact`/`descendant`/`ancestor`) | **2값** | `ancestor`는 이 endpoint에서 생성될 수 없다. rev 5.9 | `recommendation_pipeline_design.md` 변경 이력 L827 |
-| surface별 **고정 가중치** | **surface를 입력으로 받는 LR → GBDT ranker** | 코드 분기가 아니라 함수 입력. scoring rev 3 | `README.md` L42–45 · `HOW_TO_READ.md` L23 |
+| Gorse 결과 **∩** topic grounding 후보 (재정렬기) | **D07 후보 소스** | 같은 M1. 교집합은 topic-api의 100명 컷을 그대로 물려받아 Gorse를 쓰는 이유가 사라진다. 2026-09-03 | `gorse.md` §6-1 · §7-4 · §9-B · §10 |
+| *"우리 topic 저장소·인덱스·스트림 없음"* | **D10 복제본 유지** | 델타는 한 건만 유실돼도 영구히 어긋나고, 카운트·최근성은 우리 feature다. 2026-09-01 | `recommendation_pipeline_design.md` §0·§1 · `recommendation_scoring_design.md` §10-3 · 코드 레포 `docs/recsys-intent.md` |
+| 이미 읽은 item 제외 = **read feedback 기준** | **모든 feedback 타입, 시간 하한 없이 영구** | v0.5.11 소스 확인. `enable_replacement`가 유일한 레버(D18). 2026-09-02 | `gorse.md` §6-1 표 |
+| surface 2 캐시 payload **160 GB** | **560 GB** (UUID id 전제) | `storage_sizing.md` §2. 3.5× | `gorse.md` §6-2 · `recsys_opensource/README.md` §11 |
+| `relation` enum **3값** (`exact`/`descendant`/`ancestor`) | **2값** | `ancestor`는 이 endpoint에서 생성될 수 없다. rev 5.9 | `recommendation_pipeline_design.md` 변경 이력 |
+| surface별 **고정 가중치** | **surface를 입력으로 받는 LR → GBDT ranker** | 코드 분기가 아니라 함수 입력. scoring rev 3 | `README.md` §0 · `HOW_TO_READ.md` 읽는 순서 |
 | S3 부분 실패·불완전성 플래그 → **503** | **저하 선언 후 계속** (D20) | 그 규칙은 *남의 랭킹을 소비할 때*의 것이었고, D07이 랭킹 소비를 없앴다. 2026-09-03 | `recommendation_pipeline_design.md` §4 · §S3 · `recommendation_scoring_design.md` §10-7 · `gorse.md` §8-3 |
 | **`D17`** — `negative`는 명시적 거부에만 | **결정이 아니었다 → `C10` 열린 항목** | 오너가 *"앞으로 정해야할 부분"*이라고 열어 둔 것을 결정으로 올렸다(규칙 ③ 위반). 번호는 회수하지 않는다. 2026-09-03 | `decisions.md` §1 · `gorse.md` §7-5 |
 | `degraded`를 wire에 실을지 | **필드 삭제 — 도달 불가** → **D20이 다시 도달 가능하게 만듦. 되살린다** | rev 5.5가 지운 이유가 "전부 503이라 발생할 수 없는 값"이었고 그 전제가 사라졌다. 2026-09-03 | `recommendation_pipeline_design.md` §9 ⑧ (열린 결정으로 남아 있음 — **D20·D21이 닫는다**) |
@@ -227,17 +230,18 @@ D15와 같은 성질이다.
 
 | 접두사 | 문서 | 레지스터 |
 |---|---|---|
-| `PIPE-` | `recommendation_pipeline_design.md` §9 | 열린 결정 ①–⑪ |
+| `PIPE-` | `recommendation_pipeline_design.md` §9 | 열린 결정 ①–⑪ · **본문 인라인 ⑫(§S3 끝)·⑬(§S6)** |
 | `SCORE-` | `recommendation_scoring_design.md` §11·§12 | N1–N5 · D1–D8 · Q1–Q14 |
 | `SURF-` | `serving_surface_design.md` §7 | ①–④ (전부 해소, 보류 2건은 §4-2·§4-5) |
-| `EVT-` | `inbound_event_contract.md` §6 | E1–E6 |
-| `SURV-` | `recsys_opensource/README.md` §13 | R1–R7 |
-| `GOR-` | `recsys_opensource/gorse.md` §11-4 | (무번호) |
+| `EVT-` | `inbound_event_contract.md` §6 | E1–E9 (rev 2에서 E7–E9 추가) |
+| `SURV-` | `recsys_opensource/README.md` §13 | R1–R11 |
+| `GOR-` | `recsys_opensource/gorse.md` §11-3·§11-4 | (무번호 2건 — 번호를 붙일 것) |
 | `STO-` | `recsys_opensource/storage_sizing.md` §9 | S1–S8 |
 | `FBK-` | `recsys_opensource/feedback_semantics.md` §8 | F1–F10 |
 
-`gorse.md` §11-1의 **M1–M5는 레지스터가 아니라 실측 발견 목록**이다. 열린 항목처럼 읽히지 않도록
-이름을 바꾼다.
+`gorse.md` §11-1의 **M1–M5는 레지스터가 아니라 실측 발견 목록**이다. rev 1에서 "이름을 바꾼다"고
+적었으나 **철회한다** — 인용이 열다섯 곳이고 개명 비용이 혼동 비용보다 크다. 대신 §11-1이 제목에서
+`실측 발견`임을 밝히고, 이 지도에 `MEAS-` 접두사를 등록하지 않는 것으로 구분한다.
 
 `recsys_adoption_discussion.md`·`service_boundary_discussion.md`·`facets_ownership_split_discussion.md`는
 **논의 기록이므로 레지스터를 갖지 않는다.** 그 안의 E·R·F 항목은 걷어내고 "이 논의의 결론은 X §N으로

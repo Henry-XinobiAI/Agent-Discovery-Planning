@@ -1,6 +1,6 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 기준 문서 (rev 5.13, 외부 리뷰 5회 반영). **결정은 이 문서가 소유하지 않는다** —
+> **문서 지위**: 설계 기준 문서 (rev 5.14, 외부 리뷰 5회 반영). **결정은 이 문서가 소유하지 않는다** —
 > [`decisions.md`](decisions.md)가 소유하고 여기서는 `Dnn`을 인용한다.
 > 입력 = `topic_api_analysis.md` **rev 8**
 > (2026-08-25, topic-api HEAD `9ee67f3`) + bourbon-agent의 기왕 계약
@@ -323,8 +323,10 @@ topic도 requester마다 다른 랭킹이 되므로 — 현재 키 설계의 전
   `distance`(부호 그대로)·`contribution`·children
 - 불완전성 플래그: `exhaustive`, `descendants_dropped`, `topics_dropped`
 
-**topic-api 호출**: `GET /api/internal/svc/topic/topics/{topic_id}/users?limit=100&visibility=public`
-× 확정 topic 수(≤3). (id 리스트 라우트는 **A단계에서 쓰지 않기로 재평가** — 분석 §11-16
+**topic-api 호출 — `D07` 이후 fallback 전용**: `GET /api/internal/svc/topic/topics/{topic_id}/users?limit=100&visibility=public`
+× 확정 topic 수(≤3). **정상 경로는 Gorse이고 이 호출은 Gorse 불능일 때만 탄다**(`candidates_fallback`,
+`D20` · §6 표와 같은 말). 아래 형태·산출물·실패 규정은 그 fallback 경로의 것이다.
+(id 리스트 라우트는 **A단계에서 쓰지 않기로 재평가** — 분석 §11-16
 rev 6: 다중 id 병합은 그들 score를 cross-topic 가중에 재유입시키고, 병합 후 top-100 컷이라
 per-topic 100×N보다 후보 풀이 좁으며, rollup 경로를 강제한다. per-topic fan-out + S4 RRF가
 의미·후보 풀·비용·exhaustive 전부에서 우월. 재검토 조건은 분석 §11-16.)
@@ -340,7 +342,7 @@ flags: {exhaustive, descendants_dropped, topics_dropped} }`
 필요해지면 topic-api에 `strategy` 응답 필드를 요청한다(분석 §11-19, 낮음). 분기용이 아니라
 계측·비용 귀속용.
 
-**실패 — 초기엔 fail-closed**(rev 5, 외부 리뷰 수용 — `열린 결정` ① 해소):
+**fallback 경로의 실패 처리** (rev 5.14 — 소제목의 "초기엔 fail-closed"를 뺐다. `D20`이 그 규정을 폐기했고 본문은 이미 그렇게 적고 있었다):
 
 - **404**(캐시된 id가 배포 사이 카탈로그에서 소멸 — merge는 resolve가 승계 topic으로
   따라가므로 드묾, drop/비활성이 남는 경우): **카탈로그 시점이 바뀌었다는 신호**로 다룬다
@@ -414,9 +416,10 @@ fallback 경로에서 topic-api의 불완전성 플래그(`exhaustive=false`, `t
 S5의 1키가 그것을 내림차순으로 읽는다. §S5·§9의 금지는 scalar의 **노출**이지 내부 존재가
 아니다. `evidences` → `group_contributions` — 영어로 evidence는 불가산이고, 이 항목은
 "한 그룹이 이 후보 점수에 기여한 내용"이라 contribution이 타입 전체를 더 잘 말한다) —
-`degraded` 필드는 rev 5.5에서 **삭제**: S3의 부분 실패·불완전 플래그가 전부 503이 된 뒤로는
-도달 불가능한 값이다. 품질 신호는 decision log가 소유하고, 필드는 degraded wire 재개방
-결정과 함께 재정의한다.
+`degraded` 필드는 rev 5.5에서 **삭제**됐다 — 사유는 "S3의 부분 실패가 전부 503이 되어
+도달 불가능한 값"이었다. **rev 5.14: 그 사유는 더 이상 참이 아니다.** `D20`이 저하를 다시
+도달 가능하게 만들었고 값 다섯 개가 §4 표에 있다. 필드는 되살아나되 **bourbon-agent 협의를
+거친다**(§9-⑧). 품질 신호 자체는 계속 decision log가 소유한다.
 
 **실패**: 병합 후 0명 → **200 + empty**("topic은 있으나 공개 보유자 없음" — §4. cold-start의
 정상 경로다, 분석 §6.4).
@@ -603,7 +606,15 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
 | **grounding 불능** (`/search/topics` 전부 5xx/timeout) | S2 (`unavailable`) | **503** — 물어볼 topic이 없으면 후보를 만들 수 없다 |
 | **Gorse 불능** (rev 5.13 · `D20`) | S3 | **200** + `candidates_fallback` — topic-api 보유자 랭킹으로 후보 생성 |
 | **확정 topic 일부만 grounding 성공** (rev 5.13 · `D20`) | S2 | **200** + `grounding_partial` — 라벨별 가중합에는 랭킹 융합이 없어 "더 적게 읽은 순서"다 |
+| **LLM 불능** (rev 5.14 · `D20`) | S1 | **200** + `expansion` — verbatim probe 하나로 진행 |
+| **최종 N명 중 일부만 재확인 실패** (rev 5.14 · `D21`) | S6 | **200** + `verification_partial` — 그 후보를 빼고 `OrderedCandidates` 뒤에서 채운다 |
+| **우리 복제본 불능** (rev 5.14 · `D20`) | S4 | **200** + `prefilter_skipped` — 미보유자 선필터를 건너뛰고 S6 hydrate가 판정을 대신한다 |
 | **보유 근거가 랭킹 범위를 벗어남**(item 있는 노드의 distance < 0 — rev 5.9) | provider(client) | **503** (구조적 불변식 위반 · §9-④) |
+
+`degraded`가 가질 수 있는 값은 위 표의 다섯 개가 전부다 — `expansion` · `grounding_partial` ·
+`candidates_fallback` · `verification_partial` · `prefilter_skipped`. **`decisions.md` D20의 표와
+이 표는 같은 목록이어야 한다.** 필드 자체가 아직 wire에 없으므로(§9-⑧), 협의에는 이 다섯을 한
+묶음으로 올린다.
 
 오귀속 금지의 축: **"카탈로그에 없다"고 말할 자격은 expansion이 정상 완료됐을 때만
 생긴다**(C4 규율 — 판단에 도달했는가). 어댑터 파싱 실패는 계약 위반 로깅 + 503 — 422로
@@ -685,12 +696,12 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 | 1 호출 형태·컴포넌트 소유 | §0·§3·§7 |
 | 2 병합 규칙·대표 topic | S4 RRF(독립 그룹 간, 순위만) · S6 대표=RRF 기여 최대 그룹(contribution은 표시 전용) |
 | 3 ordering 키 식 | **부분** — 슬롯 계약만(S5). 식은 §11-18 확정 후 |
-| 4 실패 3분기 판정 지점 | §4 — expansion 상태와 결합(정상+0건만 422, degraded+0건은 503), S3는 fail-closed |
+| 4 실패 3분기 판정 지점 | §4 — expansion 상태와 결합(정상+0건만 422, degraded+0건은 503). **S3 fail-closed는 `D20`이 폐기**했다(rev 5.14) |
 | 5 eligibility 결합 지점 | S4 사후 필터 — exclusion과 함께 우리 후처리로 확정(분석 §11-5 철회). 단 만료 조건 있음(S4 — eligibility 활성화 gate에 overfetch/서버측 재논의 선행) |
 | 6 rerank 진입 조건 | **미정** — C단계 dormant 슬롯만 (§9-⑥와 별개) |
 | 7 어댑터 경계 | §6 |
 | 8 캐시 | §6 — /search/topics만, 짧은 TTL |
-| 9 rollup 수용 | S3 — 그대로 수용. `deep_holdings_observed`는 충분조건 계측(정확한 경로는 §11-19 strategy 필드 요청 후) |
+| 9 rollup 수용 | S3 **fallback 경로 한정**(`D07`) — 그대로 수용. `deep_holdings_observed`는 충분조건 계측(정확한 경로는 §11-19 strategy 필드 요청 후) |
 | 10 cold-start UX | **부분** — 200+empty의 wire는 정직한 빈 배열 + 사유 코드. tool 발화·카드 hydration은 bourbon-agent 협의(§9-⑨) |
 
 ---
@@ -744,10 +755,11 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 6. **S2 LLM rerank를 A단계 초기부터 켤지** — 대안: exact-label rule만으로 시작하고 ambiguous
    비율을 측정한 뒤 켠다. (판정층 §13-6과는 별개 — 이것은 topic 선별, 그것은 후보 재정렬.)
 7. **/search/topics 캐시 TTL** — 제안 5분 (그들 배포 주기 대비 충분히 짧음).
-8. ~~**200+empty의 사유 코드 체계**~~ — **rev 5.13 해소**: `D20`·`D21`이 세 값으로 확정했다
-   (`no_public_holders` / `all_candidates_filtered` / `verification_unavailable`). `degraded`는 별도
-   필드로 복귀한다 — rev 5.5가 도달 불가로 지웠고 그 전제가 `D20`으로 사라졌다. **값 추가는
-   bourbon-agent 협의 대상**이다(`Literal` strict 파싱). 원래 질문: — "no_public_holders" / "degraded" 구분을 wire에 실을지.
+8. ~~**200+empty의 사유 코드 체계**~~ — **rev 5.13 해소**: `D20`·`D21`이 `empty_reason`을 세
+   값으로 확정했다(`no_public_holders` / `all_candidates_filtered` / `verification_unavailable`).
+   `degraded`는 별도 필드로 복귀하고 **rev 5.14에서 다섯 값이 §4 표에 다 나왔다**. **값 추가는
+   bourbon-agent 협의 대상**이다(`Literal` strict 파싱). 원래 질문: "no_public_holders"와
+   "degraded"의 구분을 wire에 실을지.
 11. **요청 wire 길이 상한 값** (rev 5) — `topic` ≤200자·`context` ≤2,000자 제안. probe
    ≤100자는 topic-api `NameQuery`와 동기라 제안이 아니라 제약.
 9. **응답 카드 hydration 책임** (rev 3 협의 → **rev 5.5에서 S6 선행 블로커로 승격**) —
@@ -818,6 +830,11 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 이 절이 거절 근거다.
 
 ## 변경 이력
+
+**2026-09-03 rev 5.14** — §4 실패 표를 `decisions.md` D20 표와 같은 목록으로 맞췄다. rev 5.13은
+다섯 저하 값 중 `candidates_fallback`·`grounding_partial`만 표에 넣고 `expansion`·
+`verification_partial`·`prefilter_skipped`는 본문에만 두었다 — **협의에 올릴 enum이 문서에서
+불완전했다는 뜻**이다. 세 줄을 추가하고 "다섯이 전부"를 표 아래에 못 박았다.
 
 **2026-09-03 rev 5.13** — 결정 소유를 [`decisions.md`](decisions.md)로 넘기고, `D07`(Gorse가 후보
 소스)·`D10`(공개 보유 복제본)·`D20`·`D21`(실패 규율)을 본문에 반영했다. 뒤집힌 서술은 표시하지 않고
