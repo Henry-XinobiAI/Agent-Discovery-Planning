@@ -45,7 +45,7 @@
 | # | 결정 | 근거·상세 | 확정 |
 |---|---|---|---|
 | **D10** | **우리는 공개 보유의 복제본을 유지한다.** 델타가 아니라 전체 집합 + `revision` | `inbound_event_contract.md` §2-⓵ (발신 측 수용 가능 확인) | 2026-09-01 |
-| **D11** | **복제본이 주지 못하는 값이 다섯 개다** — `owner_notes` · `relation` · `descriptions` · `deep_holdings_observed` · `ranking_contribution`. 앞의 넷은 topic-api가 답하는 **matched 트리**에서 오고 복제본은 평평한 목록이다. **따라서 최종 N명에 대한 topic-api 조회는 최적화가 아니라 필수다** | §3-C1 참조. 이 조회는 `inbound_event_contract.md` §4의 서빙 시점 재확인과 **같은 호출**이다 | 2026-09-03 |
+| **D11** | **복제본이 주지 못하는 값이 다섯 개다** — `owner_notes` · `relation` · `descriptions` · `deep_holdings_observed` · `ranking_contribution`. 앞의 넷은 topic-api가 답하는 **matched 트리**에서 오고 복제본은 평평한 목록이다. **따라서 최종 N명에 대한 topic-api 조회는 최적화가 아니라 필수다** | `recommendation_pipeline_design.md` §S6-5. 이 조회는 `inbound_event_contract.md` §4의 서빙 시점 재확인과 **같은 호출**이고, 그래서 D21이 성립한다 | 2026-09-03 |
 | **D12** | **공개 투영만 받는다.** `friends`·`private` 보유는 애초에 받지 않는다 — 가장 강한 보호는 받지 않는 것이다 | `inbound_event_contract.md` §2-⓶ | 2026-09-01 |
 | **D13** | **원천 관측값을 받고 파생은 우리 feature 함수가 한다.** 상류가 계산한 판단값을 받지 않는다 | `inbound_event_contract.md` §2-⓷ | 2026-09-01 |
 | **D14** | **과거 로그의 `topic_id`를 재작성하지 않는다.** topic 병합·분할은 매핑 테이블로 해석한다 | `inbound_event_contract.md` §6 EVT-E6 | 2026-09-01 |
@@ -59,6 +59,43 @@
 | **D17** | **`negative`는 영구 제외**이므로 명시적 거부에만 쓴다. 퍼널 단계를 negative로 투영하지 않는다 | `recsys_opensource/feedback_semantics.md` §2-5·§6-3 | 2026-09-03 |
 | **D18** | **추천으로 만나 써 본 상대도 다시 추천될 수 있어야 한다.** `enable_replacement = true`가 강제되고, 쿨다운·시간 감쇠는 Gorse가 주지 못하므로 우리 rerank가 소유한다 | `recsys_opensource/feedback_semantics.md` §2 | 2026-09-03 |
 | **D19** | **의미가 정해지지 않은 이벤트는 Gorse에 보내지 않는다.** 버킷 미지정은 중립이 아니라 조용한 제외다. 원본은 우리 스트림에 있으므로 늦게 투영하는 비용이 없다 | `recsys_opensource/feedback_semantics.md` §6-1 | 2026-09-03 |
+
+### 실패 규율
+
+| # | 결정 | 근거·상세 | 확정 |
+|---|---|---|---|
+| **D20** | **저하는 허용하되 침묵하지 않는다. 거짓말은 금지한다.** 답을 만들 수 없으면 503, 덜 좋은 답이면 200 + 저하 선언, **"없다"는 실제로 보았을 때만** 한다 | 아래 표 | 2026-09-03 |
+| **D21** | **차단·삭제·철회 재확인만은 fail-closed다.** 재확인하지 못한 후보는 답에서 **뺀다**. 전부 빠지면 200 + `verification_unavailable`이며, 이것을 `no_public_holders`로 부르지 않는다 | `inbound_event_contract.md` §4 상단 등급 | 2026-09-03 |
+
+의존별 동작:
+
+| 의존 | 실패 범위 | 동작 | 선언 |
+|---|---|---|---|
+| LLM (S1 expansion) | 전체 | verbatim probe 하나로 진행 | `expansion` |
+| topic-api `/search/topics` (S2) | **전부** | **503** — 물어볼 topic이 없으면 Gorse에 물을 것도 없다 | — |
+| topic-api `/search/topics` (S2) | 일부 group | 성공한 group으로 진행 | `grounding_partial` |
+| **Gorse (S3)** | 전체 | **topic-api 보유자 랭킹으로 후보 생성** — 오늘 도는 경로를 fallback으로 유지 | `candidates_fallback` |
+| topic-api hydrate (S4) | 후보 일부 | **그 후보를 뺀다**(D21). 잘라낸 나머지에서 채운다 | `verification_partial` |
+| topic-api hydrate (S4) | 전부 | 200 + empty, 사유 `verification_unavailable` | — |
+| 우리 복제본 (D10) | 전체 | 선필터 생략. hydrate가 판정을 대신한다 | `prefilter_skipped` |
+
+★ **`D07`이 fail-closed의 원래 논거를 이미 없앴다.** 정본 §4의 근거는 *"잘린 랭킹을 완전한 랭킹과
+융합하면 아무도 계산하지 않은 순서가 나온다"*였고, 그것은 **남의 랭킹을 소비할 때** 생기는 문제다 —
+101등인 사람이 *낮은* 것이 아니라 *없는* 것으로 들어오기 때문이다. 라벨별 가중합에는 랭킹 융합이
+없다. 라벨 하나가 빠지면 **같은 함수를 더 적은 라벨 위에서 계산한 결과**이고, 그것은 "질문을 더 적게
+읽은 순서"이지 망가진 순서가 아니다.
+
+★ **오귀속 금지는 그대로 살아남는다.** 실제로 조회하지 못한 것을 "공개 보유자가 없다"로 답하는 것은
+저하가 아니라 **거짓**이다. D21의 세 번째 사유 코드가 존재하는 이유가 이것 하나다.
+
+`판단` **topic-api는 줄일 수 없는 유일한 hard dependency로 남는다** — 어휘(카탈로그)를 그들이
+소유하므로 grounding을 대신할 것이 없다. 다만 D10이 `topic.changed`로 카탈로그도 복제하므로, 우리
+검색 색인이 생기면(`SURV-R6`) 이 마지막 의존도 저하 가능해진다. 지금은 아니다.
+
+`열린 항목` **D21은 두 가지 선행 작업을 강제한다.** ⑴ 순위를 자른 뒤 나머지를 들고 있어야
+백필이 된다(현재 `ordering.py`가 `ranked[:max_results]`로 버린다). ⑵ `empty_reason`에 값이 하나
+늘어나는 것은 **bourbon-agent와의 협의 대상**이다 — 그쪽이 `Literal`로 미러링하며 strict 파싱하므로
+값 추가가 파괴적 변경이다. `D15`의 `decision_id`와 같은 급이다.
 
 ---
 
@@ -76,7 +113,8 @@
 | 표면 2 캐시 payload **160 GB** | **560 GB** (UUID id 전제) | `storage_sizing.md` §2. 3.5× | `gorse.md` §6-2 (286) · `recsys_opensource/README.md` §11 (372) |
 | `relation` enum **3값** (`exact`/`descendant`/`ancestor`) | **2값** | `ancestor`는 이 endpoint에서 생성될 수 없다. rev 5.9 | `recommendation_pipeline_design.md` 변경 이력 L827 |
 | 표면별 **고정 가중치** | **surface를 입력으로 받는 LR → GBDT ranker** | 코드 분기가 아니라 함수 입력. scoring rev 3 | `README.md` L42–45 · `HOW_TO_READ.md` L23 |
-| `degraded`를 wire에 실을지 | **필드 삭제 — 도달 불가** | S3의 부분 실패가 전부 503이 된 뒤로는 발생할 수 없는 값. rev 5.5 | `recommendation_pipeline_design.md` §9 ⑧ (열린 결정으로 남아 있음) |
+| S3 부분 실패·불완전성 플래그 → **503** | **저하 선언 후 계속** (D20) | 그 규칙은 *남의 랭킹을 소비할 때*의 것이었고, D07이 랭킹 소비를 없앴다. 2026-09-03 | `recommendation_pipeline_design.md` §4 · §S3 · `recommendation_scoring_design.md` §10-7 · `gorse.md` §8-3 |
+| `degraded`를 wire에 실을지 | **필드 삭제 — 도달 불가** → **D20이 다시 도달 가능하게 만듦. 되살린다** | rev 5.5가 지운 이유가 "전부 503이라 발생할 수 없는 값"이었고 그 전제가 사라졌다. 2026-09-03 | `recommendation_pipeline_design.md` §9 ⑧ (열린 결정으로 남아 있음 — **D20·D21이 닫는다**) |
 
 ---
 
@@ -84,7 +122,7 @@
 
 **충돌은 결정 부재의 신호다.** 아래는 "어느 쪽이 맞나"가 아니라 **"아직 정하지 않았다"**로 읽어야 한다.
 
-### C1 — 실패 규율: fail-closed인가 degrade-and-continue인가 `열린 항목`
+### C1 — 실패 규율 → **D20·D21로 해소 (2026-09-03)**
 
 - `recommendation_pipeline_design.md` §4: 재료 하나가 빠진 순위는 *"완전한 결과의 품질 저하가 아니라
   **다른 랭킹**"*이므로 **503**. 불완전성 플래그도 같다.
@@ -93,9 +131,10 @@
   (정본은 503).
 - `gorse.md` §8-3: *"Gorse timeout → 현재 topic/RRF ordering으로 계속"*.
 
-★ **D07이 이 질문을 강제한다.** Gorse가 유일한 후보 소스면 Gorse 장애 시 이어갈 순위가 없으므로
-§8-3의 "계속 진행"은 성립하지 않는다. **503으로 갈지, topic-api retrieval을 fallback 경로로
-남길지**가 답해야 할 질문이고, 후자는 두 경로를 다 유지하는 비용이다.
+**해소**: D20이 저하 선언을, D21이 재확인 fail-closed를 정했다. Gorse 장애는 topic-api 보유자
+랭킹으로 후보를 만들어 `candidates_fallback`으로 선언한다 — 오늘 도는 경로를 지우지 않고 남기는
+것이며, 그 경로가 topic당 100명 컷을 물려받는 것은 저하 모드로서 받아들인다. 세 문서의 서술을
+D20 표에 맞춰 다시 쓴다.
 
 ### C2 — `decision_id`가 응답 wire에 없다 `열린 항목`
 
