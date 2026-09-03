@@ -1,6 +1,7 @@
 # 오픈소스 추천·평가·랭킹 도구 조사
 
-> **문서 지위**: 기술 검토 자료이며 설계 정본이나 도입 결정이 아니다. 현재 제품 설계는
+> **문서 지위**: 기술 검토 자료다. **결정은 [`decisions.md`](../decisions.md)가 소유하고** 여기서는
+> `Dnn`을 인용한다. 현재 제품 설계는
 > [`recommendation_scoring_design.md`](../recommendation_scoring_design.md), 현재 가동 계약은
 > [`recommendation_pipeline_design.md`](../recommendation_pipeline_design.md)가 소유한다.
 > 이 디렉토리는 설계를 다시 유도하는 병렬 문서가 아니라 **판단의 근거 survey**다.
@@ -8,7 +9,9 @@
 >
 > **증거 등급**: `문서`(공식 문서·저장소로 확인) · `실측`(실제로 실행해서 확인) · `판단`(의견) ·
 > `열린 항목`(협의·측정·제품결정 대기).
-> **두 등급을 섞지 않는다** — §8에 문서 근거 주장 다섯 개가 실행으로 뒤집힌 목록이 있다.
+> **두 등급을 섞지 않는다** — §8에 실측이 문서 근거를 **뒤집거나 넓힌** 목록 다섯이 있다. 다섯 중
+> 뒤집힌 것은 하나이고 넷은 문서에 서술 자체가 없던 발견이다(2026-09-03 정정 — "주장 다섯 개가
+> 뒤집혔다"는 과장이었다).
 >
 > 문서 조사 기준일 2026-08-28 · 실측 기준일 2026-09-01 (Gorse v0.5.11).
 > 논의 기록은 [`recsys_adoption_discussion.md`](../recsys_adoption_discussion.md).
@@ -42,7 +45,10 @@
 `판단` **표면 2는 추천 라이브러리의 메인 API 그 자체다.** `recommend(user_id, N)` — Gorse의 제품
 전체가 이것이고, implicit·Cornac의 기본 호출이 이것이다.
 
-`판단` **표면 1은 아니다.** 추천 라이브러리는 요청 시점에 질의를 받지 않는다.
+`판단` **표면 1은 표준 추천 호출이 아니다.** 추천 라이브러리의 기본 함수는 요청 시점 질의를 받지
+않는다. 다만 Gorse에는 **다른 경로가 있다** — 더미 topic item의 이웃을 라벨별로 묻는 방식으로
+호출당 약 1.1 ms에 질의형 후보 검색이 된다(§7-3 · `D07`). "기본 호출이 아니다"와 "불가능하다"는
+다르고, 이전 판은 그 둘을 섞었다.
 
 두 방향으로 틀릴 수 있다. 표면 2를 표면 1의 요구(요청별 권한 필터·임의 allowlist·질의 처리)에 맞추면
 기성 도구를 못 쓰고, 표면 1을 표면 2에 맞추면 질의가 무시된다. **이전 판의 주된 오류가 전자였다** —
@@ -150,11 +156,16 @@ inference이고 profile mutation도 model update도 아니다.
 
 ```text
 이벤트 → Gorse 에 user/item/feedback 적재
-표면 2 → GET /api/recommend/{user}?n=20 → 본인·차단 후처리 제거 → 응답
+표면 2 → GET /api/recommend/{user}?n=20 → 본인·차단 후처리 제거 → hydrate → 응답(D02: 형태가 다름)
 ```
 
-우리가 만드는 것: 동기화 워커 · 얇은 클라이언트 · 후처리 필터.
+우리가 만드는 것: 동기화 워커 · 얇은 클라이언트 · 후처리 필터 · **재추천 정책**.
 우리가 **안** 만드는 것: 학습 scheduler · model artifact·refresh · serving API · cache · dashboard.
+
+★ **"적재하면 바로 선다"가 아니다.** 기본값은 **feedback row가 하나라도 있는 item을 그 사용자에게
+영구히 제외**하므로, `enable_replacement = true`와 ranker가 **먼저** 설정되어야 표면 2가 우리 요구를
+만족한다(`D18` · [`feedback_semantics.md` §2](feedback_semantics.md)). 쿨다운·시간 감쇠는 Gorse가 주지
+않으므로 우리 rerank가 소유한다.
 
 ### 6-1 이전 판의 기각 사유 재평가
 
@@ -369,7 +380,8 @@ Gorse는 사용자별 추천을 미리 계산해 캐시한다.
 
 ```text
 100,000,000 users × cached top 100 = 10,000,000,000 entries
-entry 당 16 bytes 가정만 해도 160 GB (row/key/index/replication 제외)
+entry 당 16 bytes 가정이면 160 GB — 그러나 그 16 bytes는 정수 ID의 것이다
+UUID id 기준 실제 payload 560 GB, 복제본까지 1.1 TB  (storage_sizing.md §2)
 ```
 
 `판단` **완화 경로는 전원을 넣지 않는 것이다** — 최근 활동 사용자만 projection하고 장기 비활성은
@@ -421,8 +433,9 @@ factor 64, float32:  user 1억 25.6 GB + item 1억 25.6 GB = 51.2 GB (runtime ov
 1. 노출 계약          exposure/decision 스키마를 고정하고 기록을 시작한다
                      off_policy.md §3 이 소유.  나중에 만들 수 없는 유일한 항목
 
-2. 표면 2            Gorse 적재 + 클라이언트 + 후처리 필터
-                     기성 기능만으로 처음부터 끝까지 선다
+2. 표면 2            Gorse 적재 + 클라이언트 + 후처리 필터 + 재추천 정책
+                     기성 기능이 대부분이지만 그대로는 안 된다 —
+                     enable_replacement 와 ranker 가 먼저다 (D18)
 
 3. 표면 1            grounding + 라벨별 질의 + 가중 합산 (§7-3)
                      rerank 는 규칙으로 시작
@@ -450,10 +463,16 @@ factor 64, float32:  user 1억 25.6 GB + item 1억 25.6 GB = 51.2 GB (runtime ov
 | **R1** | 표면 2가 `friends` 보유까지 근거로 삼는가 | 제품 결정 | **미정. §6의 전제** |
 | R2 | 표면 1이 `friends` 보유까지 포함하는가 | 제품 결정 | 미정. `public`만이면 배치 색인으로 충분 |
 | R3 | 목표 규모에서 재계산 시간 (§11) | 측정 | 2,000개까지만 검증 |
-| R4 | 실제 보유 데이터에서 §7-3 형태의 품질 | 측정 | fixture는 합성 6명. 메커니즘 대조까지만 유효 |
+| **R4** | 실제 보유 데이터에서 §7-3 형태의 품질 | 측정 | **배포 전 게이트로 승격**(`decisions.md` §4) — `D07`이 후보 생성 전체를 이 형태에 맡긴다. fixture는 합성 6명이라 메커니즘 대조까지만 유효하다 |
 | R5 | 두 표면의 피드백을 한 스트림으로 모으는 방법 | 설계 | 미설계 |
 | R6 | retrieval 색인 직접 소유 시의 비교표 (§7-5) | 조사 | 빈칸 |
 | R7 | 상위 라벨 가중을 0으로 둘 때 recall 손실 | 측정 | §7-3 판단의 검증 |
+| **R8** | `U_active`·`I_eligible` 목표값 | 제품·측정 | `storage_sizing.md` 전체의 전제이자 §11 병목의 입력. 그 문서 `STO-S1`과 같은 질문이고 여기 롤업이 없었다 |
+| **R9** | 재추천 정책 — 감쇠 상수로 충분한가, 쿨다운·시간 감쇠가 필요한가 | 제품 결정 | `FBK-F1`. `D18`이 "우리 것"까지 정했고 형태는 열려 있다 |
+| **R10** | `negative`에 무엇을 넣을 것인가 | 제품 결정 | `FBK-F2`. 현재 후보로는 **공집합**일 수 있다 — owner 쪽 행동 이벤트가 없기 때문(`decisions.md` §3-C8) |
+| **R11** | Gorse backend로 ClickHouse를 두는 선택지 | 조사 | `FBK-F8`. `storage_sizing.md` §5의 후보에 없던 축이고, 채택하면 적재 의미론 전체가 달라진다 |
+
+**ID 접두사는 `SURV-`다**(`decisions.md` §5) — `R1`이 이 repo에서 세 가지를 가리키고 있었다.
 
 ---
 
