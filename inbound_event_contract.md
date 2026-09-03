@@ -1,4 +1,7 @@
-# 수신 이벤트 계약 — 제안 (2026-09-01)
+# 수신 이벤트 계약 — 제안 (rev 2, 2026-09-03)
+
+> **결정은 이 문서가 소유하지 않는다.** [`decisions.md`](decisions.md)가 소유하고 여기서는 `Dnn`을
+> 인용한다. 이 문서가 세운 복제본은 `D10`, 복제본이 담지 못하는 것은 `D11`이다.
 
 > **문서 지위: 제안이고 결정이 아니다.** 어떤 코드도 이 문서를 근거로 바뀌지 않았고 **어느 팀에도
 > 발신하지 않았다.** 설계 정본은 [`recommendation_pipeline_design.md`](recommendation_pipeline_design.md),
@@ -91,7 +94,7 @@ feature 함수가 한다.
 
 | 필드 | 왜 |
 |---|---|
-| `labels` | 응답 표시 + 사용자가 보는 라벨. 이 구조에서 topic-api의 주 역할 |
+| `labels` | 응답 표시 + 사용자가 보는 라벨. 이 구조에서 topic-api의 주 역할. `열린 항목` **EVT-E8 — 언어 축이 좁다**: 여기는 ko·en 둘인데 상류 카탈로그는 열린 언어 맵이고 정본 §S6-5⒞가 그 손실을 계측 대상으로 두었다. 복제본이 ko·en만 담으면 그 계측이 무의미해진다 |
 | `parent_topic_ids` | 상위 라벨 질의를 **recall 장치**로 쓰려면 계층을 알아야 한다 |
 | `status` / `merged_into_topic_id` | topic은 병합·분할·개명된다. 질의 단위와 색인이 함께 이동해야 한다 |
 
@@ -126,6 +129,18 @@ feature 함수가 한다.
 전문성이 아니라 **관련성의 세기**다. 정보검색의 `tf`에 해당하고 그 자리에 정확히 들어간다.
 전문성 축이 실재하게 되면 그때 별도 필드로 additive하게 붙인다.
 
+★ **이 payload가 담지 못하는 것이 다섯 개다**(`D11`, rev 2). `owner_notes`(보유자가 그 주제에 대해
+쓴 문장)·`relation`·`descriptions`·`deep_holdings_observed`·`ranking_contribution`. 앞의 넷은
+topic-api가 답하는 **트리**에서 오고 이 payload는 **평평한 목록**이라 담을 자리가 없다.
+
+`판단` **그래서 최종 N명에 대한 topic-api 조회는 최적화가 아니라 필수다.** 그리고 그 조회는 §4
+상단 등급의 서빙 시점 재확인과 **같은 호출**이다 — 두 요구가 한 번의 왕복으로 해결된다
+(`recommendation_pipeline_design.md` §S6).
+
+`판단` **문장을 이 payload에 실어 왕복을 없애는 안은 성립하지 않는다.** 실어도 §4 상단 등급 때문에
+최종 N명 조회는 남고, 남는다면 문장은 어차피 그 응답에서 온다. 원칙 ⓷과도 어긋나지 않지만(문장은
+판단값이 아니라 원문이다) **얻는 것이 없다.**
+
 `열린 항목` 카운트의 정의(무엇을 1회로 세는가)와 그 안정성. 정의가 바뀌면 `count_schema_version`이 필요하다.
 
 ### 3-3 자격·상태
@@ -150,7 +165,12 @@ feature 함수가 한다.
 |---|---|
 | `status=deleted` | Gorse `IsHidden=true` + 우리 색인 제거 + Gorse Feedback 정리. §4 상단 등급 |
 | `languages` · `last_active_at` | rerank 신호 |
-| `user.deleted` | **Gorse User · Gorse Feedback · 우리 store · 이벤트 스트림 네 곳**에 전파 |
+| `user.deleted` | **Gorse User · Gorse Feedback · 우리 store · 이벤트 스트림 네 곳**에 전파. 삭제 SLA는 row 삭제 시각이 아니라 **재학습 완료 시각**으로 정의한다(`feedback_semantics.md` FBK-F10) |
+
+`열린 항목` **EVT-E7 — `user.blocked`만 델타다** (rev 2에서 발견). `{requester, blocked, active}`는
+원칙 ⓵("델타가 아니라 현재 전체 집합")의 유일한 예외이고 `event_id`·`revision`도 없어 **중복 전달이
+무해하다는 전제가 이 이벤트에만 성립하지 않는다.** 차단 목록은 전체 집합으로 받기에 너무 크게 자랄
+수 있으므로 예외 자체는 합리적일 수 있으나, 그렇다면 **순서 보장이나 시퀀스 번호가 필요하다.**
 
 `판단` **`recommendable`은 wire에 싣지 않는다.** 현재는 topic 공개에서 파생되므로, 실으면 발신 측이
 상수를 계산해 넣게 되고 "판정했다"와 "할 말이 없어 채웠다"가 wire 위에서 구별되지 않는다. 그리고
@@ -177,6 +197,11 @@ agent 단위 공개 축이 이진일지 tier일지 표면별일지 아직 모르
 
 단계: `card.selected` · `conversation.started` · `conversation.depth_reached` · `resolved` ·
 `requery.other_agent`.
+
+`열린 항목` **EVT-E9 — `surface` 값 목록을 이 문서가 닫으면 안 된다.** 위 예시의
+`topic_search | home` 2값은 `recommendation_scoring_design.md` §4의 4행과 다르고, 같은 문서
+SCORE-Q7은 표면 목록의 확정을 **기획 영역**으로 열어 두었다. 이벤트 계약이 enum을 먼저 닫으면
+소비자들이 그 목록을 읽기 시작한다 — 원칙 ⓷의 "이름이 판단을 계약에 새긴다"와 같은 함정이다.
 
 | 어디로 | 무엇 |
 |---|---|
@@ -236,12 +261,15 @@ agent 단위 공개 축이 이진일지 tier일지 표면별일지 아직 모르
 
 ## §6 협의 상태
 
+**ID 접두사는 `EVT-`다**(`decisions.md` §5). 이 repo에 `E1`이 두 벌 있었다 —
+`recsys_adoption_discussion.md` §5-5의 E1은 `request_id`이고 여기의 E1은 `decision_id`다.
+
 | # | 항목 | 상태 | 비고 |
 |---|---|---|---|
 | **E1** | 행동 이벤트에 `decision_id`를 실을 수 있는가 | **미확인 — 임계경로** | 실을 수 있을 것으로 보나 확인 전. **소급 불가**이므로 가장 먼저 닫는다 |
 | **E2** | 전체 집합 + `revision` 방식 | **✅ 수용 가능** | 저장 모양이 여기서 확정됨 |
 | **E3** | 보유 강도의 형식 | **재정의됨** | "depth"를 요구하지 않고 원천 카운트를 받는 것으로 바꿈(⓷). 카운트 정의는 열림 |
-| **E4** | `recommendable` 동의 축 | **닫힘 (현재 기준)** | topic 공개에서 파생. wire 제외, gate에 자리 |
+| **E4** | `recommendable` 동의 축 | **재개방** (rev 2) | wire 제외·gate에 자리까지는 유효하나 **닫힘은 과했다** — 같은 문서 §3-3 본문이 "이진일지 tier일지 표면별일지 아직 모른다"고 적고 있고 SCORE-Q11이 "출시 전에 정한다"로 열어 두었다. `decisions.md` §3-C4 |
 | **E5** | 보안 등급 전달 보장 | **좁혀짐** | 정보 보안이 아니라 차단·삭제 전파로 축소. 서빙 시점 조회로 해결 |
 | **E6** | topic 병합·분할 시 과거 로그 처리 | **보류** | 아래 한 줄만 지금 고정하면 보류가 안전하다 |
 
