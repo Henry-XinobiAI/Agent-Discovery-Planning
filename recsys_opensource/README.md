@@ -21,6 +21,7 @@
 | off-policy 평가 | [off_policy.md](off_policy.md) | 초안 | §9의 노출 계약을 **이 문서가 소유** |
 | learned reranking | [ranking.md](ranking.md) | 초안 | §7의 rerank 층 |
 | 집중도·공급 지표 | [concentration_metrics.md](concentration_metrics.md) | 초안 | §9의 hard capacity·집중도 |
+| **저장소 규모·비용** | [storage_sizing.md](storage_sizing.md) | 초안 | §11의 카디널리티에 AWS 단가(도쿄·서울)를 붙이고 managed 대 자체 운영을 비교한다. **`gorse.md` §6-2가 비워 둔 칸** |
 | **retrieval·검색 색인** | **없음** | **빈칸** | §7-5. 이전 판에서 "현재 topic-api가 유계 후보를 만들므로 불필요"로 배제했으나 그 전제가 열렸다 |
 
 ---
@@ -343,6 +344,10 @@ network auth, schema sync, retry, readiness와 version 호환 책임이 생긴�
 ## 11. 규모 — 표면마다 병목이 다르다
 
 "사용자가 1억 명이다"만으로 크기를 정할 수 없다. 네 cardinality를 따로 측정한다.
+
+이 절은 크기를 센다. 그 크기에 AWS 단가를 붙이고 backend 넷을 비교한 것은
+[`storage_sizing.md`](storage_sizing.md)이고, 그 문서의 결론은 **1억 전제에서 병목이 저장소
+비용이 아니라 아래의 재계산 시간**이라는 것이다.
 
 ```text
 U_registered   전체 가입자                          최대 100,000,000
