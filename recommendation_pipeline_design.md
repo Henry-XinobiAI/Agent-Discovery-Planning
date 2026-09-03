@@ -103,7 +103,7 @@ read-time 판정 gate 없음(C단계 rerank는 dormant 슬롯).
 | `room_id: UUID` | 지금은 로깅만 | 오너 의도(협의 2026-08-24): "방 관련 정보를 더 요청할 수 있는 키". **in-room 제외는 defer 합의** — OBT까지는 내 에이전트가 추천하는 구조라 같은 방 상황이 사실상 없음. 단 추후 `room_members`가 오면 requester와 **같은 제외 집합**으로 처리하도록 S4를 집합 인터페이스로 설계해 둔다 |
 
 **삭제**: `need_type`·`proposition`(1차 유형 단일화·stance 폐기). `eligibility_context`는 wire에서
-빼고 우리 내부에서 room_id·requester로 구성(Q12 stub 유지).
+빼고 우리 내부에서 room_id·requester로 구성(eligibility는 stub — 아래 §S4 4번과 같은 항목).
 
 **되살아난 것 — `lang`**(rev 5.8): rev 5까지의 삭제 근거는 "우리는 **재료**만 보내고 최종 발화는
 bourbon-agent 모델이 대화 언어로 렌더한다"였고, 재료(ko·en 라벨 병기)만 보내는 한 그 근거는 지금도
@@ -404,7 +404,7 @@ fallback 경로에서 topic-api의 불완전성 플래그(`exhaustive=false`, `t
    거나 real eligibility가 활성화되어 top-100이 대량 소모되기 시작하면(계측: 제외·필터
    탈락 비율) overfetch 또는 서버측 필터를 재논의한다. eligibility 활성화 gate의 선행
    조건으로 이 재논의를 건다.
-4. **eligibility**: `EligibilityPolicy.is_eligible`(현 AllowAll stub 유지, Q12) — S4가 순수
+4. **eligibility**: `EligibilityPolicy.is_eligible`(현 AllowAll stub 유지 — 근거 축은 `EVT-E4`가 열어 둔 것과 같다. rev 5.14: 폐기된 archive 레지스터의 `Q12`를 인용하고 있었다) — S4가 순수
    함수라 **동기 술어**다(rev 5.7 정정: rev 5.6까지의 `EligibilityProvider.check`는 async
    provider 모양이어서 순수 함수 안에서 호출할 수 없었다. 실제 eligibility 원천이 생기면
    조회는 조립 함수가 비동기로 하고 그 결과를 이 정책에 넘긴다 — S4를 async로 바꾸지 않는다).

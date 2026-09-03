@@ -154,7 +154,7 @@ facets_ownership_split_discussion.md  값의 소유            ← 같은 경계
 
 | 어디 | 무엇 |
 |---|---|
-| **`decisions.md` §3** | **결정이 없어서 문서가 갈라진 자리 C1–C9.** 여기부터 본다 — 충돌은 결정 부재의 신호다 |
+| **`decisions.md` §3** | **결정이 없어서 문서가 갈라진 자리 C1–C10.** 여기부터 본다 — 충돌은 결정 부재의 신호다 |
 | **`decisions.md` §5** | 열린 항목 레지스터가 어느 문서에 있는지의 지도 + ID 접두사 규약 |
 | `recommendation_scoring_design.md` §11–§12 | N1–N5(지금 만들 것) · D1–D8(나중에 정할 것) · Q1–Q14 |
 | `inbound_event_contract.md` §6 | `EVT-E1`–`E9` 협의 상태. **E1이 임계경로** |

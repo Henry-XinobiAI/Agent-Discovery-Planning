@@ -1021,7 +1021,7 @@ score로 대체하면 §4.1 문제가 그 아이템에만 되살아난다), 그�
    잠그지 않고, 어댑터는 facet 이름에 하드바인딩하지 않는다(§4.2).
 5. **self-exclusion·제외 집합** — 우리 후처리로 확정(2026-08-24 결정, §11-5 철회).
    fan-out 100 대비 countable 제외 목록이라 정확성 손실 논거 소멸.
-6. **eligibility (Q12)** — `AllowAllEligibilityProvider`는 여전히 stub. topic-api는 이것을 모른다.
+6. **eligibility** (`EVT-E4`) — `AllowAllEligibilityProvider`는 여전히 stub. topic-api는 이것을 모른다.
 7. **불완전성 플래그** — `exhaustive=false` / `unranked_topics>0` / `truncated_descendants>0`.
    ~~품질 저하로 다룬다~~ → **초기 정책은 503**(rev 7.1 — 설계 rev 5.5에서 뒤집음: rank 기반
    RRF에서 꼬리 소실도 "다른 랭킹"이다). 부분 결과 허용은 명시적 degraded wire와 함께 재개방.
@@ -1124,7 +1124,7 @@ prod 적재 호출자도 토글 UI도 없어 현재 0이다. 대신 **출시 수
    구조로 보장하는가.
 4. **실패 3분기의 판정 지점.** `/search/topics` 0건 → 422를 어디서 판정하는가.
    expansion이 여러 변형을 냈고 일부만 0건일 때의 규칙.
-5. **eligibility(Q12)의 결합 지점.** topic-api는 eligibility를 모른다. leaf 결과를 받은 뒤
+5. **eligibility(`EVT-E4`)의 결합 지점.** topic-api는 eligibility를 모른다. leaf 결과를 받은 뒤
    필터하면 cap이 깎인다(§11-5와 같은 문제). 서버측 파라미터가 없을 때의 차선책.
 6. **rerank 진입 조건.** C단계 판정층을 언제 켜는가. 항상? 특정 신호에서만?
    그 신호를 무엇으로 측정하는가.
