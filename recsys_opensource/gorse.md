@@ -472,6 +472,12 @@ type = "fm"
 이 예시는 우리 결정값이 아니다. `conversation_started`가 항상 positive인지, `resolved`를 누가 생산하는지,
 read가 노출과 같은지부터 측정해야 한다. Gorse는 이 이름의 의미를 대신 정해 주지 않는다.
 
+> **[`feedback_semantics.md`](feedback_semantics.md)가 여기서부터를 이어받는다.** v0.5.11 소스에서
+> 확인한 것 셋만 미리 적으면: 버킷은 이름 목록이 아니라 `read>=3` 같은 **식**이고, `read`는 제외가
+> 아니라 학습에서 **`-1`**이며, **어떤 타입이든 feedback row가 하나 있으면 그 item은 그 사용자의
+> 추천에서 영구히 빠진다**(`enable_replacement`가 유일한 레버). 마지막 항목은 "써 본 상대도 다시
+> 추천된다"는 우리 요구와 정면으로 충돌하므로 채택 전에 닫아야 한다.
+
 ## 8. 데이터 동기화와 운영 구성
 
 ### 8-1 필요한 adapter

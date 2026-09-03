@@ -22,6 +22,7 @@
 | learned reranking | [ranking.md](ranking.md) | 초안 | §7의 rerank 층 |
 | 집중도·공급 지표 | [concentration_metrics.md](concentration_metrics.md) | 초안 | §9의 hard capacity·집중도 |
 | **저장소 규모·비용** | [storage_sizing.md](storage_sizing.md) | 초안 | §11의 카디널리티에 AWS 단가(도쿄·서울)를 붙이고 managed 대 자체 운영을 비교한다. **`gorse.md` §6-2가 비워 둔 칸** |
+| **feedback 의미론** | [feedback_semantics.md](feedback_semantics.md) | 초안 | §4의 observed behavior를 실제로 엔진에 넣을 때. **`gorse.md` §7-5가 멈춘 지점**이고 `inbound_event_contract.md` §3-4의 투영 규칙 근거 |
 | **retrieval·검색 색인** | **없음** | **빈칸** | §7-5. 이전 판에서 "현재 topic-api가 유계 후보를 만들므로 불필요"로 배제했으나 그 전제가 열렸다 |
 
 ---
@@ -309,6 +310,7 @@ Gorse v0.5.11을 실제로 실행해 확인. 이 목록이 §0의 증거 등급�
 | safety·eligibility | 차단, 삭제, 정책 변경은 학습 점수보다 먼저 적용되어야 함 |
 | recommendable opt-in | public topic 보유와 모르는 사람에게 추천되는 데 동의한 것은 다른 계약임 |
 | hard capacity | 실제로 새 대화를 받을 수 없는 owner는 큰 선호 점수로 되살아나면 안 됨 |
+| 재추천 간격·시간 감쇠 | Gorse의 replacement는 되돌아올 수 있게 하는 스위치와 **상수 감쇠**까지고 시간 축이 없다 — 어제 만난 상대와 석 달 전 만난 상대를 구분하지 못한다([`feedback_semantics.md`](feedback_semantics.md) §2-4) |
 | final response assembly | matched topic, relation, description, owner note와 설명은 모델의 ID·score 출력에 없음 |
 | exposure semantics | 무엇을 실제 노출로 셀지, 후보 집합·position·conditional propensity·ranker/policy version을 어떻게 남길지는 제품 실험 계약임 |
 

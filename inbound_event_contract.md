@@ -189,6 +189,13 @@ agent 단위 공개 축이 이진일지 tier일지 표면별일지 아직 모르
 `판단` `decision_id`는 **우리가 응답에 실어 보낸 값을 그대로 돌려받는 것**이다. 발신 측이 새로 만드는
 값이 아니다.
 
+> **투영 규칙은 [`recsys_opensource/feedback_semantics.md`](recsys_opensource/feedback_semantics.md)가
+> 소유한다.** 이 목록의 어느 단계를 Gorse의 positive·read·negative 중 무엇으로 보낼지는 여기서
+> 정하지 않는다. 다만 그 문서가 확인한 두 가지가 이 퍼널에 직접 걸린다 — **`negative`는 영구
+> 제외이므로 `requery.other_agent`를 negative로 보내면 그 조합이 다시는 추천되지 않고**(§2-5),
+> **의미가 정해지지 않은 단계는 Gorse에 보내지 않는다** — 버킷 미지정은 중립이 아니라 조용한
+> 제외다(§6-1). 원본은 어차피 우리 스트림에 있으므로 늦게 투영하는 비용이 없다.
+
 ---
 
 ## §4 지연 허용치 — 두 등급
