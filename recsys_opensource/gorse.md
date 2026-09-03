@@ -1,7 +1,7 @@
 # Gorse 활용 검토
 
-> **결론**: **채택했다**(`decisions.md` `D06`). 표면 2는 Gorse가 하는 일 그 자체이므로 통째로 쓰고,
-> 표면 1에서는 **후보 생성기**로 쓴다(`D07`) — 더미 topic item의 이웃을 라벨별로 물어 가중합하는
+> **결론**: **채택했다**(`decisions.md` `D06`). surface 2는 Gorse가 하는 일 그 자체이므로 통째로 쓰고,
+> surface 1에서는 **후보 생성기**로 쓴다(`D07`) — 더미 topic item의 이웃을 라벨별로 물어 가중합하는
 > 경로가 실제로 동작한다(§11-2). requester-dependent friends/private gate, surface-aware ranker,
 > propensity 노출 로그는 **계속 우리 것**이고, 그 경계가
 > [`README.md` §9](README.md)의 "도구와 무관하게 우리가 계속 소유할 것" 표다.
@@ -101,7 +101,7 @@ A의 Gorse User labels가 영화·위스키라고 해도 이번 `topic=coffee` �
   context = 집에서 드립 커피를 시작하고 싶다
 ```
 
-Gorse의 표준 recommendation endpoint는 이 자연어 query를 직접 받지 않는다. **그러나 질의를 받을 수
+Gorse의 표준 recommendation endpoint는 이 자연어 query를 직접 받지 않는다. **그러나 쿼리를 받을 수
 있는 경로가 따로 있다** — 확정 topic을 더미 item으로 두고 그 이웃을 라벨별로 물어 가중합하면
 topic별 후보 검색이 된다(§11-2 경로 C, `D07`). `?category=`는 후보 집합은 정확히 좁히지만 **순서가
 인기도**라 쓰지 않는다(§11-2 경로 A).
@@ -149,11 +149,11 @@ GET /api/recommend/user-a?n=3
 discovery 근거를 결합한다. [REST API](https://gorse.io/docs/api/restful-api)
 
 표준 사용자 추천 요청(`GET /api/recommend/{user-id}`)은 `user-id`·`n`·`offset`·`category`를 받고
-자연어 `context`를 받지 않는다. 그 함수는 "이 사용자가 평소 좋아할 agent"이고, **표면 2가 정확히 그
+자연어 `context`를 받지 않는다. 그 함수는 "이 사용자가 평소 좋아할 agent"이고, **surface 2가 정확히 그
 질문**이므로 여기서는 통째로 쓴다(`D06`).
 
-표면 1의 질문("이번 topic/context에 맞는 agent")은 이 endpoint가 아니라 **item-to-item 이웃 질의**로
-답한다(§11-2 경로 C). 두 표면이 Gorse의 서로 다른 경로를 쓰고, **표면 1의 경로는 feedback을 읽지
+surface 1의 질문("이번 topic/context에 맞는 agent")은 이 endpoint가 아니라 **item-to-item 이웃 쿼리**로
+답한다(§11-2 경로 C). 두 surface가 Gorse의 서로 다른 경로를 쓰고, **surface 1의 경로는 feedback을 읽지
 않는다**([`feedback_semantics.md` §1-3](feedback_semantics.md)).
 
 ## 4. user-to-user와 역할 분리
@@ -205,14 +205,14 @@ public 후보와의 merge, attribution은 우리 책임이다.
 
 | 요구 | 실제 동작 | 우리 쪽 결론 |
 |---|---|---|
-| 모든 사용자에게서 item 제거 | `IsHidden=true` | 전역 제외에 쓴다. **단 이웃 질의 경로에서는 숨긴 item의 이웃도 계산·서빙된다**(§11-1 M1) — 질의용 더미 item을 숨겨 두는 데 쓸 수 있다는 뜻이고, **가림막으로 믿으면 안 된다는 뜻이기도 하다** |
-| topic별 후보 검색 | **더미 topic item + 라벨별 이웃 질의 + 가중합** | `D07`의 경로. `?category=`는 후보를 정확히 좁히지만 **순서가 인기도**라 쓰지 않는다(§11-2 A) |
+| 모든 사용자에게서 item 제거 | `IsHidden=true` | 전역 제외에 쓴다. **단 이웃 쿼리 경로에서는 숨긴 item의 이웃도 계산·서빙된다**(§11-1 M1) — 쿼리용 더미 item을 숨겨 두는 데 쓸 수 있다는 뜻이고, **가림막으로 믿으면 안 된다는 뜻이기도 하다** |
+| topic별 후보 검색 | **더미 topic item + 라벨별 이웃 쿼리 + 가중합** | `D07`의 경로. `?category=`는 후보를 정확히 좁히지만 **순서가 인기도**라 쓰지 않는다(§11-2 A) |
 | 이미 본 사람 제외 | **feedback row가 하나라도 있으면 타입 불문 영구 제외** | 우리 요구와 **정면 충돌**한다. `enable_replacement`가 유일한 레버이고 쿨다운은 우리 것이다([`feedback_semantics.md` §2](feedback_semantics.md) · `D18`) |
 | 추천 결과를 read로 기록 | `write-back-type` — **반환한 모든 item에 row를 쓴다** | **쓰지 않는다.** 실제 렌더와 다를 수 있는 데다 위 행 때문에 부작용이 크다(`feedback_semantics.md` §2-6) |
 | 요청별 arbitrary allowlist·denylist | 표준 endpoint에 없음 | 우리 gate가 소유한다 |
 
 [공식 data model](https://gorse.io/docs/concepts/data-source)은 `IsHidden=true`가 즉시 추천에서
-제외되고 `false`로 되돌린 item은 refresh 주기를 거쳐 복귀한다고 적는다. **이웃 질의 경로는 예외라는
+제외되고 `false`로 되돌린 item은 refresh 주기를 거쳐 복귀한다고 적는다. **이웃 쿼리 경로는 예외라는
 것이 §11-1 M1이다.**
 
 ```json
@@ -234,7 +234,7 @@ cache invalidation이 생긴다.
 ```text
 확정 topic (grounding)
    ↓
-라벨별 개별 질의 + 가중합        Gorse item-to-item, tags       ← 후보를 만드는 곳
+라벨별 개별 쿼리 + 가중합        Gorse item-to-item, tags       ← 후보를 만드는 곳
    ↓
 미보유자 필터                    우리 복제본으로 판정 (D08·D10)
    ↓
@@ -254,7 +254,7 @@ requester-aware visibility/safety/self gate
 
 #### 결론
 
-- 전역 삭제/차단은 `IsHidden`으로 동기화하되 **이웃 질의 경로에서는 가림막이 아니다**(M1).
+- 전역 삭제/차단은 `IsHidden`으로 동기화하되 **이웃 쿼리 경로에서는 가림막이 아니다**(M1).
 - **requester별 visibility, block list, 재추천 정책, 최종 자격 판정은 우리 gate가 소유한다.**
 - 후보 pool은 Gorse가 만들고 **증명은 우리 복제본이 한다**(`D08`) — 근거 topic을 붙일 수 없는
   후보는 응답 자체를 만들 수 없기 때문이다(§11-3).
@@ -429,12 +429,12 @@ curl 'http://gorse-server:8087/api/recommend/user-a?n=20' \
   -H 'X-API-Key: ***'
 ```
 
-위는 **표면 2**의 호출이다. 표면 1은 §11-2 경로 C(라벨별 이웃 질의)를 쓴다.
+위는 **surface 2**의 호출이다. surface 1은 §11-2 경로 C(라벨별 이웃 쿼리)를 쓴다.
 
 ```python
-# 표면 1
+# surface 1
 topics = await ground(topic, context)                    # topic-api /search/topics
-candidates = await gorse.neighbors_weighted(topics)      # 라벨별 질의 + 가중합
+candidates = await gorse.neighbors_weighted(topics)      # 라벨별 쿼리 + 가중합
 held = filter_by_mirror(candidates, topics)              # 미보유자 제거 (D08·D10)
 eligible = gate(held, requester=requester_user_id)
 ordered = rank(eligible)                                 # 자르지 않는다
@@ -444,7 +444,7 @@ return await hydrate_and_verify(ordered, max_results)    # D11·D21 — 여기�
 `hydrate_and_verify`가 `D11`(복제본이 못 주는 다섯 값)과 `D21`(차단·삭제·철회 재확인)을 **한 번의
 왕복으로** 처리한다. 읽지 못한 후보는 stale로 계측해 제거하고 뒤에서 채운다 — upstream 계약 위반으로
 오귀속하지 않는다. **rev 1의 `union(gorse_ids, topic_candidates)`는 삭제했다**(`D07` — 합집합이 아니라
-표면마다 단일 소스다).
+surface마다 단일 소스다).
 
 ### 7-5 설정의 의미
 
@@ -465,7 +465,7 @@ enable_replacement = true         # D18 — 제품 요구가 강제한다
 positive_replacement_decay = 0.8
 read_replacement_decay     = 0.6
 
-[[recommend.item-to-item]]        # 표면 1의 경로 (§11-2 C)
+[[recommend.item-to-item]]        # surface 1의 경로 (§11-2 C)
 name   = "topic_neighbors"
 type   = "tags"
 column = "item.Labels.topics"
@@ -527,7 +527,7 @@ source of truth에서 다시 확인해야 한다. friends-only feature를 Gorse�
 
 | 장애 | 권장 동작 |
 |---|---|
-| Gorse timeout/unavailable | **표면 1: topic-api 보유자 랭킹으로 후보 생성 + `candidates_fallback` 선언**(`D20`). rev 1의 "현재 ordering으로 계속"은 `D07` 이후 성립하지 않는다 — 잃는 것이 개인화가 아니라 후보 자체다. **표면 2: 표면이 없다** |
+| Gorse timeout/unavailable | **surface 1: topic-api 보유자 랭킹으로 후보 생성 + `candidates_fallback` 선언**(`D20`). rev 1의 "현재 ordering으로 계속"은 `D07` 이후 성립하지 않는다 — 잃는 것이 개인화가 아니라 후보 자체다. **surface 2: surface가 없다** |
 | feedback sync 실패 | durable retry; 추천 요청은 실패시키지 않음 |
 | catalogue sync 지연 | online gate/hydration이 stale ID 제거 |
 | unknown requester | public/content fallback, 가짜 평균 user로 기록하지 않음 |
@@ -540,24 +540,24 @@ Gorse API 인증은 network/service credential이고 requester authorization을 
 
 ### A. Gorse가 전체 추천 API
 
-가장 빠르지만 topic grounding, requester-aware gate, 표면별 가중치, attribution과 exposure schema를 크게
+가장 빠르지만 topic grounding, requester-aware gate, surface별 가중치, attribution과 exposure schema를 크게
 재작성한다. 범용 홈 피드이고 정책이 단순할 때만 적합하다.
 
-> ⚠ **이 기각은 질의가 있는 표면을 전제로 한 것이다.** 질의 없는 표면(사용자 활동 기반 추천)에는
-> A안이 그대로 맞는다 — 거기서는 topic grounding도 표면별 질의도 없다. 남는 전제는
-> [`README.md` §3 R1](README.md)(그 표면이 `friends` 보유까지 근거로 삼는가) 하나다.
+> ⚠ **이 기각은 쿼리가 있는 surface를 전제로 한 것이다.** 쿼리 없는 surface(사용자 활동 기반 추천)에는
+> A안이 그대로 맞는다 — 거기서는 topic grounding도 surface별 쿼리도 없다. 남는 전제는
+> [`README.md` §3 R1](README.md)(그 surface가 `friends` 보유까지 근거로 삼는가) 하나다.
 
 ### B. Gorse 후보 + 우리 gate/rerank — **채택**(`D06`·`D07`)
 
 ```text
-표면 1   확정 topic → Gorse 라벨별 질의 + 가중합 ─┐
+surface 1   확정 topic → Gorse 라벨별 쿼리 + 가중합 ─┐
                                                   ├→ 미보유자 필터 → gate → 정렬 → hydrate → 응답
-표면 2   requester id → Gorse /api/recommend ─────┘
-                                                     └ 표면 2는 근거 topic이 없어 응답 형태가 다르다 (D02)
+surface 2   requester id → Gorse /api/recommend ─────┘
+                                                     └ surface 2는 근거 topic이 없어 응답 형태가 다르다 (D02)
 ```
 
 rev 1의 세 갈래(`Gorse public/behavior` + `topic-api topic` + `friends external`)는 삭제했다 —
-합집합이 아니라 **표면마다 단일 소스**이고, 그래서 합집합 규칙(SCORE-Q5)이 닫혔다.
+합집합이 아니라 **surface마다 단일 소스**이고, 그래서 합집합 규칙(SCORE-Q5)이 닫혔다.
 
 ### C. core fork
 
@@ -597,7 +597,7 @@ playground 없이 `/etc/gorse/config.toml` 을 주입해 실행.
 | # | 앞 절 서술 | 실측 |
 |---|---|---|
 | M1 | §6-1 "요청별 arbitrary allowlist — 표준 endpoint에 없음" | **더미 topic item을 만들어 그 이웃을 물으면 topic별 후보 검색이 된다.** `IsHidden=true`인 item도 이웃이 계산·서빙된다(숨긴 것과 보이는 대조군의 결과가 완전히 동일) |
-| M2 | (서술 없음) | **질의 item과 태그 집합이 완전히 같은 후보는 이웃에서 제외된다.** 공식 문서에 없고 사양서로 예측 불가이며, topic 검색 용도에서는 "그 주제만 파는 전문가가 탈락"으로 나타난다 |
+| M2 | (서술 없음) | **쿼리 item과 태그 집합이 완전히 같은 후보는 이웃에서 제외된다.** 공식 문서에 없고 사양서로 예측 불가이며, topic 검색 용도에서는 "그 주제만 파는 전문가가 탈락"으로 나타난다 |
 | M3 | §8-2 "cache TTL을 기다리지 않고 online gate가 재확인" | 맞지만 원인이 달랐다. **이웃 갱신 주기를 지배하는 것은 `[recommend] cache_expire`이고 기본값이 `72h`다.** 파이프라인이 60초마다 돌아도 이 값 전에는 기존 item의 이웃이 재계산되지 않는다 |
 | M4 | (서술 없음) | 전면 재계산 비용 **≈10 ms/item**, 2,000개까지 선형. 상위 라벨을 다수가 공유하는 계층 편중이 비용을 키우지 않았다 |
 | M5 | §7 "실제 endpoint port와 API key는 배포 설정을 따른다" | `--playground`는 **재시작마다 설정 파일을 재생성하고 데이터를 재임포트한다.** 설정을 바꾸려면 playground 없이 띄우고 config를 주입해야 한다 |
@@ -615,28 +615,28 @@ dave = drip 전담,     피드백 0건
 ?category=drip  →  gen  dave  carol      ← 전담 전문가가 2등
 ```
 
-**경로 B — 더미 topic item에 하위 라벨을 전부 실은 결합 질의**
+**경로 B — 더미 topic item에 하위 라벨을 전부 실은 결합 쿼리**
 
 ```text
-질의 = coffee + drip + espresso + roasting + latte
+쿼리 = coffee + drip + espresso + roasting + latte
    generalist 0.507  partial 0.505  narrow 0.501  parentonly 0.501
    ⚠ broad (상위+하위 전부 보유 = 찾으려던 사람) 결과에 없음    ← M2
 ```
 
-M2와 길이 정규화가 동시에 터진다. **질의 태그를 늘릴수록 정답이 제외될 확률이 올라간다.**
+M2와 길이 정규화가 동시에 터진다. **쿼리 태그를 늘릴수록 정답이 제외될 확률이 올라간다.**
 
-**경로 C — 라벨별 개별 질의 + 가중 합산** (성립하는 형태)
+**경로 C — 라벨별 개별 쿼리 + 가중 합산** (성립하는 형태)
 
 M2가 두 가지로 해소된다.
 
-| 질의 | 센티넬 없음 | 센티넬 있음 |
+| 쿼리 | 센티넬 없음 | 센티넬 있음 |
 |---|---|---|
 | 상위 라벨 | 상위만 보유한 agent **누락** | 누락 없음 |
 | 하위 라벨 | 누락 없음 | 누락 없음 |
 
-- **하위 라벨 질의는 원래 안 터진다** — 하위 보유가 상위 보유를 함의하는 데이터에서는 하위 보유자의
-  태그 집합이 단일 라벨 질의와 같아질 수 없다.
-- **상위 라벨 질의는 센티넬 태그 하나로 막힌다** — 어떤 agent도 갖지 않는 태그(`__QUERY__`)를 질의
+- **하위 라벨 쿼리는 원래 안 터진다** — 하위 보유가 상위 보유를 함의하는 데이터에서는 하위 보유자의
+  태그 집합이 단일 라벨 쿼리와 같아질 수 없다.
+- **상위 라벨 쿼리는 센티넬 태그 하나로 막힌다** — 어떤 agent도 갖지 않는 태그(`__QUERY__`)를 쿼리
   item에 넣는다. 어떤 후보와도 매칭되지 않아 분자 기여가 0이고, 분모는 후보별 상수라 순서에 영향이 없다.
 
 라벨별 원점수는 `매칭 여부 × 1/‖d‖` 구조다(0.5 초과분 ×10⁻³):
@@ -657,13 +657,13 @@ M2가 두 가지로 해소된다.
 | 균등 (상위1·하위1×4) | **broad 3.88** > partial 2.90 > narrow 2.32 > generalist 1.94 > parentonly 1.60 |
 | 하위 강조 (상위1·하위3) | broad 10.44 > partial 7.03 > **generalist 5.21** > narrow 4.79 |
 | 상위 강조 (상위4·하위1) | **parentonly 6.40** > broad 5.70 > narrow 5.56 > partial 5.43 |
-| 좁은 질의 (coffee1·drip5) | **narrow 7.26** > partial 5.66 > broad 4.07 > generalist 2.03 |
+| 좁은 쿼리 (coffee1·drip5) | **narrow 7.26** > partial 5.66 > broad 4.07 > generalist 2.03 |
 
 ★ **상위 라벨은 랭킹 신호가 아니라 recall 장치다.** 하위가 상위를 함의하면 subtree 안 모두가 상위
 라벨을 가지므로 IDF가 낮아 변별력이 없고, 남는 것은 `1/‖d‖`뿐이라 "보유가 적은 사람"을 고르게 된다.
-상위 질의는 후보를 긁어오는 데 쓰고 랭킹 가중은 하위에 준다.
+상위 쿼리는 후보를 긁어오는 데 쓰고 랭킹 가중은 하위에 준다.
 
-마지막 행이 **질의 구체성이 보존된다**는 증거다 — 좁은 질의에서 좁고 깊은 전문가가 1등이 된다.
+마지막 행이 **쿼리 구체성이 보존된다**는 증거다 — 좁은 쿼리에서 좁고 깊은 전문가가 1등이 된다.
 
 오버헤드는 호출당 **약 1.1 ms**(순차 10회 10.7 ms). 확장이 라벨 10개를 내도 문제없다.
 
@@ -680,10 +680,10 @@ M2가 두 가지로 해소된다.
 
 `판단` **셋째 행만 성격이 다르다 — 미보유자 혼입은 품질 문제가 아니라 계약 문제다.** 우리 응답은
 추천마다 "어느 topic 때문인가"를 **필수로** 요구한다(`agent_discovery/domain/recommendation.py`의
-`Recommendation.representative`는 옵셔널이 아니다). 질의 topic을 실제로 보유하지 않은 후보에는 붙일
+`Recommendation.representative`는 옵셔널이 아니다). 쿼리 topic을 실제로 보유하지 않은 후보에는 붙일
 이유가 없으므로 **응답을 만들 수조차 없다.**
 
-따라서 미보유자 필터는 켜고 끄는 품질 옵션이 아니라 **표면 1에서 Gorse가 후보를 *추가*할 수 있게
+따라서 미보유자 필터는 켜고 끄는 품질 옵션이 아니라 **surface 1에서 Gorse가 후보를 *추가*할 수 있게
 하는 전제**다. 없으면 교집합(topic-api가 이미 준 사람만)으로 후퇴해야 하고, 그러면 Gorse는
 재정렬기이지 후보 생성기가 아니다.
 
@@ -696,9 +696,9 @@ store에 함께 두면 로컬 집합 연산**이 되고 왕복이 0이다.
 
 | 필드 | 출처 |
 |---|---|
-| `topic_id` | 질의를 우리가 구성했으므로 어느 라벨에서 매칭됐는지 안다 |
+| `topic_id` | 쿼리를 우리가 구성했으므로 어느 라벨에서 매칭됐는지 안다 |
 | `labels` | 카탈로그 — grounding에서 이미 읽었다 |
-| `distance` | 질의 topic과 매칭 topic의 계층 관계 |
+| `distance` | 쿼리 topic과 매칭 topic의 계층 관계 |
 | `owner_notes` | **없다** — topic-api의 보유자 응답에만 있다 |
 
 `owner_notes`는 빈 값이 허용되므로 응답 자체는 만들어지지만, **Gorse가 데려온 사람만 본인 문장 없이
@@ -713,7 +713,7 @@ store에 함께 두면 로컬 집합 연산**이 되고 왕복이 0이다.
 | 시도 | 결과 |
 |---|---|
 | 신규 item 삽입 후 파이프라인 6회 실행 대기(340s) | 기존 item의 이웃에 **등장하지 않음** |
-| 질의 item을 다시 POST 해서 touch | **갱신되지 않음** |
+| 쿼리 item을 다시 POST 해서 touch | **갱신되지 않음** |
 | 컨테이너 재시작 | 전면 재계산. 전부 등장 |
 | `cache_expire = "2m"` | **120.2초 만에 반영** |
 
@@ -738,7 +738,7 @@ store에 함께 두면 로컬 집합 연산**이 되고 왕복이 0이다.
 - `?user-id=<id>` 파라미터는 **그 사용자가 이력을 가진 후보를 결과에서 제외한다**(실측: alice가
   `talked`한 bob·carol이 사라짐). 합성 피드백으로 self-exclusion을 넣을 여지가 있다.
 - `[[recommend.item-to-item]]`은 **배열**이라 이름별로 여러 개를 정의할 수 있다. `tags`/`embedding`/`users` 세 type.
-- 태그가 완전히 같은 item 두 개는 **접히지 않는다.** 둘 다 색인에 남고 각각 조회된다.
+- 태그가 완전히 같은 item 두 개는 **접히지 않는다.** 둘 다 인덱스에 남고 각각 조회된다.
 
 ★ **규율: 문서에 없는 동작은 문서가 아니라 실행이 답한다.** M2·M3은 서술 자체가 없었고 둘 다 채택
 판단을 바꾸는 크기였다.

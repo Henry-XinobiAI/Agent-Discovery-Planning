@@ -298,7 +298,7 @@ grounding, `public/friends/private`, self-exclusion, block/safety를 우리 코�
 ```text
 grounded candidates
   → requester-aware gate
-  → raw ID를 Cornac item index로 투영
+  → raw ID를 Cornac item index로 프로젝션
   → rank(item_indices=eligible)
   → 신규/unknown item을 규칙 점수로 합류
 ```

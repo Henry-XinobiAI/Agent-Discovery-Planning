@@ -199,7 +199,7 @@ ids, scores = model.recommend(
 우리 online path는 discovery/gate가 허용한 작은 후보만 넘긴다. 전체 카탈로그 추천과 요청별 topic
 rerank를 섞지 않는 핵심 이음매다.
 
-예를 들어 현재 request에서 gate를 통과한 후보가 Bob과 Carol뿐이면 다음과 같이 ID를 투영한다.
+예를 들어 현재 request에서 gate를 통과한 후보가 Bob과 Carol뿐이면 다음과 같이 ID를 프로젝션한다.
 
 ```python
 eligible_raw_ids = ("agent-bob", "agent-carol")
@@ -623,12 +623,12 @@ factor matrix는 각 API worker가 하나씩 읽으면 worker 수만큼 메모�
 - **item-item BM25/TF-IDF**: “함께 사용된 agent” baseline으로 설명하기 쉽지만 cold requester fallback이
   필요하다.
 
-> ⚠ `실측` **item-item BM25를 topic 질의에 쓰면 안 된다**(2026-09-03 추가 — 근거는
-> [`README.md` §7-1](README.md)). 실제로 돌려 보니 `drip` 질의에서 6주제 보유 generalist가 .82로
+> ⚠ `실측` **item-item BM25를 topic 쿼리에 쓰면 안 된다**(2026-09-03 추가 — 근거는
+> [`README.md` §7-1](README.md)). 실제로 돌려 보니 `drip` 쿼리에서 6주제 보유 generalist가 .82로
 > 1등이고 **drip 전담이 .20으로 꼴찌**였다. `generalist`는 누구와도 비슷하므로 항상 이긴다 —
 > **교과서적 인기도 편향**이다.
 >
-> ★ **`implicit`의 BM25는 *CF 가중치*이지 정보검색의 BM25가 아니다.** 이름이 같아서 "질의-문서
+> ★ **`implicit`의 BM25는 *CF 가중치*이지 정보검색의 BM25가 아니다.** 이름이 같아서 "쿼리-문서
 > 매칭"으로 읽히지만 계산하는 것이 다르다. 이 문서는 §1–§7이 전부 `문서` 조사라 이 사실이 여기
 > 본문에 없었고, 요약 문서에만 있었다.
 

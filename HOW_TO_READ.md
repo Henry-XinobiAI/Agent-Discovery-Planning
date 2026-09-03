@@ -18,7 +18,7 @@
 ```text
 0. decisions.md                       ★ 지금 유효한 결정 전부. 다른 문서와 어긋나면 이쪽이 맞다
 1. README.md                          프레이밍 4차 · 문서 지도 · §4 제품 불변식
-2. recommendation_pipeline_design.md  ★ 설계 정본 — 지금 실제로 도는 것
+2. recommendation_pipeline_design.md  ★ 설계 기준 문서 — 지금 실제로 도는 것
                                         §0 요약 → S1–S6 → §9 열린 결정
 3. serving_surface_design.md          노출 표면 · 위협 모델
 4. recommendation_scoring_design.md   ★ 가려는 곳 — 신호 4종을 하나의 랭커에 (surface = 입력)
@@ -38,12 +38,12 @@
 
 ```text
 1. recsys_opensource/README.md  §1–§2      ← 여기서 시작
-     §1  표면이 둘이고 서로 다른 문제다
-     §2  표면 × 층 배치표                    ← 한 장으로 전체 그림
+     §1  surface가 둘이고 서로 다른 문제다
+     §2  surface × 층 배치표                    ← 한 장으로 전체 그림
 
 2. recsys_opensource/README.md  §6–§7
-     §6  표면 2 = Gorse, 그리고 이전 기각 사유 재평가
-     §7  표면 1 = CF 가 아니다(§7-1 실측) → 성립하는 형태(§7-3)
+     §6  surface 2 = Gorse, 그리고 이전 기각 사유 재평가
+     §7  surface 1 = CF 가 아니다(§7-1 실측) → 성립하는 형태(§7-3)
 
 3. recsys_opensource/README.md  §8
      문서 근거가 실행에 뒤집힌 다섯          ← 왜 증거 등급을 나눴는가
@@ -64,11 +64,11 @@
 
 ### 이 갈래에서 헷갈리기 쉬운 것
 
-- **표면 1과 표면 2를 섞어 읽지 않는다.** 같은 도구가 한 표면에서는 엔진이고 다른 표면에서는 오답이다.
+- **surface 1과 surface 2를 섞어 읽지 않는다.** 같은 도구가 한 surface에서는 엔진이고 다른 surface에서는 오답이다.
   `recsys_opensource/README.md` §2 표가 그 축이다.
 - **`문서` 근거와 `실측`을 구분한다.** `recsys_opensource/gorse.md`는 §1–§10이 문서 근거, §11이 실측이고,
   §11이 앞 절 다섯 개를 뒤집는다. §6-1·§6-2·§9에 ⚠ 포인터가 있다.
-- **R1이 열려 있다.** "표면 2가 `friends` 보유까지 근거로 삼는가"가 §6 전체의 전제다.
+- **R1이 열려 있다.** "surface 2가 `friends` 보유까지 근거로 삼는가"가 §6 전체의 전제다.
   `public`만이면 Gorse가 성립하고 `friends`까지면 구조적으로 막힌다.
 
 ---
@@ -133,8 +133,8 @@ facets_ownership_split_discussion.md  값의 소유            ← 같은 경계
 
 | 지위 | 뜻 |
 |---|---|
-| **결정 대장** | `decisions.md` 하나뿐. **결정에 관해서는 어떤 문서보다 우선한다** |
-| **설계 정본** | 지금 가동 중인 것을 서술. 설계에 관해 다른 문서와 어긋나면 이쪽이 맞다 |
+| **결정 레지스터** | `decisions.md` 하나뿐. **결정에 관해서는 어떤 문서보다 우선한다** |
+| **설계 기준 문서** | 지금 가동 중인 것을 서술. 설계에 관해 다른 문서와 어긋나면 이쪽이 맞다 |
 | **설계 제안** | 가려는 곳. 코드가 이것을 근거로 바뀌지 않았다 |
 | **논의 기록** | 결정이 아니다. `사실` 절만 판단 변경에도 살아남는다 |
 | **조사 자료** | 도구의 계약·비용·반례. 채택·기각은 설계 문서가 소유 |
@@ -158,6 +158,6 @@ facets_ownership_split_discussion.md  값의 소유            ← 같은 경계
 | **`decisions.md` §5** | 열린 항목 레지스터가 어느 문서에 있는지의 지도 + ID 접두사 규약 |
 | `recommendation_scoring_design.md` §11–§12 | N1–N5(지금 만들 것) · D1–D8(나중에 정할 것) · Q1–Q14 |
 | `inbound_event_contract.md` §6 | E1–E6 협의 상태. **E1이 임계경로** |
-| `recsys_opensource/README.md` §13 | R1–R7. **R1은 여전히 표면 2의 전제**(friends까지 근거로 삼으면 전역 label이 성립하지 않는다). **R4는 배포 전 게이트로 승격**(`decisions.md` §4) |
+| `recsys_opensource/README.md` §13 | R1–R7. **R1은 여전히 surface 2의 전제**(friends까지 근거로 삼으면 전역 label이 성립하지 않는다). **R4는 배포 전 게이트로 승격**(`decisions.md` §4) |
 | `recsys_adoption_discussion.md` §9 | 논의에서 남은 항목 |
 | 코드 repo `tasks/todo.md` | 구현 plan의 단일 소스 (이 repo에 병렬 plan을 두지 않는다) |

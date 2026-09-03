@@ -39,7 +39,7 @@ data = Dataset.load_from_df(ratings[["user", "item", "rating"]], reader)
 “다시 추천받고 싶나요?” 1..5
 ```
 
-카드 노출, 클릭, 대화 시작·길이, 재질의, 추정된 해결 여부는 rating이 아니다. positive-only이거나 맥락에
+카드 노출, 클릭, 대화 시작·길이, 재쿼리, 추정된 해결 여부는 rating이 아니다. positive-only이거나 맥락에
 따라 부호가 달라지는 implicit event다.
 
 ### 이번 요청 topic은 rating이 아니다

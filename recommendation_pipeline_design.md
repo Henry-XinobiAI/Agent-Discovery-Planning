@@ -1,12 +1,12 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 정본 (rev 5.13, 외부 리뷰 5회 반영). **결정은 이 문서가 소유하지 않는다** —
+> **문서 지위**: 설계 기준 문서 (rev 5.13, 외부 리뷰 5회 반영). **결정은 이 문서가 소유하지 않는다** —
 > [`decisions.md`](decisions.md)가 소유하고 여기서는 `Dnn`을 인용한다.
 > 입력 = `topic_api_analysis.md` **rev 8**
 > (2026-08-25, topic-api HEAD `9ee67f3`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
-> 대체하는 정본이 됐다(열린 결정은 §9에 잔존).
+> 대체하는 기준 문서가 됐다(열린 결정은 §9에 잔존).
 >
 > **범위**: 큰 그림의 파이프라인 — bourbon-agent의 요청을 받아 topic-api의 어느 endpoint에서
 > 어떤 값을 가져와 추천 소스로 쓰는지, 각 단계의 동작·흐름·산출물. **노출 표면**(internal-only·
@@ -30,7 +30,7 @@ S2 Grounding        probe별 GET …/search/topics → is_match 트리 → **con
    ▼                1 topic 확정** (못 고르면 ambiguous)
                     산출물: GroundingResult (outcome 4종)
                     [expansion 정상+전체 0건 → 422 / expansion 실패+fallback 0건 → 503]
-S3 Candidate        확정 topic을 **라벨별 개별 질의 + 가중합**으로 Gorse에 물어 후보를 만든다(D07)
+S3 Candidate        확정 topic을 **라벨별 개별 쿼리 + 가중합**으로 Gorse에 물어 후보를 만든다(D07)
    ▼                (Gorse 불능 → topic-api 보유자 랭킹으로 fallback, `candidates_fallback` 선언 — D20)
                     산출물: CandidateSet
 S4 Merge/Filter     미보유자 필터(복제본 D10·D08) → stub 방어 → exclusion → eligibility
@@ -38,7 +38,7 @@ S4 Merge/Filter     미보유자 필터(복제본 D10·D08) → stub 방어 → 
 S5 Ordering         gate → lexicographic 정렬 키 → 결정적 tiebreak (scalar 노출 없음)
    ▼                산출물: OrderedCandidates — **자르지 않는다**(S6의 백필 재료)
 S6 Assembly         최종 N명 hydrate+재확인(topic-api /users/{id}/topics — D11·D21)
-   │                → 탈락분 백필 → max_results로 절단 → owner→agent id 변환(uuid5)
+   │                → 탈락분 백필 → max_results로 자름 → owner→agent id 변환(uuid5)
    │                산출물: RecommendResponse — matched_topics(라벨·descriptions·relation)
    │                + owner_user_id + match_reason + owner_notes
    │                (signals는 wire가 아니라 decision log)
@@ -71,18 +71,18 @@ rev 14에서 승계한 규율(분석 §9의 승계 목록, 이 파이프라인�
 | ordering = lexicographic 계약, scalar 단일 점수 노출 금지 | S5 |
 | self-exclusion·제외 집합 = **우리 후처리로 확정**(2026-08-24 결정 — countable 목록·fan-out 100이라 오버헤드 무시 가능) | S4 |
 | 즐겨찾기 = tiebreak only, gate 우회 금지 | S5 — 단 **dormant 슬롯**: 현 파이프라인에 즐겨찾기 데이터 공급처가 없다. provider가 생길 때까지 이 키는 비활성 |
-| popularity prior 금지 | S5. **S3에서도 유지된다** — Gorse 라벨별 질의의 원점수는 `매칭 여부 × 1/‖d‖`이고 전역 인기 항이 없다(`gorse.md` §11-2). `?category=` 경로는 인기도 순이라 **쓰지 않는다** |
+| popularity prior 금지 | S5. **S3에서도 유지된다** — Gorse 라벨별 쿼리의 원점수는 `매칭 여부 × 1/‖d‖`이고 전역 인기 항이 없다(`gorse.md` §11-2). `?category=` 경로는 인기도 순이라 **쓰지 않는다** |
 | 판정 입력 텍스트 전부 비신뢰 | S1·S2의 LLM 프롬프트 (카탈로그 라벨·유저 서술 모두) |
 | gate 3종 직교 (maturity / safety / privacy) | privacy는 topic-api 구조가 **대부분** 보장하나 leaf stub 구멍이 남아 있다(분석 §6.3 — §11-4 **블로커** 승격). 근본 수정은 topic-api, 우리는 S4의 stub 방어 필터를 임시 방어로 병행. maturity는 §11-6 대기, safety는 타 팀 |
 | best-effort 입력 선언 | 사슬 전체(deferq→extractor→topic-api)가 best-effort — freshness 가정 금지 |
 | wire 계약: 응답 파싱은 실효 계약 기준·계약 테스트 payload를 consumer model에서 유도 금지 | §6 어댑터 |
 
 **안 하는 것** (분석 §8.2·§8.3): **카탈로그 어휘의 두 번째 원본을 만들지 않는다** — topic의 뜻과
-계층을 정하는 것은 topic-api이고 우리가 갖는 것은 그 투영이다(`D10`). rev 5.13 이전 이 자리에 있던
-"우리 topic 저장소·색인·스트림 없음"은 `D10`으로 뒤집혔다 — 카운트·최근성은 우리 feature이고
+계층을 정하는 것은 topic-api이고 우리가 갖는 것은 그 프로젝션이다(`D10`). rev 5.13 이전 이 자리에 있던
+"우리 topic 저장소·인덱스·스트림 없음"은 `D10`으로 뒤집혔다 — 카운트·최근성은 우리 feature이고
 (`D13`), 델타가 아니라 전체 집합을 받으므로 한 건 유실이 영구 불일치가 되지 않는다.
 NeedType 축·stance 파이프라인 삭제(1차 유형은 "이 topic을 가장 잘 아는 agent" 하나).
-rollup 회피를 위한 재질의 없음(분석 §13-9 — rollup 응답도 정상 경로, 사후 판별·로깅만).
+rollup 회피를 위한 재쿼리 없음(분석 §13-9 — rollup 응답도 정상 경로, 사후 판별·로깅만).
 read-time 판정 gate 없음(C단계 rerank는 dormant 슬롯).
 
 ---
@@ -284,8 +284,8 @@ probe는 topic/context 파생이라 관심사·개인정보가 실릴 수 있고
 
 ### S3 Candidate — 확정 topic으로 후보 만들기
 
-**동작** (`D07`, rev 5.13): 확정 topic들을 **라벨별 개별 질의 + 가중합**으로 Gorse에 묻는다
-(`recsys_opensource/gorse.md` §11-2 경로 C). 라벨마다 센티넬 태그를 넣은 질의 item의 이웃을 묻고,
+**동작** (`D07`, rev 5.13): 확정 topic들을 **라벨별 개별 쿼리 + 가중합**으로 Gorse에 묻는다
+(`recsys_opensource/gorse.md` §11-2 경로 C). 라벨마다 센티넬 태그를 넣은 쿼리 item의 이웃을 묻고,
 상위 라벨은 **recall 장치**로, 하위 라벨은 **랭킹 가중**으로 쓴다. 호출당 약 1.1 ms이므로 라벨이
 열 개가 되어도 문제가 없다.
 
@@ -362,7 +362,7 @@ flags: {exhaustive, descendants_dropped, topics_dropped} }`
 
 fallback 경로에서 topic-api의 불완전성 플래그(`exhaustive=false`, `truncated_descendants > 0`)를
 읽으면 **그 topic의 기여만 빼고 `grounding_partial`을 선언**한다 — 이미 저하 모드이므로 503으로
-격상하지 않는다. `unranked_topics`는 단일 id 질의에서 계약상 0이고, 0이 아니면 계약 위반이므로
+격상하지 않는다. `unranked_topics`는 단일 id 쿼리에서 계약상 0이고, 0이 아니면 계약 위반이므로
 **503**이다(저하가 아니라 상류가 약속을 깬 것).
 
 **계측**: "grounded인데 공개 보유자 0" 비율(= 공개 밀도 지표), 플래그 3종 분포, topic당
@@ -442,7 +442,7 @@ contribution(원형 score_detail 포함), 출력은 전순서(total order), **fa
 facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3). 기본 전략(RRF)은 facets를
 전혀 읽지 않으므로 dummy 기간에도 안전하다.
 
-**산출물**: `OrderedCandidates` — **절단하지 않는다**(rev 5.13). 절단은 S6이 재확인을 끝낸 뒤에
+**산출물**: `OrderedCandidates` — **자르지 않는다**(rev 5.13). 자르는 것은 S6이 재확인을 끝낸 뒤에
 한다: `D21`이 재확인에 실패한 후보를 빼고 **뒤에서 채우도록** 요구하는데, 여기서 자르면 채울 재료가
 없다. rev 5.12까지 이 자리에 있던 `ranked[:max_results]`가 그 재료를 버리고 있었다.
 
@@ -672,7 +672,7 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 | `ranking.py` | **개조** — RRF + lexicographic + 전략 슬롯 |
 | `stance*.py`·need_type 경로 | **삭제** |
 | `serving.py`·`decision_log*`·`observability/`·`llm/` | **유지** |
-| eval 코퍼스 | **재작성** — 기존 질의·앵커는 memory 앵커 세계의 어휘(분석 §12.1 주의) |
+| eval 코퍼스 | **재작성** — 기존 쿼리·앵커는 memory 앵커 세계의 어휘(분석 §12.1 주의) |
 
 포팅의 실행 순서는 신규 구현의 계획에서 정한다(그릇 결정 = `serving_surface_design.md` §7-③).
 
@@ -727,7 +727,7 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
    **topic-api 랭킹 범위를 넓히는 별도 설계**이고, 그때 이 거절이 그것을 크게 알린다.
 
    `결정`(rev 5.10, 외부 리뷰 5차) **거절은 두 층이고, 나누는 기준은 귀속이다.** rev 5.9의 ⑶은 상류 경로만
-   덮었다 — 우리 코드가 음수 attribution을 만들면 투영이 조용히 `descendant`를 답했다. 그래서: **상류가
+   덮었다 — 우리 코드가 음수 attribution을 만들면 프로젝션이 조용히 `descendant`를 답했다. 그래서: **상류가
    음수 item을 보냄 → provider `UpstreamContractViolation` → 503**(그들의 계약 위반) · **우리가 음수
    attribution을 만듦 → 도메인 타입이 `ValueError` → 500**(우리 결함) · 관계를 명명하는 함수도 단어를
    고르지 않고 거절한다(두 가드 뒤라 도달 불가지만, 도달 불가의 대안이 "안전"이 아니라 "`descendant`를
@@ -823,7 +823,7 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 소스)·`D10`(공개 보유 복제본)·`D20`·`D21`(실패 규율)을 본문에 반영했다. 뒤집힌 서술은 표시하지 않고
 **삭제**했다 — 제자리에 경고만 달아 두는 방식이 `gorse.md` §6-1에서 실제로 오독을 만들었다.
 
-⑴ **S3이 Retrieval에서 Candidate로 바뀌었다**(`D07`). 후보는 Gorse에 라벨별 개별 질의 + 가중합으로
+⑴ **S3이 Retrieval에서 Candidate로 바뀌었다**(`D07`). 후보는 Gorse에 라벨별 개별 쿼리 + 가중합으로
 묻고, `/topics/{id}/users`는 **fallback 전용**으로 내려갔다. 이 단계가 존재하는 이유는 그들 랭킹이
 상위 100명에서 잘리고 페이징이 없다는 것 — 가장 깊게 아는 사람이 컷 밖이면 꺼낼 방법이 없었다.
 
@@ -836,10 +836,10 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 `relation`·`descriptions`·`deep_holdings_observed`·`ranking_contribution`)과 차단·삭제·철회의 서빙
 시점 재확인이 **같은 호출**에서 온다. 읽지 못한 후보는 빼고 뒤에서 채운다.
 
-⑷ **S5가 절단을 멈췄다.** ⑶의 백필에는 잘라낸 나머지가 필요한데 `ranked[:max_results]`가 그것을
+⑷ **S5가 자르기를 멈췄다.** ⑶의 백필에는 잘라낸 나머지가 필요한데 `ranked[:max_results]`가 그것을
 버리고 있었다. 절단은 재확인 뒤 S6이 한다.
 
-⑸ **§1의 "우리 topic 저장소·색인·스트림 없음"을 `D10`으로 대체**했다. 남는 규율은 좁아졌다 —
+⑸ **§1의 "우리 topic 저장소·인덱스·스트림 없음"을 `D10`으로 대체**했다. 남는 규율은 좁아졌다 —
 **카탈로그 어휘의 두 번째 원본을 만들지 않는다.**
 
 ⑹ **§4 실패 표를 다시 썼다** — `verification_unavailable`, `candidates_fallback`,
@@ -887,7 +887,7 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
   방어**다. rev 5.9의 fixture 규율은 유지된다: **wire에 내는 것 ≠ repo에 커밋하는 것.**
 
 - **2026-08-27 rev 5.10** — **음수 distance 거절을 두 층으로 나눈다**(외부 리뷰 5차, P2 1건 수용). rev 5.9의
-  "provider가 거절한다"는 **상류 경로에만** 참이었다: 우리 코드가 음수 attribution을 만들면 투영 함수가
+  "provider가 거절한다"는 **상류 경로에만** 참이었다: 우리 코드가 음수 attribution을 만들면 프로젝션 함수가
   조용히 `descendant`를 답했고, 그것은 이 트랙이 없애려던 바로 그 **틀린 이유**다. 기준은 **귀속**이다 —
   그들의 답변이면 503, 우리가 만든 값이면 500, 그리고 상류의 값을 나르는 중간 타입에는 가드를 넣지 않는다
   (넣으면 그들의 계약 위반이 우리 결함으로 기록된다). 상세는 §9-④의 `결정`(rev 5.10).
@@ -928,7 +928,7 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 - **2026-08-25 rev 5.7** — **구현 설계안(코드 repo `tasks/todo.md` rev 10)의 이름 감사 역반영.**
   설계 판단은 하나도 바꾸지 않았고, 이름과 한 값의 **소속 단위**만 고쳤다. ⑴ **§S2 계측 — unmatched
   probe의 원문 기록을 폐기**하고 digest·길이·언어·귀속만 남긴다. 이것은 구현 설계안이 이 문서를
-  이기고 있던 유일한 지점이었다(그 문서 §10-7이 "정본을 고쳐야 한다"고 기록해 둔 빚). ⑵ **§S3 산출물
+  이기고 있던 유일한 지점이었다(그 문서 §10-7이 "기준 문서를 고쳐야 한다"고 기록해 둔 빚). ⑵ **§S3 산출물
   — `deep_holdings_observed`를 topic 단위에서 유저 단위로** 내렸다(값이 유저의 트리에서 계산되고,
   topic 단위는 `any()`로 파생된다). ⑶ **§S4-2 개명** — `evidence 병합` → `group contribution 병합`,
   `contribution`이 구현에서 `ranking_contribution`이 되는 이유 명시(우리 `rrf_share`와의 혼동 차단).
@@ -998,7 +998,7 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
   ⑸ was_rollup → deep_holdings_observed 개명(충분조건 명기), 즐겨찾기 tiebreak dormant 명기,
   exclusion 후처리 결정에 만료 조건 부착.
 - **2026-08-24 rev 5.1** — 지위 갱신(설계 내용 불변). `persona_topic_search_design.md`(rev 14)를
-  `archive/`로 보내며 이 문서를 정본으로 승격. 헤더의 입력 표기를 분석 rev 7로 동기화(rev 5와
+  `archive/`로 보내며 이 문서를 기준 문서로 승격. 헤더의 입력 표기를 분석 rev 7로 동기화(rev 5와
   같은 커밋 `93e819d`에서 함께 개정된 문서라 내용상 이미 rev 7 기준이었다).
 - **2026-08-24 rev 5.5** — 외부 리뷰 3차(P1 4건·P2 6건) 반영. ⑴ **완전성 정책**(P1-1):
   `exhaustive=false`·`truncated_descendants>0`도 503 — 꼬리 소실도 rank 기반 RRF에선 다른

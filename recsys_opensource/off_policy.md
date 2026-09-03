@@ -27,9 +27,9 @@ eligible candidates C(x)
 
 | 질문 | action 단위 | 필요한 propensity |
 |---|---|---|
-| 후보 한 명을 보여줬다면 선택됐는가 | item | 그 문맥에서 그 item이 해당 자리에 갈 확률 |
-| top-K 목록 전체가 더 나았는가 | ordered slate | 목록의 joint probability 또는 자리별 conditional probability |
-| 1번 자리만 다른 정책이었다면 | position-aware item | 이전 자리 선택을 조건으로 한 확률 |
+| 후보 한 명을 보여줬다면 선택됐는가 | item | 그 문맥에서 그 item이 해당 위치에 올 확률 |
+| top-K 목록 전체가 더 나았는가 | ordered slate | 목록의 joint probability 또는 위치별 conditional probability |
+| 1번 위치만 다른 정책이었다면 | position-aware item | 이전 위치 선택을 조건으로 한 확률 |
 | 최종 대화 해소가 좋아졌는가 | slate/request | attribution window와 censoring 계약까지 필요 |
 
 `candidate_propensity=0.2` 하나만 남기고 실제로는 5개 순서 전체의 가치를 묻는 것은 계약 위반이다.

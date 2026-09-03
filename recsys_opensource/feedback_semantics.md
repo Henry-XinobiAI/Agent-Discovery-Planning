@@ -14,12 +14,12 @@
 > 조용한 제외다(6-1).
 > **② `negative`는 "다시 보여주지 마라"에만 쓴다** — replacement로도 돌아오지 않는다(2-5).
 > **③ 이진 판단은 `Value`와 식으로 미룬다** — 임계값은 나중에 소급 변경된다(6-2).
-> **④ `auto_insert_*`를 끄고, 투영을 재실행 가능한 pass로 만든다** — 켜 두면 Gorse가 우리
+> **④ `auto_insert_*`를 끄고, 프로젝션을 재실행 가능한 pass로 만든다** — 켜 두면 Gorse가 우리
 > 카탈로그 경계를 넘어 실체를 만들고, 그냥 끄면 순서 경합에서 조용히 유실된다(§7).
 >
 > **문서 지위**: 조사 자료. 채택·기각은 설계 문서가 소유한다.
 > [`gorse.md` §7-5](gorse.md)가 "Gorse는 이 이름의 의미를 대신 정해 주지 않는다"에서 멈춘 지점의
-> 다음을 채우고, [`inbound_event_contract.md` §3-4](../inbound_event_contract.md)가 정할 투영 규칙의
+> 다음을 채우고, [`inbound_event_contract.md` §3-4](../inbound_event_contract.md)가 정할 프로젝션 규칙의
 > 근거가 된다. **이 문서는 어떤 이벤트가 positive인지 정하지 않는다** — 정할 때 무엇을 알고 정해야
 > 하는지만 적는다.
 >
@@ -96,19 +96,19 @@ Target = append(Target, -1)
 | `non-personalized` | 예 — 식에서 이름을 직접 참조: `count(feedback, .FeedbackType == 'star')` |
 | **`item-to-item` `type="tags"`** | **아니오** |
 
-★ 마지막 행이 [`gorse.md` §11-2 경로 C](gorse.md)(라벨별 개별 질의 + 가중 합산)이고 `D07`이
-표면 1의 후보 생성을 여기 맡긴다. **이 경로의 스코어링은 feedback을 읽지 않는다.**
+★ 마지막 행이 [`gorse.md` §11-2 경로 C](gorse.md)(라벨별 개별 쿼리 + 가중 합산)이고 `D07`이
+surface 1의 후보 생성을 여기 맡긴다. **이 경로의 스코어링은 feedback을 읽지 않는다.**
 
-> ⚠ **정정(2026-09-03).** 이 자리에 "표면 1은 feedback을 전혀 읽지 않는다"고 단정했는데 절반만
+> ⚠ **정정(2026-09-03).** 이 자리에 "surface 1은 feedback을 전혀 읽지 않는다"고 단정했는데 절반만
 > 맞다. **스코어링은** 읽지 않지만, 이웃 조회에 `?user-id=`를 넘기면 **서빙 단계에서 feedback 기반
-> 제외가 걸린다**(`server/rest.go:466`, 파라미터 설명 그대로 `"Remove read items of a user"` ·
+> 제외가 걸린다**(`server/rest.go:500`, 파라미터 설명 그대로 `"Remove read items of a user"` ·
 > `gorse.md` §11-5 실측).
 
-`결정` **표면 1의 이웃 질의에 `?user-id=`를 넘기지 않는다.** 그 파라미터는 선택이고, 재추천 정책은
+`결정` **surface 1의 이웃 쿼리에 `?user-id=`를 넘기지 않는다.** 그 파라미터는 선택이고, 재추천 정책은
 우리 것이므로(`D18` · §8 `FBK-F1`) Gorse에 그 판단을 넘길 이유가 없다. 넘기지 않으면 위 단정이
 참이 된다.
 
-`판단` 그 전제 위에서 순서가 나온다 — 표면 1을 먼저 세우는 동안 feedback **의미론**을 미뤄도 표면 1의
+`판단` 그 전제 위에서 순서가 나온다 — surface 1을 먼저 세우는 동안 feedback **의미론**을 미뤄도 surface 1의
 품질이 볼모가 되지 않는다. 다만 **이벤트를 쌓는 것은 미루면 안 된다**(`D15`·§3-C8).
 
 ---
@@ -199,7 +199,7 @@ applyReplacementDecay      worker/pipeline.go:253   ← 랭킹 "후"에 Score *=
 ★ **그러므로 우리 제품에서 `negative`의 의미는 "별로였다"가 아니라 "다시 보여주지 마라"다.**
 
 `판단` [`inbound_event_contract.md` §3-4](../inbound_event_contract.md)의 퍼널에 있는
-`requery.other_agent`(같은 질문을 다른 사람에게 다시 물어봄)를 negative로 투영하면 그
+`requery.other_agent`(같은 질문을 다른 사람에게 다시 물어봄)를 negative로 프로젝션하면 그
 `(requester, agent)` 조합이 영구히 죽는다. **직관적으로 가장 negative처럼 보이는 항목이 가장 넣으면
 안 되는 항목**이라는 점에서 실제로 걸리기 쉬운 함정이다.
 
@@ -244,7 +244,7 @@ PUT  /api/feedback   →  insertFeedback(overwrite=true)    server/rest.go:343
 
 - **Gorse는 이벤트 이력을 갖지 않는다.** PK가 위 3-튜플이므로 한 쌍당 한 행이고, 사건 순서를 Gorse
   에서 복원할 수 없다. [`inbound_event_contract.md` §3-4](../inbound_event_contract.md)의 "Gorse에
-  보내는 것은 투영이고 원본이 아니다"가 스키마 수준에서 강제된다.
+  보내는 것은 프로젝션이고 원본이 아니다"가 스키마 수준에서 강제된다.
 - **ClickHouse backend만 다르다.** upsert 없이 `tx.Create(rows)`로 append한다(`sql.go:1628`, `:1644`).
   이 문서의 3장 전체가 ClickHouse에서는 성립하지 않는다 → §8 F8.
 
@@ -259,7 +259,7 @@ PUT  /api/feedback   →  insertFeedback(overwrite=true)    server/rest.go:343
 | `[server] cache_expire` (기본 `10s`) | 서버측 응답 캐시 | 위와 다른 값이다 |
 | `[recommend] context_size` (기본 `100`) | online 추천이 참조하는 **최근 feedback 개수** | LLM ranker의 컨텍스트도 여기서 잘린다(`worker/pipeline.go:496` — positive만 채운다) |
 | `active_user_ttl` | 비활성 사용자에 대한 추천 캐시 생성 중단 | `storage_sizing.md` §8의 `U_active`와 같은 축 |
-| `write-back-delay` (질의 파라미터) | write-back row가 보이기 시작하는 시각 | 2-6 |
+| `write-back-delay` (쿼리 파라미터) | write-back row가 보이기 시작하는 시각 | 2-6 |
 
 ---
 
@@ -269,10 +269,17 @@ PUT  /api/feedback   →  insertFeedback(overwrite=true)    server/rest.go:343
 
 1. 타입 자체는 자유 문자열이므로 스키마 변경이 없다. `auto_insert_user`/`auto_insert_item`이 기본
    `true`라 미등록 user/item도 함께 생성된다.
-2. 버킷 배정은 config 편집이다. 각 recommender가 positive+negative 식으로 `Hash()`를 만들고
-   (`config/config.go:288`·`:314`·`:343`) digest를 캐시에 기록한다. `checkItemToItemCached`가
-   digest 불일치를 보면 **`cache_expire`를 기다리지 않고 재계산**한다(`master/tasks.go:844`).
-   user-to-user도 같은 digest 키를 쓴다(`:908`).
+2. 버킷 배정은 config 편집이다. recommender가 자기 config로 `Hash()`를 만들어 digest를 캐시에
+   기록하고, `needUpdateItemToItem`(`master/tasks.go:824`)이 digest 불일치를 보면
+   **`cache_expire`를 기다리지 않고 재계산**한다(`:844`). user-to-user는
+   `needUpdateUserToUser`(`:931`)가 같은 일을 한다(`:941` 읽기 · `:948` 비교).
+
+   ⚠ **`Hash()`에 feedback 식이 들어가는 것은 조건부다.** `ItemToItemConfig.Hash`는
+   `if config.Type == "users"`일 때만, `UserToUserConfig.Hash`는 `if config.Type == "items"`일 때만
+   positive·negative 식을 섞는다(`config/config.go:293`·`:319`). 무조건인 것은
+   `CollaborativeConfig.Hash`(`:343`)뿐이다. 즉 **feedback을 읽는 변종의 digest만 버킷 변경에
+   반응한다** — 1-3 표와 정합적이고(읽지 않는 변종은 재계산할 이유가 없다), surface 1이 쓰는
+   item-to-item `type="tags"`는 애초에 이 축과 무관하다.
 3. `실측` **증분 갱신이 없다**(`gorse.md` §11-4). 여기서는 이것이 장점이 된다 — 다음 전면 재계산이
    그 타입의 **과거 row 전부**를 읽는다.
 
@@ -305,9 +312,9 @@ replacement를 켜도 구제되지 않는다. offline 후보 생성에서 빠지
 `addReplacementCandidates`는 **positive 또는 read인 것만** 되돌리기 때문이다
 (`worker/pipeline.go:555`–`:559`). 결과적으로 사전계산 목록에서 조용히 사라지고 돌아오지 않는다.
 
-★ **규율: Gorse에는 "지금 의미를 아는 것"만 투영한다.** 우회가 아니라
+★ **규율: Gorse에는 "지금 의미를 아는 것"만 프로젝션한다.** 우회가 아니라
 [`inbound_event_contract.md` §3-4](../inbound_event_contract.md)가 이미 정한 구조 그대로다 —
-원본은 우리 스트림에 있고 Gorse에 가는 것은 투영이다. 5-1 덕분에 **늦게 투영하는 데 드는 비용이
+원본은 우리 스트림에 있고 Gorse에 가는 것은 프로젝션이다. 5-1 덕분에 **늦게 프로젝션하는 데 드는 비용이
 없다.**
 
 ### 6-2 이진 판단은 `Value`와 식으로 미룬다
@@ -355,7 +362,8 @@ auto_insert_item = true    # 기본값
 
 feedback을 POST하면 모르는 user/item을 **자동으로 만든다.** 만들어지는 Item은
 `Labels: "null"`, `Categories: "null"`이고 `IsHidden`은 Go zero value라 **`false` — 즉시 추천
-가능한 상태**다 (`storage/data/sql.go:1600`).
+가능한 상태**다 (`storage/data/sql.go:1600`). ClickHouse 백엔드만 같은 자리에서 `"[]"`를 쓴다
+(`:1586`) — 값이 다를 뿐 "즉시 추천 가능"은 같다.
 
 끄면 반대쪽 실패가 있다. 모르는 item의 feedback은 **조용히 버려지고**(`sql.go:1614`), 응답은
 쓴 개수가 아니라 **보낸 개수**를 돌려준다:
@@ -391,19 +399,19 @@ Gorse가 우리 카탈로그 경계를 넘어 실체를 만들지 못하게 한�
 
 물어도 답을 주지 않고(7-1), 읽기로 검증하면 왕복이 배가 된다.
 
-★ **투영 워커는 자기가 무엇을 투영했는지 이미 안다.** Gorse는 이 질문의 진실 출처가 아니다.
+★ **프로젝션 워커는 자기가 무엇을 프로젝션했는지 이미 안다.** Gorse는 이 질문의 진실 출처가 아니다.
 
-**③ 투영을 forward-write가 아니라 우리 store에 대한 재실행 가능한 pass로 만든다.**
+**③ 프로젝션을 forward-write가 아니라 우리 store에 대한 재실행 가능한 pass로 만든다.**
 
 ```text
 행동 이벤트 → 우리 store에 append (조건 없이)
                     ↓
-            투영 pass (재실행 가능)
+            프로젝션 pass (재실행 가능)
                     ↓
      Item이 있는 것만 Gorse Feedback으로
 ```
 
-(a)에서 투영이 스킵되어도 **유실이 아니다** — row는 우리 store에 있고, catalogue 이벤트가 도착한
+(a)에서 프로젝션이 스킵되어도 **유실이 아니다** — row는 우리 store에 있고, catalogue 이벤트가 도착한
 뒤 pass를 다시 돌리면 잡힌다. **deferq에 재시도가 없다는 제약이 여기서 무해해지고, 재시도 큐를
 따로 만들 필요가 없다.**
 
@@ -413,15 +421,15 @@ Gorse가 우리 카탈로그 경계를 넘어 실체를 만들지 못하게 한�
 
 **④ 케이스별 처리**
 
-| 상황 | 우리 store | Gorse 투영 |
+| 상황 | 우리 store | Gorse 프로젝션 |
 |---|---|---|
 | (a) 경합 | append | **스킵.** 다음 pass가 잡는다 |
-| (b) 공개 topic 없음 | append | **스킵.** 나중에 공개되면 그때 소급 투영된다(§5-1) |
-| (c) suspended | append | **투영한다.** Item을 `IsHidden=true`로 두면 추천에서만 빠지고 이력은 살아 있어, 복귀가 콜드 스타트로 돌아가지 않는다 |
-| (d) deleted | append — 사건은 사실이다 | **투영하지 않고 기존 row도 정리**([`inbound_event_contract.md` §3-3](../inbound_event_contract.md)) |
+| (b) 공개 topic 없음 | append | **스킵.** 나중에 공개되면 그때 소급 프로젝션된다(§5-1) |
+| (c) suspended | append | **프로젝션한다.** Item을 `IsHidden=true`로 두면 추천에서만 빠지고 이력은 살아 있어, 복귀가 콜드 스타트로 돌아가지 않는다 |
+| (d) deleted | append — 사건은 사실이다 | **프로젝션하지 않고 기존 row도 정리**([`inbound_event_contract.md` §3-3](../inbound_event_contract.md)) |
 
 (b)가 가장 미묘하고, 스킵이 맞다. 공개 topic이 없는 사람을 Gorse에 넣는 것의 문제는 그 사람이
-추천 가능해지는 것이 아니라 **그 사람에 대한 사실이 우리 색인에 존재하게 되는 것**이다. §5의
+추천 가능해지는 것이 아니라 **그 사람에 대한 사실이 우리 인덱스에 존재하게 되는 것**이다. §5의
 논지가 정확히 그것이다.
 
 **⑤ 삭제는 row 삭제로 끝나지 않는다.**
@@ -435,9 +443,9 @@ feedback row를 지워도 학습된 가중치는 다음 재학습까지 남는�
 ### 7-4 감수하는 손실
 
 (b)·(d)를 스킵하면 **requester 쪽 신호도 함께 잃는다.** "이 사람이 이런 상대와 대화했다"는
-requester의 취향에 대한 정보인데, 상대가 색인에 없으면 CF에 기여하지 못한다.
+requester의 취향에 대한 정보인데, 상대가 인덱스에 없으면 CF에 기여하지 못한다.
 
-우리 store에는 남으므로 나중에 다른 축(예: topic 단위 집계)으로 쓸 수 있고, 손실은 Gorse 투영에
+우리 store에는 남으므로 나중에 다른 축(예: topic 단위 집계)으로 쓸 수 있고, 손실은 Gorse 프로젝션에
 한정된다. `판단` **의도적으로 감수하는 것으로 적어 두면 되고, 사고로 잃는 것과는 다르다.**
 
 ---
@@ -463,7 +471,13 @@ requester의 취향에 대한 정보인데, 상대가 색인에 없으면 CF에 
 
 ## 9. 재현
 
-v0.5.11 태그의 소스를 직접 읽었다. 확인 명령:
+v0.5.11 태그의 소스를 직접 읽었다.
+
+> ⚠ **줄번호는 `v0.5.11` 기준이다.** 사내 클론(`recsys/gorse`)은 `master`를 가리키고 있고
+> v0.5.11은 그 조상이 아니다 — 인용된 9개 파일 중 8개가 그 사이에 바뀌었다(`server/rest.go`는
+> 1834→2163줄). 워킹트리 파일을 그냥 열면 줄번호가 어긋나므로 `git show v0.5.11:<file>`로 읽는다.
+
+확인 명령:
 
 ```bash
 V=v0.5.11
@@ -485,9 +499,9 @@ done
 | 어떤 타입이든 제외 · 시간 하한 없음 | `logics/recommend.go:59`, `:66`, `:70` · `storage/data/database.go:267` |
 | online/offline 구분 | `server/rest.go:890` · `worker/pipeline.go:154` |
 | 재삽입 전 · 감쇠 후, ranker 게이트 | `worker/pipeline.go:213`, `:215`, `:216`, `:251`, `:253`, `:555` |
-| POST 누적과 `LEAST(time_stamp)` | `server/rest.go:336`, `:343` · `storage/data/sql.go:1663-1670` |
+| POST 누적과 `LEAST(time_stamp)` | `server/rest.go:336`, `:343` · `storage/data/sql.go:1663-1672` |
 | write-back이 모든 결과에 row를 씀 | `server/rest.go:909-919` |
-| digest 불일치 시 즉시 재계산 | `master/tasks.go:844`, `:908`, `:941` · `config/config.go:288`, `:314`, `:343` |
+| digest 불일치 시 즉시 재계산 (조건부 Hash) | `master/tasks.go:824`, `:844`, `:931`, `:948` · `config/config.go:293`, `:319`, `:343` |
 | TTL이 스캔 필터임 | `master/tasks.go:308` |
 | `auto_insert`가 만드는 Item의 모양 | `storage/data/sql.go:1600-1610` |
 | 모르는 item의 feedback이 조용히 버려짐 | `storage/data/sql.go:1614-1624` |

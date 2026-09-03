@@ -6,7 +6,7 @@
 
 > 개인이 자기 agent와 대화하며 **지식·관점(persona: topic·claim)**을 쌓는다 → 그중 **공개 가능한 것**이 검색 가능해진다 → 다른 유저가 정답 문서가 아니라 **그 topic을 잘 아는 agent를 발견하고 대화하며 소비**한다.
 
-> **프레이밍 메모 (4차, 2026-08-21):** ⑴ 초기 SKL(Topic Space + Perspective Index) → ⑵ `Agent_Memory_Vision.md`의 4계층 지식그래프 + **Wikidata anchor**(memory-api 소스) → ⑶ **persona extractor 체인**(우리가 topic/claim을 소유하고 AOSS에 색인) → ⑷ **`bourbon-topic-api`로 축 이전**(2026-08-21 확정) — 토픽 저장·검색·랭킹의 주체가 이미 구현된 별도 서비스이고, 우리는 소비자 + 얇은 보정층이 된다. 앞 두 프레이밍의 문서는 `archive/`에 있고, ⑷의 근거·결정 기록은 `topic_api_analysis.md`, 설계 정본은 `recommendation_pipeline_design.md`다. ⑶의 문서(`persona_topic_search_design.md`)는 2026-08-24 `archive/`(§2e)로 이동했다. **⑵ 기반의 shipped 시스템의 구현 계약이던 `archive/impl/`은 2026-09-01 `archive/impl/`로 보관됐다**(§2f) — 갱신이 오래 끊겼고 그 사이 시스템이 크게 바뀌었다. 필요해지면 재작성한다.
+> **프레이밍 메모 (4차, 2026-08-21):** ⑴ 초기 SKL(Topic Space + Perspective Index) → ⑵ `Agent_Memory_Vision.md`의 4계층 지식그래프 + **Wikidata anchor**(memory-api 소스) → ⑶ **persona extractor 체인**(우리가 topic/claim을 소유하고 AOSS에 인덱싱) → ⑷ **`bourbon-topic-api`로 축 이전**(2026-08-21 확정) — 토픽 저장·검색·랭킹의 주체가 이미 구현된 별도 서비스이고, 우리는 소비자 + 얇은 보정층이 된다. 앞 두 프레이밍의 문서는 `archive/`에 있고, ⑷의 근거·결정 기록은 `topic_api_analysis.md`, 설계 기준 문서는 `recommendation_pipeline_design.md`다. ⑶의 문서(`persona_topic_search_design.md`)는 2026-08-24 `archive/`(§2e)로 이동했다. **⑵ 기반의 shipped 시스템의 구현 계약이던 `archive/impl/`은 2026-09-01 `archive/impl/`로 보관됐다**(§2f) — 갱신이 오래 끊겼고 그 사이 시스템이 크게 바뀌었다. 필요해지면 재작성한다.
 
 ---
 
@@ -14,9 +14,9 @@
 
 | 문서 | 레이어 | 다루는 것 | 핵심 단위 |
 |---|---|---|---|
-| **[`decisions.md`](decisions.md)** | **결정 대장** | **현재 유효한 결정 전부(D01–D21) · 뒤집힌 결정 · 결정이 없어서 문서가 갈라진 자리 · 열린 항목 레지스터 지도.** 설계 문서와 어긋나면 이쪽이 맞다 | 결정 |
+| **[`decisions.md`](decisions.md)** | **결정 레지스터** | **현재 유효한 결정 전부(D01–D21) · 뒤집힌 결정 · 결정이 없어서 문서가 갈라진 자리 · 열린 항목 레지스터 지도.** 설계 문서와 어긋나면 이쪽이 맞다 | 결정 |
 | **`topic_api_analysis.md`** | **분석 + 방향 결정 기록 (rev 8, 2026-08-25 — topic-api HEAD `9ee67f3`, 상류 이동 감사법은 부록 B-4)** | `bourbon-topic-api` 전수 분석(검색 메커니즘·카탈로그 실측·성능/비용·프라이버시 모델) + **축 이전 결정** + rev 14 폐기/승계 목록 + 열린 질문. **재설계의 입력이며 설계 문서가 아니다** | 사실/결정/열린 질문 |
-| **`recommendation_pipeline_design.md`** | **설계 정본 rev 5.12 (2026-08-27, 외부 리뷰 5회 반영 + 응답 wire 확장: 4값 + `owner_notes`)** | topic-api 소비 기반 추천 파이프라인 S1–S6: 단계별 동작·topic-api endpoint·산출물·실패 3분기. `persona_topic_search_design.md`를 대체(2026-08-24 archive) — 열린 결정은 §9 | 파이프라인 단계 산출물 |
+| **`recommendation_pipeline_design.md`** | **설계 기준 문서 rev 5.12 (2026-08-27, 외부 리뷰 5회 반영 + 응답 wire 확장: 4값 + `owner_notes`)** | topic-api 소비 기반 추천 파이프라인 S1–S6: 단계별 동작·topic-api endpoint·산출물·실패 3분기. `persona_topic_search_design.md`를 대체(2026-08-24 archive) — 열린 결정은 §9 | 파이프라인 단계 산출물 |
 | **`serving_surface_design.md`** | **설계 rev 3.3 (2026-08-24, §7 열린 결정 전부 해소)** | 노출 표면: internal-only(`/api/internal/svc/agent-discovery/` 단독) + edge-auth 관례 채택 + topic-api 레퍼런스 이디엄 차용. **신규 repo = `bourbon-agent-discovery-api`** (project-template-python scaffold, 기존 repo는 전환 후 archive). x-user-id 금지·신원=body·label 유지·surface boundary 테스트. **표면 정비는 코드 repo에 반영 완료**(`4176b0a`·`05ec707`·`d861b5f`) — §7 열린 결정 전부 해소 — dispatch 등록 PR도 준비(bourbon-api `0eb55b6`)·순서 제약 없음 | 표면 계약 / template 델타 |
 
 > **결정의 소유**: 어떤 설계 문서도 결정을 소유하지 않는다. [`decisions.md`](decisions.md)가 소유하고,
@@ -29,13 +29,13 @@
 > (2026-08-27~28에 이 연쇄를 세 번 쫓아다닌 뒤 정한 규약). 가리키는 대상이 좁으면 rev 대신 **절 번호**를
 > 적는다 — 절 포인터는 rev가 올라가도 참이다.
 > **예외 둘**: ⑴ `archive/`로 얼린 문서는 rev를 적는다 — 다시 움직이지 않으므로 stale해질 수 없고,
-> "어느 버전을 대체했는가"가 정보다(정본 헤더의 `persona_topic_search_design.md`(rev 14)가 그 예다).
+> "어느 버전을 대체했는가"가 정보다(기준 문서 헤더의 `persona_topic_search_design.md`(rev 14)가 그 예다).
 > ⑵ 변경 이력 줄의 rev는 그때의 기록이므로 그대로 둔다.
 
 > **논의 기록 (결정 아님)** — `facets_ownership_split_discussion.md`:
 > topic-api에서 `score`/`score_detail`을 떼어 facet producer가 소유하는 DynamoDB로 옮기고
 > agent-discovery가 읽기 전용으로 join하는 구조의 **사실·판단·열린 항목**. 기준 문서가 아니고
-> 어떤 계약도 이것으로 바뀌지 않았다 — 착수 자격은 측정값 셋이 준다(§7-1). 결정이 생기면 정본 §S3·§S4·§9로 올라간다.
+> 어떤 계약도 이것으로 바뀌지 않았다 — 착수 자격은 측정값 셋이 준다(§7-1). 결정이 생기면 기준 문서 §S3·§S4·§9로 올라간다.
 
 > **논의 기록 (결정 아님)** — `service_boundary_discussion.md`:
 > topic-api ↔ agent-discovery 경계 — "자연어+맥락 → 토픽"이 어느 쪽 역할인가에 대한 2026-08-26
@@ -45,7 +45,7 @@
 > 아니고 요청도 발신하지 않았다 — closed beta 이후 항목이다.
 
 > **설계 제안 (결정 아님)** — `recommendation_scoring_design.md`:
-> 추천 스코어링 구조 — **하나의 랭커에 surface를 입력으로 넣는다**(rev 3 정정 — "표면별 고정
+> 추천 스코어링 구조 — **하나의 랭커에 surface를 입력으로 넣는다**(rev 3 정정 — "surface별 고정
 > 가중치"가 아니다. 코드 분기도 사람이 정하는 가중치도 아니고 `f(surface, x, missing)`이다).
 > 신호 4종(주제 관련도·persona 누적 취향·상호작용 이력·유사 사용자)을 feature로 두고, 자격
 > 판정(gate)은 점수 밖에 둔다. 무엇을 왜 보여줬는지를 처음부터 기록한다(노출·propensity + 탐색
@@ -66,7 +66,7 @@
 > topic·bio·traits, `public/friends/private` gate, 우리 pipeline의 배치 위치와 PoC 합격선을 도구별로
 > 정리한다. 도입 결정은 아니며 현행 제안은 `recommendation_scoring_design.md`가 소유한다.
 
-> **방향 근거는 `topic_api_analysis.md`, 설계 정본은 `recommendation_pipeline_design.md`, 가려는 곳은
+> **방향 근거는 `topic_api_analysis.md`, 설계 기준 문서는 `recommendation_pipeline_design.md`, 가려는 곳은
 > `recommendation_scoring_design.md`.** 구현 계약이던 `archive/impl/`은 `archive/impl/`로 보관됐다(§2f). `persona_topic_search_design.md`(3차 프레이밍 기록)는 2026-08-24에
 > `archive/`(§2e)로 이동했다. 이전 프레이밍의
 > 설계 근거 문서들(directions·implementation·Agent_Memory_Vision·technology_selection_evidence)은
@@ -108,7 +108,7 @@ Alpha 구현이 진행되며 실측·계약 기준이 `archive/impl/`로 이동�
 
 | 문서 | 당시 다루던 것 | 성격 / 현재 위치 |
 |---|---|---|
-| `archive/memory_api_statement_attribution_request.md` | statement `owner_asserted: bool` 필드 + 검색 필터 (K-A1 rev 3) | **채택되지 않은 초안** — 필드는 미생성. assertion-source `confidence` tier를 `attribution` enum으로 투영하는 형태로 착지 |
+| `archive/memory_api_statement_attribution_request.md` | statement `owner_asserted: bool` 필드 + 검색 필터 (K-A1 rev 3) | **채택되지 않은 초안** — 필드는 미생성. assertion-source `confidence` tier를 `attribution` enum으로 프로젝션하는 형태로 착지 |
 | `archive/memory_api_statement_attribution_followup.md` | 위 협의의 종결 기록 (K-A1 rev 5) | **채택된 종결 결정** — 의미론 + server-side 필터 둘 다 착지(`#129`/`3e4e7c1`, `f246f93`). 계약 요약은 `archive/impl/00`, 잔여 테스트 공백은 R2, 연기된 리스크는 R7 |
 | `archive/memory_api_agent_recommendation_requirements.md` | memory-api가 제공해야 할 최소 계약 (2026-07-14 이전) | **이전 협의 기록** — 현재 계약 아님. 현재 상태는 `archive/impl/findings-real-anchor-grounding-ties.md` / `archive/impl/11-forward-roadmap.md` |
 | `archive/persona_api_discovery_requests.md` | persona 팀에 걸 데이터·API 요청서 (rev 15, 2026-08-13) | **폐기된 트랙 (2026-08-19)** — persona-api를 소스로 삼는 전환 자체가 폐기됐다. 요청·열린 질문 전부 무효. rev 16과 실사 문서 `persona_source_review.md`는 **미머지 폐기**되어 이 repo에 들어온 적이 없다 — 복원용 로컬 태그 `discarded/persona-api-ownership-split`도 2026-08-20 삭제되어 **두 문서 모두 남아 있지 않다** |
@@ -133,7 +133,7 @@ Alpha 구현이 진행되며 실측·계약 기준이 `archive/impl/`로 이동�
 
 | 문서 | 당시 역할 | 현재 대체 |
 |---|---|---|
-| `archive/persona_topic_search_design.md` | 3차 프레이밍 설계 (rev 14) — 우리가 topic/claim을 소유하고 AOSS에 색인 + 2단계 읽기 + 열린 질문 Q1–Q15 | 설계는 `recommendation_pipeline_design.md`, rev 14 결정·규율의 항목별 폐기/승계 처분은 `topic_api_analysis.md` §9 |
+| `archive/persona_topic_search_design.md` | 3차 프레이밍 설계 (rev 14) — 우리가 topic/claim을 소유하고 AOSS에 인덱싱 + 2단계 읽기 + 열린 질문 Q1–Q15 | 설계는 `recommendation_pipeline_design.md`, rev 14 결정·규율의 항목별 폐기/승계 처분은 `topic_api_analysis.md` §9 |
 
 > **루트에 활성 요청 레지스터는 더 이상 없다** — bourbon-api 레지스터(B1–B2)는 2026-08-24 종결·보관(§2c).
 > 새 체인의 cross-team 열린 결정은 `recommendation_pipeline_design.md` §9(열린 결정)와
@@ -155,7 +155,7 @@ memory-api 기반으로 실제 가동 중이던 시스템의 구현 계약이었
 
 | 무엇 | 지금 그 자리를 무엇이 답하나 |
 |---|---|
-| 데이터 계약·provider 경계·grounding·gate/ranking | `recommendation_pipeline_design.md` (설계 정본) |
+| 데이터 계약·provider 경계·grounding·gate/ranking | `recommendation_pipeline_design.md` (설계 기준 문서) |
 | serving·decision log | `serving_surface_design.md` · `recsys_opensource/off_policy.md` §3 |
 | eval harness·metrics | 코드 repo `tasks/todo.md` |
 | forward roadmap | `recommendation_scoring_design.md` §11 |
@@ -196,7 +196,7 @@ framing이 SKL → anchor 그래프 → persona extractor 체인 → topic-api �
 
 - **소유·접근** — 모든 기억·지식은 사용자 소유이고, 접근은 **항상 그 사용자의 agent를 거쳐서만** 가능.
 - **공개는 description 수준** — 개별 기억 원문이 아니라, 발견·전문성 판별이 가능한 **간략 description/관점**만 공개.
-- **인덱스는 projection** — 검색 인덱스는 source of truth가 아니라 재빌드 가능한 투영.
+- **인덱스는 projection** — 검색 인덱스는 source of truth가 아니라 재빌드 가능한 프로젝션.
 - **freshness는 decay 가중치, hard cutoff 아님** — evergreen 관점을 죽이지 않음.
 - **추천은 agent-매개 소비** — 사람-대-사람 직접 연결이 아니라, publish된 관점을 agent가 대신 내어주는 소비 모델(현 스코프). 직접 연결(invite)은 미래·런타임 소관.
 
