@@ -1,6 +1,8 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 정본 (rev 5.12, 외부 리뷰 5회 반영). 입력 = `topic_api_analysis.md` **rev 8**
+> **문서 지위**: 설계 정본 (rev 5.13, 외부 리뷰 5회 반영). **결정은 이 문서가 소유하지 않는다** —
+> [`decisions.md`](decisions.md)가 소유하고 여기서는 `Dnn`을 인용한다.
+> 입력 = `topic_api_analysis.md` **rev 8**
 > (2026-08-25, topic-api HEAD `9ee67f3`) + bourbon-agent의 기왕 계약
 > (`bourbon_agent/agents/personal_agent/recommendation/structs.py`, mock client가 지키는 중).
 > `persona_topic_search_design.md`(rev 14)가 2026-08-24 `archive/`로 이동하며 이 문서가 그 자리를
@@ -20,7 +22,7 @@
 
 ```
 bourbon-agent (recommend_agents tool)
-   │  POST /recommend  {topic(en canonical), context, max_results, requester_user_id, room_id}
+   │  POST /recommend  {topic(en canonical), context, lang, max_results, requester_user_id, room_id}
    ▼
 S1 Expansion        topic 원문 = 기본 probe + topic·context 기반 확장 (작은 LLM 1회, R1–R7)
    ▼                산출물: ExpansionResult (concept group이 probe를 소유 — 일급 객체)
@@ -28,20 +30,25 @@ S2 Grounding        probe별 GET …/search/topics → is_match 트리 → **con
    ▼                1 topic 확정** (못 고르면 ambiguous)
                     산출물: GroundingResult (outcome 4종)
                     [expansion 정상+전체 0건 → 422 / expansion 실패+fallback 0건 → 503]
-S3 Retrieval        topic_id별 GET …/topics/{id}/users?limit=100&visibility=public (병렬)
-   ▼                산출물: TopicCandidates[] (matched 트리·score_detail·불완전성 플래그 원형 보존)
-S4 Merge/Filter     독립 concept group 간 RRF 병합 → stub 방어 필터 → exclusion → eligibility
+S3 Candidate        확정 topic을 **라벨별 개별 질의 + 가중합**으로 Gorse에 물어 후보를 만든다(D07)
+   ▼                (Gorse 불능 → topic-api 보유자 랭킹으로 fallback, `candidates_fallback` 선언 — D20)
+                    산출물: CandidateSet
+S4 Merge/Filter     미보유자 필터(복제본 D10·D08) → stub 방어 → exclusion → eligibility
    ▼                산출물: CandidatePool                           [0명 → 200+empty]
 S5 Ordering         gate → lexicographic 정렬 키 → 결정적 tiebreak (scalar 노출 없음)
-   ▼                산출물: OrderedCandidates
-S6 Assembly         owner→agent id 변환(uuid5) + matched_topics 축약 + 플래그 게이트
-   │                산출물: RecommendResponse (signals는 wire가 아니라 decision log)
+   ▼                산출물: OrderedCandidates — **자르지 않는다**(S6의 백필 재료)
+S6 Assembly         최종 N명 hydrate+재확인(topic-api /users/{id}/topics — D11·D21)
+   │                → 탈락분 백필 → max_results로 절단 → owner→agent id 변환(uuid5)
+   │                산출물: RecommendResponse — matched_topics(라벨·descriptions·relation)
+   │                + owner_user_id + match_reason + owner_notes + decision_id
+   │                (signals·degraded는 wire가 아니라 decision log — degraded는 D20으로 복귀 예정, §9-⑧)
    ▼
-bourbon-agent      [topic-api 불능 → 503 / 정직한 empty → 200]
+bourbon-agent      [grounding 불능 → 503 / 정직한 empty → 200 + 사유 3종]
 ```
 
-**골자**: 우리는 저장소 0의 **순수 소비자 + 얇은 보정층**이다(분석 §8.3-A). topic-api가
-어휘(카탈로그)·저장·랭킹을 소유하고, 우리는 ⑴ 자유 텍스트를 카탈로그 어휘로 깎는 일(S1–S2),
+**골자**: topic-api가 **어휘(카탈로그)**를 소유하고 우리는 그 어휘로 자유 텍스트를 깎는다. 후보
+생성은 `D07` 이후 Gorse가, 공개 보유의 복제본은 `D10`으로 우리가 갖는다 — rev 5.13 이전의 "저장소 0의
+순수 소비자"는 더 이상 참이 아니다. 우리는 우리는 ⑴ 자유 텍스트를 카탈로그 어휘로 깎는 일(S1–S2),
 ⑵ 여러 topic의 랭킹을 한 추천으로 병합하는 일(S4–S5), ⑶ 실패를 정직하게 3분기하는 일(§4),
 ⑷ 근거를 사용자 언어로 조립하는 일(S6)을 소유한다.
 
@@ -62,13 +69,16 @@ rev 14에서 승계한 규율(분석 §9의 승계 목록, 이 파이프라인�
 | ordering = lexicographic 계약, scalar 단일 점수 노출 금지 | S5 |
 | self-exclusion·제외 집합 = **우리 후처리로 확정**(2026-08-24 결정 — countable 목록·fan-out 100이라 오버헤드 무시 가능) | S4 |
 | 즐겨찾기 = tiebreak only, gate 우회 금지 | S5 — 단 **dormant 슬롯**: 현 파이프라인에 즐겨찾기 데이터 공급처가 없다. provider가 생길 때까지 이 키는 비활성 |
-| popularity prior 금지 | S5 (RRF는 topic별 순위 융합 — 전역 인기 항 없음) |
+| popularity prior 금지 | S5. **S3에서도 유지된다** — Gorse 라벨별 질의의 원점수는 `매칭 여부 × 1/‖d‖`이고 전역 인기 항이 없다(`gorse.md` §11-2). `?category=` 경로는 인기도 순이라 **쓰지 않는다** |
 | 판정 입력 텍스트 전부 비신뢰 | S1·S2의 LLM 프롬프트 (카탈로그 라벨·유저 서술 모두) |
 | gate 3종 직교 (maturity / safety / privacy) | privacy는 topic-api 구조가 **대부분** 보장하나 leaf stub 구멍이 남아 있다(분석 §6.3 — §11-4 **블로커** 승격). 근본 수정은 topic-api, 우리는 S4의 stub 방어 필터를 임시 방어로 병행. maturity는 §11-6 대기, safety는 타 팀 |
 | best-effort 입력 선언 | 사슬 전체(deferq→extractor→topic-api)가 best-effort — freshness 가정 금지 |
 | wire 계약: 응답 파싱은 실효 계약 기준·계약 테스트 payload를 consumer model에서 유도 금지 | §6 어댑터 |
 
-**안 하는 것** (분석 §8.2·§8.3): 병렬 두 시스템 금지 — 우리 topic 저장소·색인·스트림 없음.
+**안 하는 것** (분석 §8.2·§8.3): **카탈로그 어휘의 두 번째 원본을 만들지 않는다** — topic의 뜻과
+계층을 정하는 것은 topic-api이고 우리가 갖는 것은 그 투영이다(`D10`). rev 5.13 이전 이 자리에 있던
+"우리 topic 저장소·색인·스트림 없음"은 `D10`으로 뒤집혔다 — 카운트·최근성은 우리 feature이고
+(`D13`), 델타가 아니라 전체 집합을 받으므로 한 건 유실이 영구 불일치가 되지 않는다.
 NeedType 축·stance 파이프라인 삭제(1차 유형은 "이 topic을 가장 잘 아는 agent" 하나).
 rollup 회피를 위한 재질의 없음(분석 §13-9 — rollup 응답도 정상 경로, 사후 판별·로깅만).
 read-time 판정 gate 없음(C단계 rerank는 dormant 슬롯).
@@ -270,11 +280,31 @@ probe는 topic/context 파생이라 관심사·개인정보가 실릴 수 있고
 예외가 규칙을 먹는다. 원문이 카탈로그 개선(seed 요청 채널, 분석 §8.3-B)에 정말 필요해지면
 **접근제어·보존기간·샘플링·기본 OFF를 가진 별도 measurement sink**로 분리한다.
 
-### S3 Retrieval — topic_id별 후보 유저 수집
+### S3 Candidate — 확정 topic으로 후보 만들기
 
-**동작**: 확정 topic마다 유저 랭킹을 **병렬** 호출한다. **항상 `limit=100`**(컷 한계 (a)안 —
-분석 §9: 컷은 그들 score로 일어나고 페이징이 없으므로, 최대로 받아 우리 층의 재량을 확보한다.
-만료 조건 계측 동봉). **`visibility=public` 단독** — rev 5.6: 상류에 friends 지원이 예고돼
+**동작** (`D07`, rev 5.13): 확정 topic들을 **라벨별 개별 질의 + 가중합**으로 Gorse에 묻는다
+(`recsys_opensource/gorse.md` §11-2 경로 C). 라벨마다 센티넬 태그를 넣은 질의 item의 이웃을 묻고,
+상위 라벨은 **recall 장치**로, 하위 라벨은 **랭킹 가중**으로 쓴다. 호출당 약 1.1 ms이므로 라벨이
+열 개가 되어도 문제가 없다.
+
+**이 단계가 topic-api의 컷을 벗어나는 이유가 `D07`의 전부다.** 보유자 랭킹은 그들 score로 상위
+100명에서 잘리고 페이징이 없어서, 그 주제를 가장 깊게 아는 사람이 컷 밖에 있으면 어떤 방법으로도
+꺼낼 수 없었다.
+
+**Gorse 불능**: topic-api 보유자 랭킹으로 후보를 만들고 `candidates_fallback`을 선언한다(`D20`).
+그 경로는 위의 100명 컷을 그대로 물려받으며, **저하 모드로서 받아들인다.**
+
+**미보유자는 S4가 거른다**(`D08`) — Gorse 이웃 결과에는 매칭 0인 후보가 기본으로 섞이고
+(`gorse.md` §11-3), 그런 후보에는 붙일 근거 topic이 없어 **응답을 만들 수 없다.** 판정은 Gorse
+점수가 아니라 우리 복제본으로 한다(`D10`) — 원점수는 `매칭 여부 × 1/‖d‖`라 임계값이 후보의 보유
+폭에 따라 움직인다.
+
+`열린 항목` **PIPE-⑫ 필터의 위치.** S3 끝인가 S4인가. 앞이면 뒤따르는 처리량이 줄고, 뒤면 제외
+카운트가 decision log 한 곳에 모인다.
+
+---
+
+**fallback 경로와 S6 hydrate의 tier 규율** (rev 5.6, 두 경로에 그대로 적용): 상류에 friends 지원이 예고돼
 있으므로(전언 2026-08-25: requester 신원이 실리면 public+friends, 없으면 public 단독 — 분석
 §6.1·§11-17) 이 값은 **provider에 하드코딩하지 않고 호출 인자로 둔다.** 지금 보내는 값은 public
 하나이고, 아이템 tier 검증도 "public 고정"이 아니라 **"요청한 tier 집합 안"**으로 읽는다.
@@ -316,20 +346,22 @@ flags: {exhaustive, descendants_dropped, topics_dropped} }`
   응답에 섞인다). 관련 캐시를 무효화하고 **S2 전체를 재실행**한 뒤, 이미 받아 둔 S3 결과를
   **전부 버리고 S3 전체를 1회 재실행**한다. 재실행은 요청당 1회 — 그 뒤에도 실패하면
   아래 규칙.
-- **확정 topic 중 하나라도 최종 실패**(5xx/timeout, 재grounding 후 404) → **503.**
-  topic 하나가 빠진 RRF는 "완전한 결과의 품질 저하"가 아니라 **다른 랭킹**이다. 조용히
-  topic을 버리면 전부 소멸 시 200+empty로 "공개 보유자 없음" 오귀속까지 일어난다.
-  부분 성공("성공분 + degraded 표시")은 concept-group 의미와 bourbon-agent의 degraded
-  wire가 정해진 뒤 재개방할 계약으로 미룬다.
-- **불완전성 플래그도 같은 규칙이다**(rev 5.5 — 외부 리뷰 3차 수용, 분석 §10-7의 "품질
-  저하 취급"을 초기 정책에서 뒤집음): `exhaustive=false`의 실제 의미는 "원래 결과에
-  들어가야 할 유저가 꼬리에서 빠졌을 수 있음"(그쪽 소스 주석, 검증됨)이고, rank 기반
-  RRF에서 이것도 정확히 **다른 랭킹**이다. `exhaustive=false` 또는
-  `truncated_descendants > 0` → **503**. 단일 id 질의라 `unranked_topics`는 계약상 0 —
-  0이 아니면 계약 위반으로 역시 503. 채널 전체 소실보다 심각도는 낮고(꼬리 불확실성)
-  현 카탈로그 규모에서 드물 것이므로 초기 비용은 작다. 부분 결과 허용은 위와 같은
-  명시적 degraded wire 계약에 묶어 재개방한다 — **decision log에만 남기고 200을 주는
-  것은 정직한 성공이 아니다.**
+**실패는 `D20`이 소유한다** (rev 5.13). rev 5.5~5.12의 "확정 topic 하나라도 실패하면 503,
+불완전성 플래그도 같은 규칙" 규정은 삭제됐다.
+
+★ **그 규정의 근거가 `D07`로 사라졌다.** 근거는 *"잘린 랭킹을 완전한 랭킹과 융합하면 아무도
+계산하지 않은 순서가 나온다"*였고, 그것은 **남의 랭킹을 rank 위치로 융합할 때**의 문제다 — 101등인
+사람이 *낮은* 것이 아니라 *없는* 것으로 들어오기 때문이다. 라벨별 가중합에는 랭킹 융합이 없다.
+라벨 하나가 빠지면 **같은 함수를 더 적은 라벨 위에서 계산한 결과**이고, 그것은 "질문을 더 적게 읽은
+순서"이지 망가진 순서가 아니다.
+
+★ **살아남는 것은 오귀속 금지다.** 조회하지 못한 것을 "공개 보유자 없음"으로 답하는 것은 저하가
+아니라 **거짓**이고, 그래서 `D21`이 세 번째 사유 코드(`verification_unavailable`)를 둔다.
+
+fallback 경로에서 topic-api의 불완전성 플래그(`exhaustive=false`, `truncated_descendants > 0`)를
+읽으면 **그 topic의 기여만 빼고 `grounding_partial`을 선언**한다 — 이미 저하 모드이므로 503으로
+격상하지 않는다. `unranked_topics`는 단일 id 질의에서 계약상 0이고, 0이 아니면 계약 위반이므로
+**503**이다(저하가 아니라 상류가 약속을 깬 것).
 
 **계측**: "grounded인데 공개 보유자 0" 비율(= 공개 밀도 지표), 플래그 3종 분포, topic당
 반환 유저 수 분포(100 근접 = 컷 경계 접근 — (a)안 만료 감시), `deep_holdings_observed` 비율
@@ -340,7 +372,7 @@ flags: {exhaustive, descendants_dropped, topics_dropped} }`
 **동작**:
 
 1. **RRF 병합 — 독립 concept group 간에만**: 그룹당 topic이 1이므로(S2) 그룹별 순위를
-   `Σ 1/(k + rank_g(u))`(k는 `열린 결정` ③, 표준 60 제안)로 owner 단위 융합. topic-api의
+   `Σ 1/(k + rank_g(u) + 1)`(rank는 0-based, k는 `열린 결정` ③, 표준 60 제안)로 owner 단위 융합. **rev 5.13 정정** — 이 자리에만 `+1`이 빠져 있었고 §S4 산출물·§S5 정렬 키와 어긋났다. topic-api의
    `score` 절대값을 섞지 않고 **순위만** 쓴다 — 점수 의미(관심 편향, 분석 §4)와 topic 간
    스케일 차이를 우리가 재해석하지 않기 위해서다. S2의 그룹당-1 규칙이 지켜져야 이 합산이
    "여러 **독립** 관심 축에 걸린 owner가 위로 온다"는 의미를 가진다 — 같은 개념의
@@ -408,14 +440,30 @@ contribution(원형 score_detail 포함), 출력은 전순서(total order), **fa
 facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3). 기본 전략(RRF)은 facets를
 전혀 읽지 않으므로 dummy 기간에도 안전하다.
 
-**산출물**: `OrderedCandidates` (상위 `max_results`개로 절단).
+**산출물**: `OrderedCandidates` — **절단하지 않는다**(rev 5.13). 절단은 S6이 재확인을 끝낸 뒤에
+한다: `D21`이 재확인에 실패한 후보를 빼고 **뒤에서 채우도록** 요구하는데, 여기서 자르면 채울 재료가
+없다. rev 5.12까지 이 자리에 있던 `ranked[:max_results]`가 그 재료를 버리고 있었다.
 
 **계측**: 전략 교체 시 A/B 근거용 — 기본 전략과 후보 전략의 순위 불일치도(단, **실데이터
 주입 후에만 의미** — 분석 §12.3 주의).
 
-### S6 Assembly — 응답 조립
+### S6 Assembly — hydrate · 재확인 · 응답 조립
 
 **동작**:
+
+−1. **hydrate + 재확인**(rev 5.13 신설 — `D11`·`D21`): 상위 후보부터 `GET /users/{id}/topics`로
+   **그 사람이 지금 무엇을 공개하고 있는지**를 읽는다. 한 호출이 두 가지를 동시에 한다:
+   - **복제본이 주지 못하는 값**(`D11`) — `owner_notes`·`relation`·`descriptions`·
+     `deep_holdings_observed`·`ranking_contribution`. 앞의 넷은 응답이 주는 **트리**에서 오고
+     복제본은 평평한 목록이라 담을 자리가 없다.
+   - **차단·삭제·철회의 서빙 시점 재확인**(`inbound_event_contract.md` §4 상단 등급).
+
+   **읽지 못한 후보는 답에서 뺀다**(`D21` — 이것만은 fail-closed다). 빠진 자리는 `OrderedCandidates`의
+   뒤에서 채우고, `verification_partial`을 선언한다. **전부 못 읽으면** 200 + empty이며 사유는
+   `verification_unavailable`이다 — 조회하지 못한 것을 "공개 보유자 없음"으로 부르지 않는다.
+
+   `열린 항목` **PIPE-⑬ 몇 명을 읽을 것인가.** `max_results`만 읽으면 탈락 시 왕복이 한 번 더 필요하고,
+   여유분을 함께 읽으면 버리는 왕복이 생긴다. `D20`의 지연 예산(`decisions.md` §3-C9)이 정해야 한다.
 
 0. **owner → agent id 변환**(rev 5 · rev 5.2에서 고정 계약으로 명문화): topic-api가 주는
    것은 user_id(=owner)이고 bourbon-agent가 기대하는 `RecommendedAgent.id`는 agent ID다.
@@ -548,9 +596,11 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
 | expansion **정상** + 전 probe 0건 (카탈로그에 topic 없음) | S2 (`failed`) | **422** |
 | expansion **degraded** + fallback 0건/유효 probe 0개 | S1→S2 (`unavailable`) | **503** (422 금지 — 판단 미도달) |
 | 모든 concept group이 판별 불가 | S2 (`ambiguous`) | **422** (구분 코드) |
-| topic 있으나 공개 보유자 0 / 필터 후 0 | S4 | **200 + empty** |
-| topic-api 불능 (5xx/timeout) | S2/S3 (`unavailable`) | **503** |
-| S3에서 확정 topic 일부 실패 (404 재grounding 후 포함) | S3 | **503** (fail-closed — 부분 RRF는 다른 랭킹) |
+| topic 있으나 공개 보유자 0 / 필터 후 0 | S4 | **200 + empty** (`no_public_holders` / `all_candidates_filtered`) |
+| **최종 N명을 하나도 재확인하지 못함** (rev 5.13 · `D21`) | S6 | **200 + empty** (`verification_unavailable` — "없다"가 아니라 "보지 못했다") |
+| **grounding 불능** (`/search/topics` 전부 5xx/timeout) | S2 (`unavailable`) | **503** — 물어볼 topic이 없으면 후보를 만들 수 없다 |
+| **Gorse 불능** (rev 5.13 · `D20`) | S3 | **200** + `candidates_fallback` — topic-api 보유자 랭킹으로 후보 생성 |
+| **확정 topic 일부만 grounding 성공** (rev 5.13 · `D20`) | S2 | **200** + `grounding_partial` — 라벨별 가중합에는 랭킹 융합이 없어 "더 적게 읽은 순서"다 |
 | **보유 근거가 랭킹 범위를 벗어남**(item 있는 노드의 distance < 0 — rev 5.9) | provider(client) | **503** (구조적 불변식 위반 · §9-④) |
 
 오귀속 금지의 축: **"카탈로그에 없다"고 말할 자격은 expansion이 정상 완료됐을 때만
@@ -582,7 +632,11 @@ decision log(기존 규율)는 단계마다 산출물 요지를 남긴다 — ex
 | endpoint | 단계 | 파라미터 | 캐시 |
 |---|---|---|---|
 | `GET /api/internal/svc/topic/search/topics` | S2 | `q`(probe), `limit=20` | 짧은 TTL (⑦) |
-| `GET /api/internal/svc/topic/topics/{id}/users` | S3 | `limit=100`, `visibility=public` | 없음 (유저 데이터 — 신선도 우선) |
+| `GET /api/internal/svc/topic/users/{id}/topics` | **S6** (rev 5.13) | `visibility` | **없음** — 서빙 시점 재확인이 목적이므로 캐시하면 목적이 사라진다(`D21`) |
+| `GET /api/internal/svc/topic/topics/{id}/users` | S3 **fallback 전용** | `limit=100`, `visibility` | 없음 (유저 데이터 — 신선도 우선) |
+
+rev 5.13에서 세 번째 행이 **정상 경로에서 빠지고 fallback으로 내려갔다**(`D07`). 두 번째 행이 그
+자리를 대신하되 목적이 다르다 — 후보를 **찾는** 읽기가 아니라 최종 N명을 **확인하는** 읽기다.
 
 쓰기 endpoint는 호출하지 않는다. `/search/users`(이름→유저 직행)도 쓰지 않는다 — grounding
 선별을 우리가 소유하기 위해 두 단계를 분리한다(분석 §10-2 R7).
@@ -644,6 +698,8 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 1. ~~S3 부분 실패 규칙~~ — **rev 5에서 해소: 초기 fail-closed 확정**(확정 topic 하나라도
    실패 → 503). 부분 성공은 degraded wire·concept-group 의미가 자리잡은 뒤 재개방할 계약.
 2. **probe 수 상한(6)·grounding limit(20)·확정 topic 수(1~3)** — 기본값 제안. 측정 후 조정.
+   rev 5.13 정정: 이 중 **그룹 수 ≤ 3은 이미 구조 검증이고 위반하면 fail-closed 저하**다(§S1).
+   조정 대상은 나머지 둘이다.
 3. **RRF k=60** — 표준값 제안.
 4. ~~matched_topics wire 모양~~ — **rev 5.8에서 해소, rev 5.9에서 2값으로 정정**: 정수 `distance`는
    wire에 내지 않고, 그것에서 파생한 **`relation` enum `exact`/`descendant`**(0 / >0)를 응답
@@ -686,7 +742,10 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 6. **S2 LLM rerank를 A단계 초기부터 켤지** — 대안: exact-label rule만으로 시작하고 ambiguous
    비율을 측정한 뒤 켠다. (판정층 §13-6과는 별개 — 이것은 topic 선별, 그것은 후보 재정렬.)
 7. **/search/topics 캐시 TTL** — 제안 5분 (그들 배포 주기 대비 충분히 짧음).
-8. **200+empty의 사유 코드 체계** — "no_public_holders" / "degraded" 구분을 wire에 실을지.
+8. ~~**200+empty의 사유 코드 체계**~~ — **rev 5.13 해소**: `D20`·`D21`이 세 값으로 확정했다
+   (`no_public_holders` / `all_candidates_filtered` / `verification_unavailable`). `degraded`는 별도
+   필드로 복귀한다 — rev 5.5가 도달 불가로 지웠고 그 전제가 `D20`으로 사라졌다. **값 추가는
+   bourbon-agent 협의 대상**이다(`Literal` strict 파싱). 원래 질문: — "no_public_holders" / "degraded" 구분을 wire에 실을지.
 11. **요청 wire 길이 상한 값** (rev 5) — `topic` ≤200자·`context` ≤2,000자 제안. probe
    ≤100자는 topic-api `NameQuery`와 동기라 제안이 아니라 제약.
 9. **응답 카드 hydration 책임** (rev 3 협의 → **rev 5.5에서 S6 선행 블로커로 승격**) —
@@ -757,6 +816,37 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 이 절이 거절 근거다.
 
 ## 변경 이력
+
+**2026-09-03 rev 5.13** — 결정 소유를 [`decisions.md`](decisions.md)로 넘기고, `D07`(Gorse가 후보
+소스)·`D10`(공개 보유 복제본)·`D20`·`D21`(실패 규율)을 본문에 반영했다. 뒤집힌 서술은 표시하지 않고
+**삭제**했다 — 제자리에 경고만 달아 두는 방식이 `gorse.md` §6-1에서 실제로 오독을 만들었다.
+
+⑴ **S3이 Retrieval에서 Candidate로 바뀌었다**(`D07`). 후보는 Gorse에 라벨별 개별 질의 + 가중합으로
+묻고, `/topics/{id}/users`는 **fallback 전용**으로 내려갔다. 이 단계가 존재하는 이유는 그들 랭킹이
+상위 100명에서 잘리고 페이징이 없다는 것 — 가장 깊게 아는 사람이 컷 밖이면 꺼낼 방법이 없었다.
+
+⑵ **S3의 fail-closed 규정(rev 5.5~5.12)을 삭제했다**(`D20`). 근거는 *"잘린 랭킹을 완전한 랭킹과
+융합하면 아무도 계산하지 않은 순서가 나온다"*였고, 그것은 rank 위치로 융합할 때의 문제다. 라벨별
+가중합에는 랭킹 융합이 없어 라벨 하나가 빠지면 **더 적게 읽은 순서**이지 망가진 순서가 아니다.
+**오귀속 금지는 그대로 살아남았다** — 보지 못한 것을 "없다"고 하지 않는다.
+
+⑶ **hydrate + 재확인을 S6에 신설했다**(`D11`·`D21`). 복제본이 담지 못하는 다섯 값(`owner_notes`·
+`relation`·`descriptions`·`deep_holdings_observed`·`ranking_contribution`)과 차단·삭제·철회의 서빙
+시점 재확인이 **같은 호출**에서 온다. 읽지 못한 후보는 빼고 뒤에서 채운다.
+
+⑷ **S5가 절단을 멈췄다.** ⑶의 백필에는 잘라낸 나머지가 필요한데 `ranked[:max_results]`가 그것을
+버리고 있었다. 절단은 재확인 뒤 S6이 한다.
+
+⑸ **§1의 "우리 topic 저장소·색인·스트림 없음"을 `D10`으로 대체**했다. 남는 규율은 좁아졌다 —
+**카탈로그 어휘의 두 번째 원본을 만들지 않는다.**
+
+⑹ **§4 실패 표를 다시 썼다** — `verification_unavailable`, `candidates_fallback`,
+`grounding_partial` 세 줄이 늘고 `S3 부분 실패 → 503` 줄이 빠졌다.
+
+⑺ 부수 정정: §0 요약에 `lang`과 S6의 rev 5.8 값 넷 + `owner_notes`가 빠져 있었다(HOW_TO_READ가
+"시간 없으면 §0만 읽어라"로 안내하는 블록이다). §S4-1의 RRF 식에만 `+1`이 없어 §S4 산출물·§S5와
+어긋났다. `열린 결정` ⑧을 `D20`·`D21`이 닫았고, ②의 세 값 중 "그룹 수 ≤ 3"은 이미 구조 검증임을
+명기했다.
 
 - **2026-08-27 rev 5.12** — **`owner_notes`에 두 가지를 더한다: 철회 방어와 결정적 tiebreak**(구현 자체
   리뷰 · §S6-5 ⒝·⒟·⒡). rev 5.11이 계약을 다 적었다고 생각했지만 둘이 비어 있었고, 첫째는 **실제로 새고
