@@ -474,6 +474,9 @@ factor 64, float32:  user 1억 25.6 GB + item 1억 25.6 GB = 51.2 GB (runtime ov
 
 **ID 접두사는 `SURV-`다**(`decisions.md` §5) — `R1`이 이 repo에서 세 가지를 가리키고 있었다.
 
+**R3·R4·R8을 실제로 재는 실험은 [`gorse.md` §12-5](gorse.md)의 `GOR-X1`–`X5`다** — R3은 X3, R4는 X1·X4,
+R8은 X2. 여기 표는 질문을 갖고 그쪽이 절차를 갖는다.
+
 ---
 
 ## 14. 이 문서가 하지 않은 것
