@@ -159,6 +159,6 @@ facets_ownership_split_discussion.md  값의 소유            ← 같은 경계
 | `recommendation_scoring_design.md` §11–§12 | N1–N5(지금 만들 것) · D1–D8(나중에 정할 것) · Q1–Q14 |
 | `inbound_event_contract.md` §6 | `EVT-E1`–`E9` 협의 상태. **E1이 임계경로** |
 | `recsys_opensource/README.md` §13 | `SURV-R1`–`R11`. **R1은 여전히 surface 2의 전제**(friends까지 근거로 삼으면 전역 label이 성립하지 않는다). **R4는 배포 전 게이트로 승격**(`decisions.md` §4) |
-| `recsys_opensource/gorse.md` §12 | **1억 규모에서 깨지는 것 둘과 개선 후보 열 가지 + 실험 `GOR-X1`–`X5`.** 결정은 `decisions.md` C11 |
+| `recsys_opensource/gorse.md` §12 | **1억 규모에서 깨지는 것 둘과 개선 후보 열 가지 + 실험 `GOR-X1`–`X5`.** 7·9는 `D22`. **실행 순서·다음 결정은 §12-6** |
 | ~~`recsys_adoption_discussion.md` §9~~ | **레지스터가 아니다**(`decisions.md` §5). 논의 기록이고 번호가 `SURV-R`과 겹치되 뜻이 다르다 |
 | 코드 repo `tasks/todo.md` | 구현 plan의 단일 소스 (이 repo에 병렬 plan을 두지 않는다) |
