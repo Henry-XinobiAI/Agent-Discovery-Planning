@@ -40,8 +40,10 @@ S5 Ordering         gate → lexicographic 정렬 키 → 결정적 tiebreak (sc
 S6 Assembly         최종 N명 hydrate+재확인(topic-api /users/{id}/topics — D11·D21)
    │                → 탈락분 백필 → max_results로 절단 → owner→agent id 변환(uuid5)
    │                산출물: RecommendResponse — matched_topics(라벨·descriptions·relation)
-   │                + owner_user_id + match_reason + owner_notes + decision_id
-   │                (signals·degraded는 wire가 아니라 decision log — degraded는 D20으로 복귀 예정, §9-⑧)
+   │                + owner_user_id + match_reason + owner_notes
+   │                (signals는 wire가 아니라 decision log)
+   │                ※ 아직 없는 것: decision_id(D15·임계경로) · degraded(D20으로 복귀 예정)
+   │                  · empty_reason 세 번째 값(D21). 셋 다 bourbon-agent 협의 대상
    ▼
 bourbon-agent      [grounding 불능 → 503 / 정직한 empty → 200 + 사유 3종]
 ```
