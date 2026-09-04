@@ -3,8 +3,11 @@
 > **결론**: 1억 전원 projection 전제에서 **병목은 저장소 비용이 아니라 재계산 시간**이다. 어떤
 > backend를 골라도 전면 재계산이 신선도 창 안에 끝나지 않는다(§7). 따라서 지금 답할 질문은 "어느
 > DB인가"가 아니라 `U_active`·`I_eligible`이 얼마인가이고, 그 둘이 정해지면 셋 다 충분히 싸진다(§8).
-> 형태만 놓고 보면 **data store = Aurora 계열, cache store = 데이터 티어링 ElastiCache 또는
-> DocumentDB**이며, Aurora를 cache store로 쓰는 조합만 명확히 틀렸다.
+> **형태만** 놓고 보면 data store = Aurora 계열, cache store = 데이터 티어링 ElastiCache이며,
+> Aurora를 cache store로 쓰는 조합만 명확히 틀렸다. **그러나 그것은 1억 전제에서의 형태이고 §8이 그
+> 전제를 기각한다** — 우리가 실제로 만들 규모의 권고는 6-6이 소유하며 **dev는 기존 MySQL·Valkey 공유,
+> prod는 `db.t4g.small` + `cache.t4g.small` 분리**다. DocumentDB는 §4에서 형태가 맞지만 6-5·6-6이
+> 기각한다 — 자체 MongoDB에서의 이전 경로가 아니고(6-5), `iac`에 그 제품군이 하나도 없다(6-6).
 >
 > **managed 대신 k8s에 직접 띄우는 안**(§6): 1억 전제에서는 자릿수로 이기지만 그 전제를 §8이
 > 기각하고, 우리가 실제로 만들 규모에서는 절감액이 운영 부담을 사기에 모자란다(6-4). **다만 작은
@@ -111,7 +114,7 @@ ElastiCache가 0.4% 싸고 스토리지·I/O는 동일하므로 r6gd 행을 빼�
 | **ElastiCache Redis (all-RAM)** | 1,126 GB × $13.67 ≈ **$15,400** | 지연은 최고(p99 <1 ms). 순수 RAM으로 1억을 담는 것이 가장 비싼 선택 |
 | **ElastiCache Valkey (all-RAM)** | 1,126 GB × $10.94 ≈ **$12,300** | 같은 것을 20% 싸게. 엔진만 바꾸면 되고 스키마는 그대로다 |
 | **ElastiCache r6gd (티어링)** | 1,126 GB × ~$5.20 ≈ **$5,900** | **이 워크로드에 정확히 맞는다** — 거대한 캐시 + 심한 편향 접근(1억 중 대부분이 비활성). **단, 서울에는 없다**(§3-1) |
-| **DocumentDB** | 스토리지 $67 + I/O ~$1,200 + 인스턴스 $2,400~4,800 ≈ **$3,700~6,100** | 유저당 문서 1개 + 배열 100개가 자연스러운 모양. point read 1~5 ms — 표면 2의 예산에서 문제 없음 |
+| **DocumentDB** ⚠ | 스토리지 $67 + I/O ~$1,200 + 인스턴스 $2,400~4,800 ≈ **$3,700~6,100** | ⚠ **모양 가정이 틀렸다**(S4 실측: Gorse의 MongoDB 캐시는 이웃 1건 = 문서 1개, item당 ~80건) — 아래 I/O 산정은 재검토 대상. point read 1~5 ms — surface 2의 예산에서 문제 없음. **⚠ 형태 평가이지 채택 권고가 아니다 — 6-5·6-6이 기각한다** |
 | **Aurora MySQL/PostgreSQL** | 스토리지는 같으나 **행 수가 100억** | `판단` **모양이 틀렸다.** sorted set을 `(name, member, score)` 행으로 펴면 100억 narrow row를 주기적으로 전면 재작성하게 되고, 인덱스 유지비와 (PostgreSQL이면) vacuum 부담이 여기서 터진다 |
 
 I/O 산정 근거 `판단`: 전면 refresh 1회 = 1억 문서 교체 × ~5 I/O ≈ 5억 I/O. `cache_expire` 기본 72h면
@@ -176,7 +179,7 @@ Aurora는 $3,000~5,000이다.
 
 - **cache store**: 복원해도 `cache_expire`만큼 낡아 있고, 어차피 재계산이 정답에 가깝다. 백업이
   아니라 **재계산 시간(§7)이 곧 RTO**다.
-- **data store**: feedback 20억 행도 원리상 우리 DynamoDB에서 재투영할 수 있지만 시간이 든다. 여기서는
+- **data store**: feedback 20억 행도 원리상 우리 DynamoDB에서 재프로젝션할 수 있지만 시간이 든다. 여기서는
   백업이 재구축 시간을 줄여 준다.
 
 ★ **따라서 자체 운영의 위험은 RPO가 아니라 RTO다.** managed는 손실을 불가능하게 만들지 않고 드물게
@@ -377,7 +380,7 @@ item 1억    (전원)          → 1,000,000초 ≈ 11.6일
 `max(cache_expire, 전면 재계산 시간)`이므로, 재계산이 11일이면 `cache_expire`를 아무리 낮춰도 추천은
 11일 전 것이다. 캐시를 담을 곳이 부족한 것이 아니라 캐시를 채울 시간이 부족하다.
 
-`README.md` §13의 R3이 이미 이것을 열어두었다 — *"2,000개 너머는 미검증. 목표 규모에서 재계산 시간을 실측하기 전에는
+`README.md` §11이 이미 이것을 열어두었다(같은 질문이 §13 `SURV-R3`으로도 등록되어 있다) — *"2,000개 너머는 미검증. 목표 규모에서 재계산 시간을 실측하기 전에는
 `cache_expire` 하한을 약속할 수 없다."* 이 장은 그 문장에 저장소 비용을 덧붙일 뿐, 그 제약을 완화하지
 않는다.
 
@@ -401,16 +404,43 @@ U_active 1,000만 / I_eligible 500만          (도쿄 기준)
 
 ## 9. 열린 항목
 
+**ID 접두사는 `STO-`다**(`decisions.md` §5).
+
 | # | 항목 | 성격 | 상태 |
 |---|---|---|---|
 | **S1** | `U_active`·`I_eligible` 목표값 | 제품·측정 | **미정. 이 장 전체의 전제** |
-| S2 | Gorse가 SQL/document backend에서 cache store를 **실제로 어떤 스키마로** 쓰는가 | 실측 | 미확인. §4의 Aurora 판정이 여기에 걸린다 |
+| S2 | Gorse가 SQL/document backend에서 cache store를 **실제로 어떤 스키마로** 쓰는가 | 실측 | **MongoDB는 확인**(S4·S9 — `documents` 컬렉션, 이웃 1건 = 문서 1개). **SQL/Aurora는 미확인** — §4의 Aurora 판정이 여기에 걸린다 |
 | S3 | 리전 단가 | 확인 | **닫힘(§3).** 도쿄·서울 동일 수준, us-east-1 대비 +20% |
-| S4 | `gorse.md` §8-2의 neighbor·fallback 캐시가 §2 산정에 더하는 양 | 측정 | 미포함 |
+| S4 | `gorse.md` §8-2의 neighbor·fallback 캐시가 §2 산정에 더하는 양 | 측정 | **일부 실측(`GOR-X3`, 2026-09-04)**: surface 1 인스턴스의 item 이웃 캐시는 **item당 ~80건**(sqlite ~210 B/건, 5×10⁵에서 7.8 GB). 10⁸ item이면 ~8×10⁹건 — Redis 단가는 미측정. **MongoDB 7 실측**: 논리 182 B/건, 디스크는 WiredTiger 압축으로 ~33 B/건(이 압축률은 DocumentDB에 적용되지 않는다 — 엔진이 다르다). Gorse의 MongoDB 캐시는 **이웃 1건 = 문서 1개**라 §4 DocumentDB 행의 "유저당 문서 1개 + 배열 100개" 가정과 모양이 다르다. master RAM은 별도로 **≈ 8.3 KB/item** |
 | S5 | 서울 이전 시 r6gd 부재를 무엇으로 대체하는가 | 설계 | **조건부.** 도쿄를 쓰는 동안은 열리지 않는다(§3-1) |
 | S6 | 디스크 상주 cache store가 견디는 QPS | 측정 | **§4·§6-2의 최저가 안이 전부 여기 걸린다.** 인덱스는 RAM에 들어가지만 working set을 벗어난 읽기는 gp3 IOPS를 친다 |
-| S7 | `gorse.md` §8-3의 폴백(Gorse 없이 RRF ordering)이 실제로 구현되어 있는가 | 확인 | **자체 운영 검토의 전제**(§6-3) |
+| S7 | Gorse 불능 폴백(`candidates_fallback` — topic-api 보유자 랭킹, `D20`)이 실제로 구현되어 있는가 | 확인 | **자체 운영 검토의 전제**(§6-3) |
 | S8 | 공용 Valkey의 `maxmemory-policy`와 현재 사용률 | 확인 | **얹기 전 필수**(§6-6). TTL 없는 키가 차면 축출이 아니라 쓰기 실패이고, deferq에는 재시도가 없다 |
+| **S9** | **DocumentDB가 Gorse v0.5.11의 MongoDB 백엔드 연산을 지원하는가** | 문서 대조 (실행 아님) | **2026-09-04 대조 완료 — 아래 표.** cache store는 **5.0에서 대시보드 시계열 하나만 깨지고**(`$top`, 8.0.1+에서만 지원) 추천 경로는 전부 지원. data store는 **5.0 이상 필수**(`$text`·text index·`$meta`가 3.6/4.0에 없음). Elastic cluster는 data store 불가(text 계열), cache store는 5.0과 같은 조건(대시보드 시계열만 깨짐). **실제 클러스터에서 한 번 돌려 보기 전까지는 문서상 판정이다.** 로컬 `mongo:7`로는 동작·성능 확인(`gorse.md` §12-5 X3 store 변인): 저장 1.1 ms/item(sqlite의 1.6×), 정상 사이클 동일. 기동 시 빈 `BulkWrite` 오류 로그 1건(무해) |
+
+**S9 상세 — Gorse v0.5.11 `storage/cache/mongodb.go`·`storage/data/mongodb.go`가 쓰는 연산 vs AWS 문서
+[Supported MongoDB APIs](https://docs.aws.amazon.com/documentdb/latest/developerguide/mongo-apis.html)·[Text search](https://docs.aws.amazon.com/documentdb/latest/developerguide/text-search.html)** (2026-09-04 열람):
+
+| Gorse가 쓰는 것 | 어디서 | 3.6 | 4.0 | 5.0 | 8.0 | Elastic |
+|---|---|---|---|---|---|---|
+| `create`·`createIndexes`(compound·unique·sparse) · `find`·`update`(upsert)·`delete` · `BulkWrite` · `count` | cache·data 전부 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `$eq $in $lt $lte $gt $gte $ne $or $all` · `$set $setOnInsert $inc $min $max` | cache·data | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `ScanScores` = `Find({})` 전체 커서 | cache GC(매 사이클) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `$match $group $project $sort $multiply $divide` | cache `GetTimeSeriesPoints` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `$floor $toLong $toDate` | 같은 곳 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **`$top`** (누산자, MongoDB 5.2+) | 같은 곳 | ✗ | ✗ | **✗** | ✓ (8.0.1+) | ✗ |
+| **text index**(`Comment` 등 `[recommend.search] columns`) · `$text`/`$search` · `$meta: textScore` | data `Reconcile`·`SearchItems` | ✗ | ✗ | ✓ | ✓ | ✗ |
+
+- **`$top`이 깨뜨리는 것은 master 대시보드의 `/api/dashboard/timeseries/{name}` 하나다**(`master/rest.go:776`). 시계열
+  *쓰기*(`AddTimeSeriesPoints`, BulkWrite upsert)는 되고, item-to-item·추천·GC는 이 함수를 쓰지 않는다. 5.0에서 그래프가
+  비는 것을 감수하면 cache store로는 동작한다. 8.0.1+면 문제 없다.
+- **data store를 DocumentDB에 두려면 5.0 이상**이다. 3.6/4.0에서는 text index 생성이 실패하는데, `Reconcile`은 background
+  goroutine에서 로그만 남기므로(`master/tasks.go:62`) 기동은 되고 `/api/search`만 안 된다. DocumentDB text index 제약도
+  적용된다 — 컬렉션당 하나, **영어만**, 배열 필드 불가(`columns`에 `item.Labels.*`를 넣으면 실패), 대소문자 무시.
+- 운영 주의(문서상): TLS 필수라 `FROM scratch` 이미지에 CA 번들을 마운트하고 URI에 `tls=true&tlsCAFile=`를 넣어야 한다.
+  retryable writes 지원 여부는 버전별로 확인하고, 안 되면 URI에 `retryWrites=false`.
+- **이 표는 실행이 아니다.** §8의 규율("문서에 없는 동작은 실행이 답한다")대로, DocumentDB가 후보로 살아나면 실제 클러스터에
+  10⁵ item으로 X3 하네스를 한 번 돌리는 것이 판정이다. 로컬 MongoDB로는 성능만 대리 측정할 수 있고 호환성은 대리가 안 된다.
 
 `판단` **S2는 `README.md` §8의 규율이 그대로 적용되는 자리다** — *"문서에 없는 동작은 문서가 아니라 실행이
 답한다."* §4의 Aurora 항목은 sorted set을 행으로 편다는 가정 위에 서 있고, 그 가정 자체가 아직

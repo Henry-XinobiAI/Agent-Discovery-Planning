@@ -2,16 +2,16 @@
 
 > **구현 상태 (rev 3.3, 2026-08-24)**: §3 델타와 §4 이디엄이 새 repo
 > `bourbon-agent-discovery-api`에 **반영됨** — `4176b0a`(k8s: label·vs 삭제·docs 게이트
-> retarget·API_TOKENS 제거), `05ec707`(app: `INTERNAL_PREFIX` 마운트·surfaces 명부·bearer
+> retarget·API_TOKENS 제거), `05ec707`(app: `INTERNAL_PREFIX` 마운트·surfaces 목록·bearer
 > 토큰 층 삭제·surface 테스트 4종), `d861b5f`(§4-5 표면 밖 관례 정합: configmap·빈 secret·
 > ErrorResponse·테스트 배치·잔차). §7 열린 결정은 **전부 해소** — dispatch 등록 PR도
 > 준비됐고(bourbon-api `0eb55b6`) 순서 제약이 없다는 판단까지 §7-④에 기록했다. 미구현으로
 > 남은 것은 §4-2 항목 2(클라이언트 prefix 등가 단정)와 §4-5의 `EnvSettings` 보류 2건뿐이다.
-> 이 문서는 여전히 "무엇을 왜 그렇게 하는가"의 정본이고, 구현 상태는 이 블록만 갱신한다.
+> 이 문서는 여전히 "무엇을 왜 그렇게 하는가"의 기준 문서이고, 구현 상태는 이 블록만 갱신한다.
 
 > **문서 지위**: 설계 rev 3.3 (2026-08-24). 입력 = bourbon-api `docs/microservice-edge-auth.md`
-> (관례 정본) + bourbon-topic-api의 레퍼런스 구현(2026-08-24 소스 확인) +
-> `recommendation_pipeline_design.md` rev 5.3(파이프라인 정본 — 이 문서는 그 파이프라인이
+> (관례 기준 문서) + bourbon-topic-api의 레퍼런스 구현(2026-08-24 소스 확인) +
+> `recommendation_pipeline_design.md` rev 5.3(파이프라인 기준 문서 — 이 문서는 그 파이프라인이
 > **어떤 표면 위에서 서빙되는가**만 소유한다).
 >
 > **전제 결정 (2026-08-24, 오너)**: ⑴ agent-recommendation-api는 **internal 표면만** 갖는다 —
@@ -163,10 +163,10 @@ may read one"). 따라서:
 **어떤 internal 라우트도 그것을 읽지 않는다**. 같은 규율 문장을 각 internal 라우터 모듈
 docstring에도 반복한다(topic-api `api/routers/internal/topics/router.py:3-5` 관례).
 
-### 4-2. 라우터 명부 + surface boundary 테스트
+### 4-2. 라우터 목록 + surface boundary 테스트
 
 topic-api `api/depends/surfaces.py`의 교리 — "an endpoint in the wrong list is a security
-decision gone wrong" — 를 승계하되, 표면이 하나라 명부는 internal 리스트 하나로 퇴화한다.
+decision gone wrong" — 를 승계하되, 표면이 하나라 목록는 internal 리스트 하나로 퇴화한다.
 테스트는 `tests/.../test_surface_boundary.py`(topic-api 동명 파일의 우리 버전):
 
 1. `INTERNAL_PREFIX.startswith("/api/internal/svc/")` — 공유 정책·edge gate가 매칭하는
@@ -289,7 +289,7 @@ logger 이름을 전 모듈 `__name__`으로 통일, lifespan의 무의미한 `g
   `/recommend` 유지, 기존 repo는 전환 후 archive. §1-5 신설(공존·컷오버 근거 + "discovery"
   용어의 우산 의미 vs Discovery 단계 구분 명시), 본문 `<name>` placeholder 전부 실명으로 치환.
 - **2026-08-24 rev 1** — 최초 작성. 입력 = bourbon-api `docs/microservice-edge-auth.md` +
-  topic-api 레퍼런스 구현 소스 확인(main.py 표면 상수·surfaces 명부·surface boundary
+  topic-api 레퍼런스 구현 소스 확인(main.py 표면 상수·surfaces 목록·surface boundary
   테스트·identity dependency·k8s label/port·dispatch 두 블록) + 오너 결정 2건(internal-only,
   신규 template 구현). 현행 repo와의 갭(root 마운트·무명 포트·label 부재)은 §3에 반영 —
   단 신규 구현 전제라 "고칠 목록"이 아니라 "template에서 처음부터 이렇게 만든다"로 읽는다.

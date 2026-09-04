@@ -1,7 +1,9 @@
 # Cornac 활용 검토
 
 > **결론**: Cornac은 production service가 아니라 모델·modality·평가 방법을 같은 데이터로 비교하는
-> 오프라인 실험 하네스다. 학습 이미지/CronJob에만 두고 요청 경로에는 넣지 않는다.
+> 오프라인 실험 하네스다. 학습 이미지/CronJob에만 두고 **Cornac runtime은 요청 경로에 넣지 않는다.**
+> §6-2의 요청 예는 *학습이 내보낸 artifact*를 읽는 얇은 scorer이지 Cornac을 서빙에 두는 것이 아니다
+> (2026-09-03 명확화 — 배너와 §6-2가 모순으로 읽혔다).
 >
 > **역할**: 이 문서는 [`recommendation_scoring_design.md` §9-1](../recommendation_scoring_design.md)의
 > Cornac 판정과 Q6 종결 근거다. 제품 요구사항이나 도입 결정을 여기서 새로 만들지 않는다.
@@ -296,7 +298,7 @@ grounding, `public/friends/private`, self-exclusion, block/safety를 우리 코�
 ```text
 grounded candidates
   → requester-aware gate
-  → raw ID를 Cornac item index로 투영
+  → raw ID를 Cornac item index로 프로젝션
   → rank(item_indices=eligible)
   → 신규/unknown item을 규칙 점수로 합류
 ```

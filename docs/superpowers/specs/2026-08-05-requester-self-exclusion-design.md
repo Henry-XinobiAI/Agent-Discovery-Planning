@@ -65,7 +65,7 @@ claim을 **신뢰한다**.
 > 이 절은 원래 *"현 shared bearer 인증(`verify_token` → `API_TOKENS`)은 **내부 호출자 집합의 구성원임만**
 > 검증하고, claim과 사용자 세션의 결합은 검증하지 않는다"* 로 시작하고, **"bearer token이 증명하는 것 =
 > 허용된 내부 호출자 집합 중 하나가 요청했다. 그뿐이다"** 를 명시했다. 그 bearer는 **부착돼 있지 않다**
-> (코드 `a693af3` / 기록 [`impl/07`](../../../impl/07-composition-api-cli.md) §API layer). 오너 결정이며,
+> (코드 `a693af3` / 기록 [`impl/07`](../../../archive/impl/07-composition-api-cli.md) §API layer). 오너 결정이며,
 > 형제 서비스(bourbon-memory-api·e3llm-api)도 같은 형태다.
 >
 > **이 정정이 바꾸지 않는 것**: self-exclusion의 신원 근거. 이 API가 쓰는 신원은 **처음부터** 요청 본문의

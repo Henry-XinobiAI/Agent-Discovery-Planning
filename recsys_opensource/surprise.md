@@ -39,7 +39,7 @@ data = Dataset.load_from_df(ratings[["user", "item", "rating"]], reader)
 “다시 추천받고 싶나요?” 1..5
 ```
 
-카드 노출, 클릭, 대화 시작·길이, 재질의, 추정된 해결 여부는 rating이 아니다. positive-only이거나 맥락에
+카드 노출, 클릭, 대화 시작·길이, 재쿼리, 추정된 해결 여부는 rating이 아니다. positive-only이거나 맥락에
 따라 부호가 달라지는 implicit event다.
 
 ### 이번 요청 topic은 rating이 아니다
@@ -303,7 +303,7 @@ rating event store
 | model registry | 일부 운영 흐름에 포함 | 버전·승격·rollback |
 | online REST API | 예 | discovery process 안 adapter 또는 별도 사내 service |
 | candidate privacy gate | 아니오 | 항상 우리 책임 |
-| dashboard/A/B 배선 | 제공 기능 있음 | 실험 플랫폼과 직접 연결 |
+| dashboard/A/B 배선 | dashboard는 제공. **A/B는 미확인** | 2026-09-03 정정 — `gorse.md` §10이 *"실험군 배정부터 노출·전환 분석까지 갖춘 A/B 플랫폼 계약은 확인하지 못했다"*고 적는다. 이 표만 "제공 기능 있음"으로 남아 있었다 |
 
 ### 6.1 학습 예시
 
