@@ -416,6 +416,31 @@ U_active 1,000만 / I_eligible 500만          (도쿄 기준)
 | S6 | 디스크 상주 cache store가 견디는 QPS | 측정 | **§4·§6-2의 최저가 안이 전부 여기 걸린다.** 인덱스는 RAM에 들어가지만 working set을 벗어난 읽기는 gp3 IOPS를 친다 |
 | S7 | `gorse.md` §8-3의 폴백(Gorse 없이 RRF ordering)이 실제로 구현되어 있는가 | 확인 | **자체 운영 검토의 전제**(§6-3) |
 | S8 | 공용 Valkey의 `maxmemory-policy`와 현재 사용률 | 확인 | **얹기 전 필수**(§6-6). TTL 없는 키가 차면 축출이 아니라 쓰기 실패이고, deferq에는 재시도가 없다 |
+| **S9** | **DocumentDB가 Gorse v0.5.11의 MongoDB 백엔드 연산을 지원하는가** | 문서 대조 (실행 아님) | **2026-09-04 대조 완료 — 아래 표.** cache store는 **5.0에서 대시보드 시계열 하나만 깨지고**(`$top`, 8.0.1+에서만 지원) 추천 경로는 전부 지원. data store는 **5.0 이상 필수**(`$text`·text index·`$meta`가 3.6/4.0에 없음). Elastic cluster는 둘 다 불가. **실제 클러스터에서 한 번 돌려 보기 전까지는 문서상 판정이다** |
+
+**S9 상세 — Gorse v0.5.11 `storage/cache/mongodb.go`·`storage/data/mongodb.go`가 쓰는 연산 vs AWS 문서
+[Supported MongoDB APIs](https://docs.aws.amazon.com/documentdb/latest/developerguide/mongo-apis.html)·[Text search](https://docs.aws.amazon.com/documentdb/latest/developerguide/text-search.html)** (2026-09-04 열람):
+
+| Gorse가 쓰는 것 | 어디서 | 3.6 | 4.0 | 5.0 | 8.0 | Elastic |
+|---|---|---|---|---|---|---|
+| `create`·`createIndexes`(compound·unique·sparse) · `find`·`update`(upsert)·`delete` · `BulkWrite` · `count` | cache·data 전부 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `$eq $in $lt $lte $gt $gte $ne $or $all` · `$set $setOnInsert $inc $min $max` | cache·data | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `ScanScores` = `Find({})` 전체 커서 | cache GC(매 사이클) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `$match $group $project $sort $multiply $divide` | cache `GetTimeSeriesPoints` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `$floor $toLong $toDate` | 같은 곳 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **`$top`** (누산자, MongoDB 5.2+) | 같은 곳 | ✗ | ✗ | **✗** | ✓ (8.0.1+) | ✗ |
+| **text index**(`Comment` 등 `[recommend.search] columns`) · `$text`/`$search` · `$meta: textScore` | data `Reconcile`·`SearchItems` | ✗ | ✗ | ✓ | ✓ | ✗ |
+
+- **`$top`이 깨뜨리는 것은 master 대시보드의 `/api/dashboard/timeseries/{name}` 하나다**(`master/rest.go:776`). 시계열
+  *쓰기*(`AddTimeSeriesPoints`, BulkWrite upsert)는 되고, item-to-item·추천·GC는 이 함수를 쓰지 않는다. 5.0에서 그래프가
+  비는 것을 감수하면 cache store로는 동작한다. 8.0.1+면 문제 없다.
+- **data store를 DocumentDB에 두려면 5.0 이상**이다. 3.6/4.0에서는 text index 생성이 실패하는데, `Reconcile`은 background
+  goroutine에서 로그만 남기므로(`master/tasks.go:62`) 기동은 되고 `/api/search`만 안 된다. DocumentDB text index 제약도
+  적용된다 — 컬렉션당 하나, **영어만**, 배열 필드 불가(`columns`에 `item.Labels.*`를 넣으면 실패), 대소문자 무시.
+- 운영 주의(문서상): TLS 필수라 `FROM scratch` 이미지에 CA 번들을 마운트하고 URI에 `tls=true&tlsCAFile=`를 넣어야 한다.
+  retryable writes 지원 여부는 버전별로 확인하고, 안 되면 URI에 `retryWrites=false`.
+- **이 표는 실행이 아니다.** §8의 규율("문서에 없는 동작은 실행이 답한다")대로, DocumentDB가 후보로 살아나면 실제 클러스터에
+  10⁵ item으로 X3 하네스를 한 번 돌리는 것이 판정이다. 로컬 MongoDB로는 성능만 대리 측정할 수 있고 호환성은 대리가 안 된다.
 
 `판단` **S2는 `README.md` §8의 규율이 그대로 적용되는 자리다** — *"문서에 없는 동작은 문서가 아니라 실행이
 답한다."* §4의 Aurora 항목은 sorted set을 행으로 편다는 가정 위에 서 있고, 그 가정 자체가 아직
