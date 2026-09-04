@@ -825,7 +825,7 @@ S7: 우리가 읽는 쿼리 item의 이웃 목록은 `cache_expire`(72h)마다�
 | **6** | **item 집합을 `I_eligible`로** — 공개 topic ≥1 · recommendable인 agent만 | `D16`이 이미 프로젝션을 우리 것으로 뒀다. 5%면 빌드·RAM·캐시 전부 1/20 | 지금은 **가정**(출시 전) — 출시 후 우리 복제본에서 센다 | — | **X2**(시나리오) |
 | **7 `D22`** | **surface 1 전용 Gorse 인스턴스** — tags item-to-item만, user·feedback 없음 | `D09`(store는 파생물)가 프로젝션 둘을 허용. surface 2의 유저별 캐시(560 GB)와 분리되어 4가 가능해짐 | 배포 둘 (운영 ~1.3배) | 빌드 자체 | X3 |
 | 8 | `n_jobs` 상향 + master 사이징 | S8·S9 | 박스 하나 크게 | 단일 프로세스 한계 | X3 |
-| **9 `D22`** | **쿼리 item을 사이클마다 새 id로 재생성** (`q:<label>:<gen>`), `cache_expire`는 길게 | S7: 새 item = 캐시 없음 = 무조건 계산. agent들의 목록(아무도 안 읽음)은 한 번 쓰고 끝 → Redis 왕복 3억 회 절약. **새 agent가 1 사이클 안에 보인다** | 사이클마다 hidden item ~3천 개 생성·이전 세대 삭제 | 빌드 자체(S6) | **X5** |
+| **9 `D22`** | **쿼리 item을 사이클마다 새 id로 재생성** (`q:<label>:<gen>`), `cache_expire`는 길게 | S7: 새 item = 캐시 없음 = 무조건 계산. agent들의 목록(아무도 안 읽음)은 한 번 쓰고 끝 → Redis 왕복 3억 회 절약. **새 agent가 1 사이클 안에 보인다** | 사이클마다 hidden item ~3천 개 생성·이전 세대 삭제 + 세대당 문자열 키 3개 `DEL`(X5) | 빌드 자체(S6) | **X5 통과** — 새 agent 1 사이클 안 노출, 옛 세대 영구 미갱신 실측, 삭제 절차 확정 |
 | 10 | (한계) | 9까지 해도 **사이클 시간 ≥ 전면 HNSW 빌드**. 6·7·8이 줄이고 **5만이 없앤다** | | | |
 
 `판단` 순서는 **결정이 필요 없는 것부터**: 1(실험 한 시간) · 6(측정) · 8(설정값). Gorse에 남는다면 7 + 9 +
@@ -1002,12 +1002,39 @@ coffee의 하위 = drip espresso roasting latte grinder beans cold_brew pour_ove
   섞지 않는지(우리 쪽 — 세대 번호를 원자적으로 바꾼다).
 - **통과**: 새 agent가 1 사이클 안에 노출. 삭제 세대의 키가 남지 않거나 우리가 지우는 절차가 확정됨.
 
+**결과 (2026-09-04)** — **통과**(지우는 절차 확정 포함). 12-4 행 9와 `decisions.md` C7을 갱신했다.
+
+환경: X1과 같은 config에서 `[recommend] cache_expire = "8760h"`만 바꿈. X1의 10⁴ 모집단 + `q:multi:g1`(hidden,
+coffee + 하위 4 + `__QUERY__`) 적재 → g1 **71초** 뒤 서빙. 이어서 `a:newdeep`(coffee + 하위 4, 5태그) + `q:multi:g2`(g1과
+같은 태그, 다른 id) 삽입.
+
+| 확인 | 결과 |
+|---|---|
+| 새 agent가 **새 세대**에 보이는가 | g2는 삽입 15초 뒤(사이클 타이밍) 서빙, `a:newdeep` **2위**(broad와 동점 0.509319) |
+| 새 agent가 **옛 세대**에 보이는가 | 같은 사이클 뒤 g1 재조회 — 100/100 전과 동일, newdeep 없음. **S7 실측**: 캐시가 있고 `cache_expire` 전이면 영구히 안 갱신 |
+| ⑴ 옛 세대 삭제 시 캐시 | `DELETE /api/item/q:multi:g1` → item은 404인데 **이웃 100개는 그대로 서빙**. 20초 뒤(다음 사이클의 `collectGarbage`) 사라짐. 값 테이블에 **문자열 키 3개 잔존**: `item-to-item_digest/topic_neighbors/q:multi:g1` · `item-to-item_update_time/…` · `last_modify_item_time/q:multi:g1` |
+| ⑵ 세대 전환 | g1·g2가 **동시에, 독립 내용으로** 서빙됐다(id 겹침 99/100, 차이는 newdeep). 전환은 우리가 읽는 세대 id를 바꾸는 한 번의 쓰기라 원자적이다 |
+
+소스와 일치: `server/rest.go` `deleteItem`은 `DataClient.DeleteItem` + `CacheClient.DeleteScores(ItemCache, {Id})` — 그 id를
+**남들의 목록에서 점수 항목으로** 지울 뿐, 자기 목록(subset `name/itemId`)은 건드리지 않는다. 자기 목록은 `master/tasks.go`
+`collectGarbage`가 매 사이클 "데이터셋에 없는 item의 subset"을 지운다. 문자열 키 셋은 어느 쪽도 지우지 않는다.
+
+**우리가 지우는 절차(확정)**: 세대를 은퇴시킬 때 `DELETE /api/item/<q>` 뒤 캐시 스토어에서 위 세 키를 직접 `DEL`한다.
+Redis 키 이름은 `cache_table_prefix` + 위 name 그대로다(`storage/cache/redis.go` `r.Key(name)`). 규모: 라벨 3천 × 시간당
+1세대 = 하루 21.6만 키, 안 지우면 연 ~8천만 개(각 ~100 B).
+
+**부수 발견 — agent 이웃 목록 캐시의 크기**(X3·`storage_sizing.md`의 입력): 10,008 item에서 `documents` **936,396건**
+(item당 ~93.6 — 공통 태그 0인 이웃은 distance 1로 잘려 100 미만인 item이 많다), cache.sqlite **181 MB → ~194 B/건**.
+우리는 agent들의 목록을 읽지 않지만 Gorse는 non-hidden 전 item의 목록을 만들어 저장한다(S5의 반대면). 10⁸ item이면
+~10¹⁰건이다. 이 단가를 X3의 `storage_sizing.md` 갱신에 넣는다.
+
+
 ### 12-6 실행 순서와 결정 지점 — **compact 뒤에는 여기서 시작한다**
 
 **2026-09-03 시점 상태**: `D22` 채택(7+9로 시작, 여유율 50%). 열린 것은 C11의 잔여 둘 — `N*`의 숫자(X3), ①
 쪽 조합(X1·X4). C7(가시성)은 9가 해소 경로이고 X5가 확인한다.
 
-**2026-09-04**: X1 완료 — 공식 검증 통과, 센티넬 유효, 단 "coverage 순"은 틀려서 12-4 행 1을 고쳐 썼다. 후보 1은 **`D23`**으로 채택, 2는 X4 뒤. 다음은 X5.
+**2026-09-04**: X1 완료 — 공식 검증 통과, 센티넬 유효, 단 "coverage 순"은 틀려서 12-4 행 1을 고쳐 썼다. 후보 1은 **`D23`**으로 채택, 2는 X4 뒤. **X5 통과**(같은 날) — 9의 두 확인 끝, C7 해소 경로 확인. 다음은 X3(합성 데이터 생성기부터).
 
 **환경**(모든 실험 공통): `gorse-in-one` v0.5.11, playground 없이 `/etc/gorse/config.toml` 주입(§11 서두·M5),
 `[[recommend.item-to-item]] name="topic_neighbors" type="tags" column="item.Labels.topics"`, `n_jobs`는 코어 수.
@@ -1017,7 +1044,7 @@ coffee의 하위 = drip espresso roasting latte grinder beans cold_brew pour_ove
 | 순서 | 실험 | 선행 | 결과가 바꾸는 것 | 문서 갱신 |
 |---|---|---|---|---|
 | 1 | **X1** 경로 B + 센티넬 — **완료 2026-09-04** | 없음 (한 시간) | 12-4 행 1 → **`D23`** | §11-2 표에 "B + 센티넬" 행 · 통과 시 `decisions.md`에 `Dnn`(출처 **실측**) · 기준 문서 §S3 "라벨별 개별 쿼리 + 가중합"에 다중 라벨 쿼리 추가 |
-| 2 | **X5** 쿼리 item 세대 재생성 | 없음 | 9의 두 확인(삭제 시 캐시 정리 · 세대 전환 원자성) | 12-4 행 9에 확인 결과 · 캐시 정리 절차가 필요하면 §12-5 X5 아래 · C7에 "해소 경로 확인" |
+| 2 | **X5** 쿼리 item 세대 재생성 — **완료 2026-09-04** | 없음 | 9의 두 확인(삭제 시 캐시 정리 · 세대 전환 원자성) | 12-4 행 9에 확인 결과 · 캐시 정리 절차가 필요하면 §12-5 X5 아래 · C7에 "해소 경로 확인" |
 | 3 | **X3** 대규모 빌드 | **합성 데이터 생성기**(라벨 3천 · Zipf s≈1 · 태그 1–12 · N = 10⁶/5×10⁶/2×10⁷) | **`N*`** | `D22`에 `N*` 숫자 · `storage_sizing.md`에 surface 1 인스턴스 이웃 캐시(`I_eligible × cache_size`) 추가 · `SURV-R3` 닫기 |
 | 4 | **X4** 컷 안 깊은 사람 비율 | X3의 10⁶ 세트 | 12-4 행 2·3 조합 (통과 기준 recall ≥ 0.9, 오너 확정) | 채택 조합 → `Dnn` · 기준 문서 §S3 · `SURV-R4`(배포 전 게이트) 판정 |
 | 5 | — 결정 | 1–4 | **C11 닫기** | `decisions.md` C11에 "해소" · 기준 문서 §S3에 최종 형태(전용 인스턴스 · 세대 · 조합) · `recsys_opensource/README.md` §2 표 갱신 |
