@@ -1,6 +1,6 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 기준 문서 (rev 5.17, 외부 리뷰 5회 반영). **결정은 이 문서가 소유하지 않는다** —
+> **문서 지위**: 설계 기준 문서 (rev 5.18, 외부 리뷰 5회 반영). **결정은 이 문서가 소유하지 않는다** —
 > [`decisions.md`](decisions.md)가 소유하고 여기서는 `Dnn`을 인용한다.
 > 입력 = `topic_api_analysis.md` **rev 8**
 > (2026-08-25, topic-api HEAD `9ee67f3`) + bourbon-agent의 기왕 계약
@@ -379,9 +379,11 @@ flags: {exhaustive, descendants_dropped, topics_dropped} }`
 ★ **살아남는 것은 오귀속 금지다.** 조회하지 못한 것을 "공개 보유자 없음"으로 답하는 것은 저하가
 아니라 **거짓**이고, 그래서 `D21`이 세 번째 사유 코드(`verification_unavailable`)를 둔다.
 
-fallback 경로에서 topic-api의 불완전성 플래그(`exhaustive=false`, `truncated_descendants > 0`)를
-읽으면 **그 topic의 기여만 빼고 `grounding_partial`을 선언**한다 — 이미 저하 모드이므로 503으로
-격상하지 않는다. `unranked_topics`는 단일 id 쿼리에서 계약상 0이고, 0이 아니면 계약 위반이므로
+fallback 경로에서 topic-api의 불완전성 플래그(`exhaustive=false`, `truncated_descendants > 0`)가 오면
+**별도 저하 값을 내지 않는다**(`D25`, rev 5.18) — 이 경로는 이미 `candidates_fallback`으로 선언돼 있고, 절단은
+그 안의 정도 차이다. `grounding_partial`은 S2(topic 확정)의 값이라 여기서 쓰지 않는다. 절단 사실은 **계측·로그**에
+남긴다. 그 topic의 기여를 빼는 현행 규칙은 유지하되 **재설계 대상**이다(`열린 결정` ⑭ — 빼지 않고 "부정확할 수
+있음"만 표시해 후보가 적어도 추천을 내는 방향). 503으로 격상하지 않는다. `unranked_topics`는 단일 id 쿼리에서 계약상 0이고, 0이 아니면 계약 위반이므로
 **503**이다(저하가 아니라 상류가 약속을 깬 것).
 
 **계측**: "grounded인데 공개 보유자 0" 비율(= 공개 밀도 지표), 플래그 3종 분포, topic당
@@ -795,6 +797,10 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
    기여)으로 조정.
 11. **요청 wire 길이 상한 값** (rev 5) — `topic` ≤200자·`context` ≤2,000자 제안. probe
    ≤100자는 topic-api `NameQuery`와 동기라 제안이 아니라 제약.
+14. **fallback 처리 기준 재설계** (rev 5.18, 오너 2026-09-04) — 현행은 Gorse 불능 fallback에서 절단 플래그가 붙은
+   topic의 기여를 뺀다(§S3). 방향: **빼지 않고 남기되 "부정확할 수 있음"만 표시**해, 후보가 충분하지 않아도 그 안에서
+   추천을 낸다. 열린 것 — 그 표시를 wire에 실을지(`D25`가 미룬 새 저하 값 포함), 절단된 topic의 기여 가중, 후보 수
+   하한. §S3 계측(fallback 빈도·플래그 3종 분포)이 쌓인 뒤 정한다. (⑫·⑬은 §S3 끝·§S6에 인라인.)
 
 
 ---
@@ -848,6 +854,9 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 이 절이 거절 근거다.
 
 ## 변경 이력
+
+**2026-09-04 rev 5.18** — §S3 fallback 절단 시 `grounding_partial`을 덧붙이던 문장을 **별도 저하 값 없음**으로(`D25`).
+한 wire 값이 S2 실패와 S3 절단 두 뜻을 갖던 것을 없앴다. fallback 처리 기준의 재설계는 `열린 결정` ⑭로.
 
 **2026-09-04 rev 5.17** — 표현 정리(문서 리뷰). §0 S3 요약에 `D23`·`D24` 반영 · §S3 동작을 쿼리 두 종류로 나눠 다시 씀 ·
 D24 문단의 dedup 이유 정정(다른 최상위에 걸린 확정 topic들) · §9 ①의 해소 문구를 D20으로 · "판단-도달 규율(rev 14 승계 — 레지스터 `C4`와 다름)"을 레지스터 `C4`와 구분.

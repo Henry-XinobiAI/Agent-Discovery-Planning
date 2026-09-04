@@ -72,6 +72,7 @@
 |---|---|---|---|---|
 | **D20** | **저하는 허용하되 침묵하지 않는다. 거짓말은 금지한다.** 답을 만들 수 없으면 503, 덜 좋은 답이면 200 + 저하 선언, **"없다"는 실제로 보았을 때만** 한다 | 아래 표 | **분석**(위임) | 2026-09-03 |
 | **D21** | **차단·삭제·철회 재확인만은 fail-closed다.** 재확인하지 못한 후보는 답에서 **뺀다**. 전부 빠지면 200 + `verification_unavailable`이며, 이것을 `no_public_holders`로 부르지 않는다 | `inbound_event_contract.md` §4 상단 등급 | **분석**(위임) | 2026-09-03 |
+| **D25** | **fallback 안의 절단은 별도 저하 값을 내지 않는다.** Gorse 불능으로 topic-api 보유자 랭킹을 쓰는 경로(`candidates_fallback`)에서 topic-api가 불완전성 플래그(`exhaustive=false` · `truncated_descendants > 0`)를 돌려줘도 `grounding_partial`을 덧붙이지 않는다 — 그 값은 S2의 것이다. 절단 사실은 계측·로그에만 남긴다. 절단된 topic의 기여를 빼는 현행 규칙은 유지하되 재설계 대상(`PIPE-⑭`) | 한 wire 값이 두 뜻(S2 grounding 일부 실패 / S3 fallback 절단)을 갖게 되어 소비자 문구·계측이 섞인다. 새 값(예: `candidates_partial`)은 bourbon-agent strict 파싱 협의가 필요하고, fallback 안의 정도 차이는 wire에 실을 근거가 아직 없다. 기준 문서 §S3 rev 5.18 | 오너 | 2026-09-04 |
 
 의존별 동작:
 
@@ -286,7 +287,7 @@ D15와 같은 성질이다.
 
 | 접두사 | 문서 | 레지스터 |
 |---|---|---|
-| `PIPE-` | `recommendation_pipeline_design.md` §9 | 열린 결정 ①–⑪ · **본문 인라인 ⑫(§S3 끝)·⑬(§S6)** |
+| `PIPE-` | `recommendation_pipeline_design.md` §9 | 열린 결정 ①–⑪·⑭ · **본문 인라인 ⑫(§S3 끝)·⑬(§S6)** |
 | `SCORE-` | `recommendation_scoring_design.md` §11·§12 | N1–N5 · D1–D8 · Q1–Q14 |
 | `SURF-` | `serving_surface_design.md` §7 | ①–④ (전부 해소, 보류 2건은 §4-2·§4-5) |
 | `EVT-` | `inbound_event_contract.md` §6 | E1–E9 (rev 2에서 E7–E9 추가) |
