@@ -6,8 +6,8 @@
 > **형태만** 놓고 보면 data store = Aurora 계열, cache store = 데이터 티어링 ElastiCache이며,
 > Aurora를 cache store로 쓰는 조합만 명확히 틀렸다. **그러나 그것은 1억 전제에서의 형태이고 §8이 그
 > 전제를 기각한다** — 우리가 실제로 만들 규모의 권고는 6-6이 소유하며 **dev는 기존 MySQL·Valkey 공유,
-> prod는 `db.t4g.small` + `cache.t4g.small` 분리**다. DocumentDB는 §4에서 형태가 맞지만 6-5·6-6이
-> 기각한다 — 자체 MongoDB에서의 이전 경로가 아니고(6-5), `iac`에 그 제품군이 하나도 없다(6-6).
+> prod는 `db.t4g.small` + `cache.t4g.small` 분리**다. DocumentDB는 §4에서 **I/O-Optimized 스토리지 전제로만** 형태가 맞고(Standard면 I/O 요금이
+> 인스턴스보다 크다 — 2026-09-04 재산정) 6-5·6-6이 기각한다 — 자체 MongoDB에서의 이전 경로가 아니고(6-5), `iac`에 그 제품군이 하나도 없다(6-6).
 >
 > **managed 대신 k8s에 직접 띄우는 안**(§6): 1억 전제에서는 자릿수로 이기지만 그 전제를 §8이
 > 기각하고, 우리가 실제로 만들 규모에서는 절감액이 운영 부담을 사기에 모자란다(6-4). **다만 작은
@@ -114,11 +114,25 @@ ElastiCache가 0.4% 싸고 스토리지·I/O는 동일하므로 r6gd 행을 빼�
 | **ElastiCache Redis (all-RAM)** | 1,126 GB × $13.67 ≈ **$15,400** | 지연은 최고(p99 <1 ms). 순수 RAM으로 1억을 담는 것이 가장 비싼 선택 |
 | **ElastiCache Valkey (all-RAM)** | 1,126 GB × $10.94 ≈ **$12,300** | 같은 것을 20% 싸게. 엔진만 바꾸면 되고 스키마는 그대로다 |
 | **ElastiCache r6gd (티어링)** | 1,126 GB × ~$5.20 ≈ **$5,900** | **이 워크로드에 정확히 맞는다** — 거대한 캐시 + 심한 편향 접근(1억 중 대부분이 비활성). **단, 서울에는 없다**(§3-1) |
-| **DocumentDB** ⚠ | 스토리지 $67 + I/O ~$1,200 + 인스턴스 $2,400~4,800 ≈ **$3,700~6,100** | ⚠ **모양 가정이 틀렸다**(S4 실측: Gorse의 MongoDB 캐시는 이웃 1건 = 문서 1개, item당 ~80건) — 아래 I/O 산정은 재검토 대상. point read 1~5 ms — surface 2의 예산에서 문제 없음. **⚠ 형태 평가이지 채택 권고가 아니다 — 6-5·6-6이 기각한다** |
+| **DocumentDB** (I/O-Optimized) | 스토리지 2.2 TB × $0.36 ≈ **$790** + 인스턴스 $2,600~5,300(I/O-Optimized는 인스턴스 +10%) ≈ **$3,400~6,100**. **Standard 스토리지는 논외** — 스토리지는 $264지만 전면 refresh 1회당 I/O가 $2,600~12,000이라 월 $26,000~120,000 | `실측` S4·S9로 모양을 고쳤다(2026-09-04): 유저 1명의 top-100 = **문서 100개**(`documents` 컬렉션, `AddScores`가 건당 upsert), 문서 182 B + 인덱스 38 B. 10⁸ 유저 × 100 = **10¹⁰ 문서 ≈ 2.2 TB**(§2의 560 GB의 4배; replica는 스토리지를 공유하므로 ×2 없음). point read 1~5 ms — surface 2의 예산에서 문제 없음. **⚠ 형태 평가이지 채택 권고가 아니다 — 6-5·6-6이 기각한다** |
 | **Aurora MySQL/PostgreSQL** | 스토리지는 같으나 **행 수가 100억** | `판단` **모양이 틀렸다.** sorted set을 `(name, member, score)` 행으로 펴면 100억 narrow row를 주기적으로 전면 재작성하게 되고, 인덱스 유지비와 (PostgreSQL이면) vacuum 부담이 여기서 터진다 |
 
-I/O 산정 근거 `판단`: 전면 refresh 1회 = 1억 문서 교체 × ~5 I/O ≈ 5억 I/O. `cache_expire` 기본 72h면
-월 10회 = 50억 I/O × $0.24/백만 ≈ $1,200.
+I/O 산정 근거 `판단` (2026-09-04 재산정 — 이전 산정은 "유저당 문서 1개 + 배열 100개 × ~5 I/O = 5억 I/O/refresh ≈ $1,200/월"이었고,
+모양이 틀려 삭제했다):
+
+- **쓰기 패턴** `실측`(Gorse v0.5.11 `storage/cache/mongodb.go` · `worker/pipeline.go`): 유저 1명 refresh = `AddScores`가 건당
+  `UpdateOne(upsert)` 100개를 `BulkWrite` 한 번에 → 이어서 `DeleteScores(Before: recommendTime)`로 밀려난 항목 삭제. 복합 인덱스 둘
+  (`collection,subset,id` · `collection,subset,categories,is_hidden,score`)이 매 upsert마다 갱신된다.
+- **과금 단위** `문서`(DocumentDB Pricing): 읽기 = 버퍼 캐시에 없는 8 KB 페이지 1개당 1 I/O, 쓰기 = 트랜잭션 로그 4 KB 단위당 1 I/O(4 KB 미만
+  동시 쓰기는 엔진이 묶을 수 있음).
+- **refresh 1회(10¹⁰ upsert)**: 읽기 — 인덱스 탐색 + 데이터 페이지, 2.2 TB 작업집합은 어떤 인스턴스의 버퍼 캐시에도 없으므로 upsert당
+  1~3 I/O → **1~3×10¹⁰**. 쓰기 — 완전히 묶이면 upsert당 ~300 B → 0.7×10⁹, 안 묶이면 upsert+delete 각 1단위 → 2×10¹⁰. 합 **1.1~5×10¹⁰ I/O**
+  × $0.24/백만 = **$2,600~12,000/refresh**.
+- **월 횟수**: `[recommend] cache_expire` 기본 72h → 유저당 월 10회가 **하한**. `checkRecommendCacheOutOfDate` 5단계에서 마지막 refresh 뒤
+  활동한 유저는 worker가 돌 때마다 다시 계산되므로 활성 유저는 그보다 잦다. 월 **$26,000~120,000** — 인스턴스 비용의 5~25배.
+- **결론**: DocumentDB는 **I/O-Optimized 스토리지(I/O 무료, 스토리지 $0.36/GB, 인스턴스 +10%)로만** 성립한다. 표의 금액은 그 전제다.
+  DocumentDB 5.0의 문서 압축(LZ4, 기본 꺼짐, 임계값 기본 2,032 B·최소 128 B)은 182 B 문서에 켤 수는 있지만 UUID 위주 필드라 이득을
+  기대하지 않았고 산정에 넣지 않았다. **읽기 I/O 1~3의 폭은 실행으로만 좁혀진다**(S9와 같은 조건).
 
 ## 5. data store 후보별
 
@@ -161,7 +175,7 @@ $0.0057). **서울이 5% 싼 유일한 항목**이고, 나머지는 전부 도�
 | **MongoDB/PostgreSQL on EC2 + gp3 (디스크 상주)** | 인스턴스 `m6g.2xlarge` × 3 = $867 + gp3 560 GB = $54 ≈ **$920** | |
 | (참고) managed ElastiCache Redis | $15,400 | §4 |
 | (참고) managed r6gd 티어링 | $5,900 | §4 |
-| (참고) managed DocumentDB | $3,700~6,100 | §4 |
+| (참고) managed DocumentDB (I/O-Optimized 필수) | $3,400~6,100 | §4 |
 
 data store(feedback 20억 행, 500 GB)를 자체 운영하면 `r6g.4xlarge` × 2 + gp3 ≈ **$1,470**,
 Aurora는 $3,000~5,000이다.
@@ -393,6 +407,7 @@ U_active 1,000만 / I_eligible 500만          (도쿄 기준)
   cache   1,000만 × 5.5 KB ≈ 55 GB → replica 포함 110 GB
           ElastiCache Redis  ≈ $1,500/월      ← 티어링을 쓸 이유도 없어진다
           ElastiCache Valkey ≈ $1,200/월        (서울도 사실상 같다)
+          DocumentDB I/O-Opt ≈ 스토리지 $79 + 인스턴스 ≥ $1,000  ← Standard면 I/O만 $2,600~12,000 (§4)
   재계산   14시간                               ← 여전히 아프지만 협상 가능한 크기
 ```
 
@@ -411,7 +426,7 @@ U_active 1,000만 / I_eligible 500만          (도쿄 기준)
 | **S1** | `U_active`·`I_eligible` 목표값 | 제품·측정 | **미정. 이 장 전체의 전제** |
 | S2 | Gorse가 SQL/document backend에서 cache store를 **실제로 어떤 스키마로** 쓰는가 | 실측 | **MongoDB는 확인**(S4·S9 — `documents` 컬렉션, 이웃 1건 = 문서 1개). **SQL/Aurora는 미확인** — §4의 Aurora 판정이 여기에 걸린다 |
 | S3 | 리전 단가 | 확인 | **닫힘(§3).** 도쿄·서울 동일 수준, us-east-1 대비 +20% |
-| S4 | `gorse.md` §8-2의 neighbor·fallback 캐시가 §2 산정에 더하는 양 | 측정 | **일부 실측(`GOR-X3`, 2026-09-04)**: surface 1 인스턴스의 item 이웃 캐시는 **item당 ~80건**(sqlite ~210 B/건, 5×10⁵에서 7.8 GB). 10⁸ item이면 ~8×10⁹건 — Redis 단가는 미측정. **MongoDB 7 실측**: 논리 182 B/건, 디스크는 WiredTiger 압축으로 ~33 B/건(이 압축률은 DocumentDB에 적용되지 않는다 — 엔진이 다르다). Gorse의 MongoDB 캐시는 **이웃 1건 = 문서 1개**라 §4 DocumentDB 행의 "유저당 문서 1개 + 배열 100개" 가정과 모양이 다르다. master RAM은 별도로 **≈ 8.3 KB/item** |
+| S4 | `gorse.md` §8-2의 neighbor·fallback 캐시가 §2 산정에 더하는 양 | 측정 | **일부 실측(`GOR-X3`, 2026-09-04)**: surface 1 인스턴스의 item 이웃 캐시는 **item당 ~80건**(sqlite ~210 B/건, 5×10⁵에서 7.8 GB). 10⁸ item이면 ~8×10⁹건 — Redis 단가는 미측정. **MongoDB 7 실측**: 논리 182 B/건, 디스크는 WiredTiger 압축으로 ~33 B/건(이 압축률은 DocumentDB에 적용되지 않는다 — 엔진이 다르다). Gorse의 MongoDB 캐시는 **이웃 1건 = 문서 1개**라 §4 DocumentDB 행의 옛 "유저당 문서 1개 + 배열 100개" 가정과 모양이 달랐고, **§4는 2026-09-04 이 모양으로 재산정했다**(스토리지 4배, Standard I/O는 인스턴스의 5~25배 → I/O-Optimized 필수). master RAM은 별도로 **≈ 8.3 KB/item** |
 | S5 | 서울 이전 시 r6gd 부재를 무엇으로 대체하는가 | 설계 | **조건부.** 도쿄를 쓰는 동안은 열리지 않는다(§3-1) |
 | S6 | 디스크 상주 cache store가 견디는 QPS | 측정 | **§4·§6-2의 최저가 안이 전부 여기 걸린다.** 인덱스는 RAM에 들어가지만 working set을 벗어난 읽기는 gp3 IOPS를 친다 |
 | S7 | Gorse 불능 폴백(`candidates_fallback` — topic-api 보유자 랭킹, `D20`)이 실제로 구현되어 있는가 | 확인 | **자체 운영 검토의 전제**(§6-3) |
@@ -472,4 +487,5 @@ Aurora와 DocumentDB는 같은 형태로 `AmazonRDS` · `AmazonDocDB` 가격표�
 - [Amazon ElastiCache Pricing](https://aws.amazon.com/elasticache/pricing/)
 - [ElastiCache 데이터 티어링](https://aws.amazon.com/blogs/database/scale-your-amazon-elasticache-for-redis-clusters-at-a-lower-cost-with-data-tiering/)
 - [Amazon DocumentDB Pricing](https://aws.amazon.com/documentdb/pricing/)
+- [Amazon DocumentDB — 컬렉션 수준 문서 압축](https://docs.aws.amazon.com/documentdb/latest/developerguide/doc-compression.html) (§4 재산정에서 압축을 제외한 근거)
 - [Amazon Aurora Pricing](https://aws.amazon.com/rds/aurora/pricing/)

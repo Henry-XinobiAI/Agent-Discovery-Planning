@@ -1044,8 +1044,8 @@ MongoDB는 `mongo:7` 컨테이너, 같은 Docker 네트워크. `[database] cache
 - **Push·RSS는 store와 무관**하다는 것이 그대로 확인됐다(8 s · 1.2 GB).
 - 저장은 MongoDB가 sqlite보다 1.6× 빠르다. 확인 3회 읽기(정상 사이클의 나머지)는 같은 수준(17 s vs 19 s).
 - 문서당 논리 크기 182 B, 디스크는 압축으로 1/5.6. **DocumentDB는 압축·스토리지 엔진이 다르므로 이 디스크 값은 옮기지 말 것.**
-  10⁸ item × ~80건 × 182 B ≈ **1.5 TB 논리** — `storage_sizing.md` §4의 DocumentDB 행이 가정한 "유저당 문서 1개 + 배열 100개"와
-  다른 모양(건당 문서 1개)이라는 점도 S4에 적었다.
+  10⁸ item × ~80건 × 182 B ≈ **1.5 TB 논리** — `storage_sizing.md` §4의 DocumentDB 행이 가정했던 "유저당 문서 1개 + 배열 100개"와
+  다른 모양(건당 문서 1개)이라는 점을 S4에 적었고, §4는 그 모양으로 재산정됐다(2026-09-04).
 - Gorse 버그 하나: 기동 직후 `failed to insert measurement: must provide at least one element in input slice` — 시계열
   측정값이 비었을 때 MongoDB 드라이버의 `BulkWrite`가 빈 입력을 거절한다(sqlite 경로는 통과). 로그만 남고 기동·적재·추천은
   정상. DocumentDB에서도 같은 로그가 날 것이다(`STO-S9`).
