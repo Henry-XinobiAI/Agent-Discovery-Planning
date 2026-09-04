@@ -601,7 +601,7 @@ playground 없이 `/etc/gorse/config.toml` 을 주입해 실행.
 | M1 | §6-1 "요청별 arbitrary allowlist — 표준 endpoint에 없음" | **더미 topic item을 만들어 그 이웃을 물으면 topic별 후보 검색이 된다.** `IsHidden=true`인 item도 이웃이 계산·서빙된다(숨긴 것과 보이는 대조군의 결과가 완전히 동일) |
 | M2 | (서술 없음) | **쿼리 item과 태그 집합이 완전히 같은 후보는 이웃에서 제외된다.** 공식 문서에 없고 사양서로 예측 불가이며, topic 검색 용도에서는 "그 주제만 파는 전문가가 탈락"으로 나타난다 |
 | M3 | §8-2 "cache TTL을 기다리지 않고 online gate가 재확인" | 맞지만 원인이 달랐다. **이웃 갱신 주기를 지배하는 것은 `[recommend] cache_expire`이고 기본값이 `72h`다.** 파이프라인이 60초마다 돌아도 이 값 전에는 기존 item의 이웃이 재계산되지 않는다 |
-| M4 | (서술 없음) | 전면 재계산 비용 **≈10 ms/item**, 2,000개까지 선형. 상위 라벨을 다수가 공유하는 계층 편중이 비용을 키우지 않았다 |
+| M4 | (서술 없음) | 전면 재계산 비용 **≈10 ms/item**, 2,000개까지 선형. 상위 라벨을 다수가 공유하는 계층 편중이 비용을 키우지 않았다. **X3 정정**: 그중 Push는 0.5 ms/item, 나머지는 저장(§11-4·§12-5) |
 | M5 | §7 "실제 endpoint port와 API key는 배포 설정을 따른다" | `--playground`는 **재시작마다 설정 파일을 재생성하고 데이터를 재임포트한다.** 설정을 바꾸려면 playground 없이 띄우고 config를 주입해야 한다 |
 
 ### 11-2 세 경로의 실제 결과
@@ -746,7 +746,9 @@ store에 함께 두면 로컬 집합 연산**이 되고 왕복이 0이다.
 rev 3 정정(2026-09-03, 소스 확인): *"보유자 수에 이차적일 수 있다"*는 우려는 **코드상 근거가 없다** —
 tags 유사도는 brute force가 아니라 **HNSW**(`logics/item_to_item.go`, `ann.NewHNSW`)라 item당 ~log N이
 기대되고, 위 10 ms/item에는 **item당 Redis 왕복 3회**(AddScores · digest/time Set · DeleteScores)가
-포함돼 있다. 실제 곡선은 `GOR-X3`이 잰다(§12-5).
+포함돼 있다. **`GOR-X3` 실측(2026-09-04, §12-5)**: `Push`(HNSW 빌드)는 **0.5 ms/item**(1 job)·**~0.1 ms/item**(8 jobs)이고
+5×10⁵까지 선형이다. 10 ms의 나머지는 **저장**이었다. 정상 사이클은 Push + item당 캐시 확인 3회 ≈ 0.4 ms/item(8 jobs).
+RAM은 **≈ 0.42 GB + 8.3 KB × N**.
 
 `판단` **신선도는 채택 결정 요인이 아니라 운영 파라미터다.** 단, 차단·삭제·자격 상실은 여기 의존하지
 않고 서빙 시점에 원본으로 재확인한다(§8-2).
@@ -820,11 +822,11 @@ S7: 우리가 읽는 쿼리 item의 이웃 목록은 `cache_expire`(72h)마다�
 | **1 `D23`** | **다중 라벨 쿼리 + 센티넬** — 확정 topic의 라벨 전부를 한 쿼리 item에 | S3: 공통 라벨 수가 분자를 두 겹으로 키움. S4: 센티넬이 M2를 막음. 상위 100은 **`coverage²·IDF / √태그 폭` 순** — coverage 우선이지만 태그가 아주 많은 사람은 아래로 간다(X1 실측) | topic당 쿼리 1개 추가. 코드 변경 0 | 컷 자체. 깊은 사람이 100명 넘으면 그 안에서 다시 `√wsum(d)` | **X1 → `D23`** |
 | 2 | **파생 태그 `T#deep`** — 자손 k개 이상 공개한 사람에게 프로젝션이 붙임 | 희소 태그 → IDF 높음 → 분자 큼. 모집단이 작아 컷 안에 다 들어옴. `D13`(파생은 우리 것) 정합 | (agent, 상위 topic)당 태그 1개. 임계값 k 튜닝 축 | 태그가 늘어 `√wsum(d)`가 커짐 — 1과 같이 쓰면 상쇄 | X4 |
 | 3 | **뜨거운 라벨만 쿼리 item 샤딩** — agent에 `coffee~s`(s=hash mod S), 쿼리 item S개 | 쿼리 item은 우리가 만드는 것. S개 병렬 조회 → S×100 후보. S는 복제본의 보유자 수에서 자동 | 뜨거운 라벨에 한해 agent당 태그 1개, 쿼리 item S개(hidden). 조회 S개 병렬 | 샤드 안 100은 여전히 `√wsum(d)` 순 — 1·2와 조합 필요 | X4 |
-| 4 | `cache_size` 상향 | S2 | **전역**이라 전 item 캐시가 커짐 | 단독으로는 불가. 7과 묶이면 가능 | X3 |
+| 4 | `cache_size` 상향 | S2 | **전역**이라 전 item 캐시가 커짐 | 단독으로는 불가. 7과 묶이면 가능 | X3 실측: 캐시는 item당 ~80건·~210 B(sqlite) — 상향은 이 두 곱을 키운다 |
 | **5** | **surface 1 후보를 우리 인덱스로** — 복제본(`D10`) 위의 posting list (DynamoDB GSI 또는 OpenSearch) | 우리가 원하는 것은 "라벨 보유자를 coverage/depth 순으로, 페이징 있게"이고 그것은 검색 문제다(`recsys_adoption_discussion.md` §3). 증분이라 새 agent 즉시 노출 | 검색 인덱스 운영(`SURV-R6` §7-5 빈칸). **`D07` 재개방** | surface 2는 무관(Gorse 유지). surface 1은 feedback을 안 읽어 R5 무관 | X2·X3 → **C11** |
 | **6** | **item 집합을 `I_eligible`로** — 공개 topic ≥1 · recommendable인 agent만 | `D16`이 이미 프로젝션을 우리 것으로 뒀다. 5%면 빌드·RAM·캐시 전부 1/20 | 지금은 **가정**(출시 전) — 출시 후 우리 복제본에서 센다 | — | **X2**(시나리오) |
 | **7 `D22`** | **surface 1 전용 Gorse 인스턴스** — tags item-to-item만, user·feedback 없음 | `D09`(store는 파생물)가 프로젝션 둘을 허용. surface 2의 유저별 캐시(560 GB)와 분리되어 4가 가능해짐 | 배포 둘 (운영 ~1.3배) | 빌드 자체 | X3 |
-| 8 | `n_jobs` 상향 + master 사이징 | S8·S9 | 박스 하나 크게 | 단일 프로세스 한계 | X3 |
+| 8 | `n_jobs` 상향 + master 사이징 | S8·S9 | 박스 하나 크게 | 단일 프로세스 한계 | **X3 실측**: Push는 8 jobs에서 6× · RAM ≈ 0.42 GB + 8.3 KB × N이 박스를 정한다 |
 | **9 `D22`** | **쿼리 item을 사이클마다 새 id로 재생성** (`q:<label>:<gen>`), `cache_expire`는 길게 | S7: 새 item = 캐시 없음 = 무조건 계산. agent들의 목록(아무도 안 읽음)은 한 번 쓰고 끝 → Redis 왕복 3억 회 절약. **새 agent가 1 사이클 안에 보인다** | 사이클마다 hidden item ~3천 개 생성·이전 세대 삭제 + 세대당 문자열 키 3개 `DEL`(X5) | 빌드 자체(S6) | **X5 통과** — 새 agent 1 사이클 안 노출, 옛 세대 영구 미갱신 실측, 삭제 절차 확정 |
 | 10 | (한계) | 9까지 해도 **사이클 시간 ≥ 전면 HNSW 빌드**. 6·7·8이 줄이고 **5만이 없앤다** | | | |
 
@@ -982,6 +984,67 @@ coffee의 하위 = drip espresso roasting latte grinder beans cold_brew pour_ove
   **`N*`**이고, `D22`의 뒤집는 조건은 **`I_eligible ≥ 0.5·N*`**이다. `N*`가 나오면 `decisions.md` D22에 숫자로
   적는다.
 
+**결과 (2026-09-04)** — 곡선은 나왔고 **`N*`는 제안값(분석)이다. 박스 크기와 가시성 목표를 오너가 정하면 숫자가 된다.**
+
+환경: X5와 같은 config(`cache_expire = "8760h"`)에 `[master] n_jobs`만 바꿈. Docker Desktop VM **12 vCPU · 7.7 GB**,
+store는 gorse-in-one 기본 **sqlite**(Redis 아님 — 저장·확인 구간은 그대로 옮기지 말 것). 합성 데이터는 X1 생성기를
+N만 바꿔 스트리밍한 것(`gen3.py`: 3천 라벨, Zipf, 태그 1–12, seed 20260904). 측정은 `GET /api/dashboard/tasks`의
+`Progress.Count` — item-to-item span은 `Total = 2N`이고 **첫 N이 `Push`, 다음 N이 저장**이라 Count가 N을 넘는 시각이
+Push 종료다. RSS는 `docker stats` 5초 샘플 최대, 캐시는 컨테이너의 `cache.sqlite`를 복사해 셈.
+
+| N | n_jobs | **Push** (사이클 1) | 저장 (사이클 1, 전 item) | **정상 사이클** (사이클 2: Push + 확인, 저장 2건) | RSS 최대 | 캐시 documents / 크기 |
+|---|---|---|---|---|---|---|
+| 10⁵ | 1 | 50 s (0.50 ms/item) | 213 s (2.1 ms/item) | 91 s | 1.10 GB | 8.28M / 1.73 GB |
+| 10⁵ | 8 | **8 s** (0.08) | 179 s (1.8) | **27 s** | 1.26 GB | 8.36M / 1.77 GB |
+| 3×10⁵ | 8 | 26–32 s (0.10) | 976 s (3.3) | 118 s | 2.84 GB | 23.1M / 4.95 GB |
+| 5×10⁵ | 8 | 56 s (0.11) | 1,591 s (3.2) | 198 s | 4.59 GB | 37.2M / 7.82 GB |
+| 10⁶ · 10⁷ | — | **미실행** — RSS 기울기로 10⁶ ≈ 8.7 GB, VM 7.7 GB 초과. 큰 박스나 VM 메모리 상향이 필요 | | | | |
+| — | 32 | **미실행** — 12 vCPU에서 의미 없음 | | | | |
+
+읽히는 것:
+
+- **Push(HNSW 빌드)는 선형이고 병렬화된다.** item당 0.5 ms(1 job) → ~0.1 ms(8 jobs, 12 vCPU). 10⁵→5×10⁵에서 item당
+  비용이 늘지 않았다(0.08→0.11). §11-4 M4의 "10 ms/item"은 Push가 아니라 **저장이 지배한 값**이었다 — 정정했다.
+- **저장은 store에 묶인다.** sqlite에서 1.8→3.3 ms/item(테이블이 커질수록 느려짐). 첫 사이클(전 item 저장)에만 내는
+  비용이고, `cache_expire`가 길면 이후 사이클은 저장이 거의 없다. **Redis 수치는 미측정.**
+- **정상 사이클 = Push + item당 캐시 확인 3회 읽기**(`needUpdateItemToItem`: SearchScores · digest Get · time Get).
+  8 jobs에서 ~0.4 ms/item(확인 0.2–0.3 ms/item, sqlite). 이것이 **곧 새 agent의 가시성 지연**(후보 9 위에서).
+- **RAM이 박스를 정한다.** 세 점 선형 회귀: **RSS ≈ 0.42 GB + 8.3 KB × N**. 10⁶ → 8.7 GB, 10⁷ → 83 GB, 10⁸ → 830 GB.
+  Go 기본 GC(GOGC=100)라 RSS의 상당분이 heap slack일 수 있다 — `GOMEMLIMIT`로 얼마나 줄어드는지는 **미측정**.
+- **캐시는 item당 ~75–84건**(100 미만인 것은 HNSW가 돌려준 수), sqlite에서 ~210 B/건. 10⁸ item이면 ~8×10⁹건 —
+  우리는 읽지 않지만 Gorse가 만들고 저장하는 양이다. `storage_sizing.md` S4에 넣었다.
+- 새 agent는 10⁵·3×10⁵에서 2세대 쿼리 **1위**(X5 재확인). 5×10⁵에서는 하네스 아티팩트로 확인 불가 — 사이클 2의
+  dataset 로드(81초)가 삽입 전에 시작됐고, sqlite 부하 아래서 POST·GET 하나가 2분 걸렸다. 그 자체가 관찰이다:
+  **data store가 sqlite면 5×10⁵에서 REST가 분 단위로 막힌다.**
+
+**`N*` 계산법**(판정 기준: 사이클 ≤ 가시성 목표 ∧ RAM ≤ 한 박스):
+
+```text
+RAM(N)     ≈ 0.42 GB + 8.3 KB × N                 → 박스 RAM의 90%에서 N_ram
+사이클(N)   ≈ 0.4 ms × N  (8 jobs, 12 vCPU, sqlite 확인)  → 가시성 목표에서 N_cycle
+N*         = min(N_ram, N_cycle)
+
+박스 64 GB  → N_ram ≈ 6.9×10⁶ ;  사이클(5×10⁶) ≈ 33 min ;  사이클(6.9×10⁶) ≈ 46 min
+박스 128 GB → N_ram ≈ 1.4×10⁷ ;  사이클(10⁷)   ≈ 67 min
+```
+
+**제안(분석)**: 64 GB 박스 기준 **`N* = 5×10⁶`** (RAM 42 GB, 정상 사이클 ~33분 @ 8 jobs — 32 jobs면 Push는 더 줄고
+확인 구간은 Redis에 달림). 그러면 `D22`의 뒤집는 조건은 **`I_eligible ≥ 2.5×10⁶`**. 오너가 ⑴ 박스 크기 ⑵ 가시성 목표
+(C7·C9)를 정하면 이 식에 넣어 `D22`에 숫자로 적는다. `SURV-R3`은 "5×10⁵까지 실측, 그 위는 회귀"로 갱신했다.
+
+<details><summary>재현: 하네스 요지</summary>
+
+```text
+config   = X5의 config.toml + [master] n_jobs = J
+적재     = POST /api/items 5,000건 배치 (10⁵ 7 s · 5×10⁵ 34 s)
+사이클 1  = tasks API에서 "Generate item-to-item recommendation"의 Count ≥ N 시각(Push 끝) · FinishTime(전체)
+사이클 2  = a:newdeep + q:multi:g2 삽입 후 같은 측정 (저장 2건뿐 → Push + 확인 비용)
+RSS      = docker stats --no-stream 5 s 샘플의 최대
+캐시     = docker cp <ctr>:/var/lib/gorse → cache.sqlite의 documents 건수·파일 크기
+```
+
+</details>
+
 #### X4 — 컷 안의 깊은 사람 비율 (후보 1·2·3 비교; SURV-R4의 핵심) `X3의 10⁶ 세트 재사용`
 
 - **대상**: 보유자 ≥ 5만인 뜨거운 라벨 하나.
@@ -1034,7 +1097,9 @@ Redis 키 이름은 `cache_table_prefix` + 위 name 그대로다(`storage/cache/
 **2026-09-03 시점 상태**: `D22` 채택(7+9로 시작, 여유율 50%). 열린 것은 C11의 잔여 둘 — `N*`의 숫자(X3), ①
 쪽 조합(X1·X4). C7(가시성)은 9가 해소 경로이고 X5가 확인한다.
 
-**2026-09-04**: X1 완료 — 공식 검증 통과, 센티넬 유효, 단 "coverage 순"은 틀려서 12-4 행 1을 고쳐 썼다. 후보 1은 **`D23`**으로 채택, 2는 X4 뒤. **X5 통과**(같은 날) — 9의 두 확인 끝, C7 해소 경로 확인. 다음은 X3(합성 데이터 생성기부터).
+**2026-09-04**: X1 완료 — 공식 검증 통과, 센티넬 유효, 단 "coverage 순"은 틀려서 12-4 행 1을 고쳐 썼다. 후보 1은 **`D23`**으로 채택, 2는 X4 뒤. **X5 통과**(같은 날) — 9의 두 확인 끝, C7 해소 경로 확인. **X3 실측 완료**(같은 날, 5×10⁵까지; 10⁶↑는 VM 한계로 미실행) —
+`N*` 제안 5×10⁶(64 GB 박스)은 **오너 확정 대기**(X3 결과의 계산법에 박스·가시성 목표를 넣으면 숫자). 다음은 **X4**(X3의 10⁶ 세트가
+없으므로 5×10⁵ 세트로 — 통과 기준 recall ≥ 0.9는 확정됨).
 
 **환경**(모든 실험 공통): `gorse-in-one` v0.5.11, playground 없이 `/etc/gorse/config.toml` 주입(§11 서두·M5),
 `[[recommend.item-to-item]] name="topic_neighbors" type="tags" column="item.Labels.topics"`, `n_jobs`는 코어 수.
@@ -1045,7 +1110,7 @@ Redis 키 이름은 `cache_table_prefix` + 위 name 그대로다(`storage/cache/
 |---|---|---|---|---|
 | 1 | **X1** 경로 B + 센티넬 — **완료 2026-09-04** | 없음 (한 시간) | 12-4 행 1 → **`D23`** | §11-2 표에 "B + 센티넬" 행 · 통과 시 `decisions.md`에 `Dnn`(출처 **실측**) · 기준 문서 §S3 "라벨별 개별 쿼리 + 가중합"에 다중 라벨 쿼리 추가 |
 | 2 | **X5** 쿼리 item 세대 재생성 — **완료 2026-09-04** | 없음 | 9의 두 확인(삭제 시 캐시 정리 · 세대 전환 원자성) | 12-4 행 9에 확인 결과 · 캐시 정리 절차가 필요하면 §12-5 X5 아래 · C7에 "해소 경로 확인" |
-| 3 | **X3** 대규모 빌드 | **합성 데이터 생성기**(라벨 3천 · Zipf s≈1 · 태그 1–12 · N = 10⁶/5×10⁶/2×10⁷) | **`N*`** | `D22`에 `N*` 숫자 · `storage_sizing.md`에 surface 1 인스턴스 이웃 캐시(`I_eligible × cache_size`) 추가 · `SURV-R3` 닫기 |
+| 3 | **X3** 대규모 빌드 — **실측 완료 2026-09-04(5×10⁵까지), `N*` 제안 → 오너 확정 대기** | **합성 데이터 생성기**(라벨 3천 · Zipf s≈1 · 태그 1–12 · N = 10⁶/5×10⁶/2×10⁷) | **`N*`** | `D22`에 `N*` 숫자 · `storage_sizing.md`에 surface 1 인스턴스 이웃 캐시(`I_eligible × cache_size`) 추가 · `SURV-R3` 닫기 |
 | 4 | **X4** 컷 안 깊은 사람 비율 | X3의 10⁶ 세트 | 12-4 행 2·3 조합 (통과 기준 recall ≥ 0.9, 오너 확정) | 채택 조합 → `Dnn` · 기준 문서 §S3 · `SURV-R4`(배포 전 게이트) 판정 |
 | 5 | — 결정 | 1–4 | **C11 닫기** | `decisions.md` C11에 "해소" · 기준 문서 §S3에 최종 형태(전용 인스턴스 · 세대 · 조합) · `recsys_opensource/README.md` §2 표 갱신 |
 
