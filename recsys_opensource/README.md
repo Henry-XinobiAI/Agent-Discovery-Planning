@@ -90,7 +90,8 @@ user-item 표현이다.
 
 ```text
 UserId = requester_user_id
-ItemId = personal_agent_id              # owner_user_id에서 결정론적으로 유도
+ItemId = personal_agent_id              # owner_user_id에서 결정론적으로 유도 (surface 2)
+# surface 1 전용 인스턴스(D22)의 item은 agent_id#top_topic_id — D24, gorse.md §12-4의 11
 Interaction = requester가 agent를 노출·선택·대화·재방문한 사건
 ```
 
