@@ -627,6 +627,19 @@ dave = drip 전담,     피드백 0건
 
 M2와 길이 정규화가 동시에 터진다. **쿼리 태그를 늘릴수록 정답이 제외될 확률이 올라간다.**
 
+**경로 B + 센티넬 — 결합 쿼리에 `__QUERY__`를 더한 것** (2026-09-04, `GOR-X1`)
+
+```text
+쿼리 = coffee + drip + espresso + roasting + latte + __QUERY__
+   broad 0.5083  deep6 0.5066  partial 0.5032  generalist 0.5030  narrow 0.5015  parentonly 0.5004
+   센티넬 없는 대조군: broad 누락(M2), 나머지 순서 동일
+```
+
+M2가 막히고 **깊은 사람(broad·deep6)이 1·2위**다. 순서는 공식 그대로 `commonSum·commonCount / √wsum(d)` —
+공통 라벨 수의 제곱에 IDF를 곱하고 보유 태그 폭으로 나눈 값이라, **coverage가 같으면 태그 적은 쪽이 위**고
+coverage가 높아도 태그가 아주 많으면(generalist 12개) coverage 낮고 태그 적은 쪽(partial 3개) 아래로 간다.
+결과 상세와 10⁴ 규모의 축소 확인은 §12-5 X1 결과.
+
 **경로 C — 라벨별 개별 쿼리 + 가중 합산** (성립하는 형태)
 
 M2가 두 가지로 해소된다.
@@ -804,7 +817,7 @@ S7: 우리가 읽는 쿼리 item의 이웃 목록은 `cache_expire`(72h)마다�
 
 | # | 무엇 | 왜 되나 (12-1) | 비용 | 안 고치는 것 | 닫는 실험 |
 |---|---|---|---|---|---|
-| **1** | **다중 라벨 쿼리 + 센티넬** — 확정 topic의 라벨 전부를 한 쿼리 item에 | S3: 공통 라벨 수가 분자를 두 겹으로 키움. S4: 센티넬이 M2를 막음. **coverage 순 상위 100**이 된다 | topic당 쿼리 1개 추가. 코드 변경 0 | 컷 자체. 깊은 사람이 100명 넘으면 그 안에서 다시 `√wsum(d)` | **X1** |
+| **1** | **다중 라벨 쿼리 + 센티넬** — 확정 topic의 라벨 전부를 한 쿼리 item에 | S3: 공통 라벨 수가 분자를 두 겹으로 키움. S4: 센티넬이 M2를 막음. 상위 100은 **`coverage²·IDF / √태그 폭` 순** — coverage 우선이지만 태그가 아주 많은 사람은 아래로 간다(X1 실측) | topic당 쿼리 1개 추가. 코드 변경 0 | 컷 자체. 깊은 사람이 100명 넘으면 그 안에서 다시 `√wsum(d)` | **X1** |
 | 2 | **파생 태그 `T#deep`** — 자손 k개 이상 공개한 사람에게 프로젝션이 붙임 | 희소 태그 → IDF 높음 → 분자 큼. 모집단이 작아 컷 안에 다 들어옴. `D13`(파생은 우리 것) 정합 | (agent, 상위 topic)당 태그 1개. 임계값 k 튜닝 축 | 태그가 늘어 `√wsum(d)`가 커짐 — 1과 같이 쓰면 상쇄 | X4 |
 | 3 | **뜨거운 라벨만 쿼리 item 샤딩** — agent에 `coffee~s`(s=hash mod S), 쿼리 item S개 | 쿼리 item은 우리가 만드는 것. S개 병렬 조회 → S×100 후보. S는 복제본의 보유자 수에서 자동 | 뜨거운 라벨에 한해 agent당 태그 1개, 쿼리 item S개(hidden). 조회 S개 병렬 | 샤드 안 100은 여전히 `√wsum(d)` 순 — 1·2와 조합 필요 | X4 |
 | 4 | `cache_size` 상향 | S2 | **전역**이라 전 item 캐시가 커짐 | 단독으로는 불가. 7과 묶이면 가능 | X3 |
@@ -848,6 +861,100 @@ name="topic_neighbors" type="tags" column="item.Labels.topics"`). 쿼리 item은
   없는 쪽에서만 broad 누락.
 - **실패의 뜻**: 12-1 S3 해석이 틀렸다 → 공식 재독. 통과하면 12-4의 1을 채택하고 §11-2 표에 "B + 센티넬" 행을
   추가한다.
+
+**결과 (2026-09-04)** — 통과 기준 넷 중 셋 충족, 하나는 기준 자체가 틀렸다. **채택 여부는 오너 결정**(규칙 ③).
+
+환경: `zhenghaoz/gorse-in-one:latest`(= v0.5.11, 2026-07-14 빌드), 포트 18088, config 인라인 아래. 첫 사이클은
+insert 후 **45초**에 서빙됐다.
+
+| 후보 | 태그 | 다중+센티넬 | 다중, 센티넬 없음 |
+|---|---|---|---|
+| broad | coffee drip espresso roasting latte | **0.508299** ① | **누락** (M2) |
+| deep6 | 위 5 + hiking | **0.506615** ② | 0.509706 ① |
+| partial | coffee drip espresso | 0.503167 ③ | 0.504632 |
+| generalist | 위 5 + 무관 7 (12개) | 0.502976 ④ | 0.504352 |
+| narrow | coffee drip | 0.501467 | 0.502142 |
+| parentonly | coffee | 0.500417 | 0.500609 |
+| unrelated | outdoor hiking photo | 0.500000 | 0.500000 |
+
+- ✓ broad·deep6가 1·2위. ✓ 동률(coverage 5)은 `√wsum(d)` 오름차순 — broad(5개) > deep6(6개). ✓ 센티넬 없는 쪽에서만 broad 누락.
+- ✗ **"순위 = 공통 라벨 수 내림차순"은 성립하지 않는다.** generalist(공통 5, 태그 12)가 partial(공통 3, 태그 3) 아래다.
+  이것은 S3 해석이 틀린 게 아니다 — **12-1 S3 공식으로 계산한 예측이 소수 6자리까지 실측과 일치했다**(IDF 풀 N=9,
+  hidden 쿼리 item도 IDF 분모에 들어간다). 틀린 것은 12-4 행 1의 요약 "coverage 순"이고, 그 행을 고쳐 썼다.
+  정확한 서술: 점수 순서 = `commonSum·commonCount / √wsum(d)`, 즉 **coverage² × IDF / √태그 폭**.
+
+**10⁴ 규모 축소 확인**(같은 컨테이너, X4의 축소판 — 결정 근거가 아니라 방향 확인): 합성 agent 10,007명(상위 라벨
+300 × 하위 9 = 3,000 라벨, 상위 인기 Zipf s=1, coffee가 1위, 태그 1–12, seed 20260904, 생성 코드는 아래) + 위 7명.
+coffee 보유자 2,725명, 그중 하위 4개 전부(depth 4) 35명, 3개(depth 3) 209명. 정답 = depth 내림차순·태그 적은 순 상위 100.
+
+| 쿼리 | 상위 100 구성 | 정답 회수 | depth ≥ 3 | broad / deep6 순위 | HNSW vs 정확 검색 |
+|---|---|---|---|---|---|
+| coffee 단일 + 센티넬 | **전부 coffee 하나만 가진 사람**(태그 1개, depth 0) | 0/100 | 0/244 | 930 / 1465 | 동률 201명 중 임의 100 |
+| 다중 5라벨 + 센티넬 | depth 4 31명 + depth 3 69명 | 91/100 | 100/244 | 1 / 14 | **100/100 일치** |
+
+- **문제 ①이 규모에서 그대로 재현된다** — 단일 라벨의 100 컷은 `√wsum(d)`만으로 갈려 태그 하나짜리 201명이 동률
+  1위가 되고 깊은 사람은 전부 컷 밖이다. 다중 라벨 쿼리는 컷 안이 전원 depth ≥ 3이다.
+- 다중 쿼리에서 빠진 depth 4 네 명은 **모두 태그 11–12개**(generalist형). 그 자리를 태그 4–6개의 depth 3이 채웠다.
+  이것이 위 ✗ 항목의 규모판이고, 이게 문제인지(넓은 사람도 깊으면 컷 안에 있어야 하는지)는 **X4의 recall 기준으로
+  오너가 정할 것**이다. 후보 2(`#deep` 파생 태그)가 정확히 이 네 명을 위한 것이다.
+- 10⁴에서 HNSW는 정확 검색과 상위 100이 완전히 일치했다. 사이클은 insert 후 66초 안에 서빙됐다(ticker 대기 포함,
+  item당 비용이 아님 — 그건 X3).
+- 쿼리 item과 태그 집합이 완전히 같은 agent가 4명 있었고 센티넬 덕에 넷 다 컷 안이다(그중 broad가 1위).
+
+<details><summary>재현: config.toml · fixture · 생성기</summary>
+
+```toml
+[master]
+n_jobs = 1
+[server]
+default_n = 20
+auto_insert_user = false
+auto_insert_item = false
+cache_expire = "1s"
+[recommend]
+cache_size = 100
+cache_expire = "1m"
+[recommend.data_source]
+positive_feedback_types = ["talked"]
+read_feedback_types = ["exposed"]
+[[recommend.item-to-item]]
+name = "topic_neighbors"
+type = "tags"
+column = "item.Labels.topics"
+[recommend.collaborative]
+type = "mf"
+fit_period = "1m"
+[recommend.fallback]
+recommenders = ["item-to-item/topic_neighbors", "latest"]
+```
+
+```sh
+docker run -d --name gorse-x1 -p 18088:8088 -v $PWD/config.toml:/etc/gorse/config.toml zhenghaoz/gorse-in-one:latest
+curl -X POST -H 'Content-Type: application/json' --data @fixture.json localhost:18088/api/items
+# ~60s 뒤
+curl 'localhost:18088/api/item/q:multi:sent/neighbors/?n=100'
+```
+
+fixture (9 item; `Categories`는 임의, `Timestamp` 고정 `2026-08-01T00:00:00Z`, `IsHidden`은 q:*만 true):
+
+```text
+a:broad       coffee drip espresso roasting latte
+a:partial     coffee drip espresso
+a:narrow      coffee drip
+a:parentonly  coffee
+a:generalist  coffee drip espresso roasting latte outdoor hiking photo food cooking music travel
+a:unrelated   outdoor hiking photo
+a:deep6       coffee drip espresso roasting latte hiking
+q:multi:sent   (hidden) coffee drip espresso roasting latte __QUERY__
+q:multi:nosent (hidden) coffee drip espresso roasting latte
+```
+
+10⁴ 생성기(핵심만; `random.seed(20260904)`): 상위 300개 Zipf(1/rank) 중 agent당 1–4개를 가중 {45,30,17,8}로,
+상위마다 하위 0–5개를 가중 {30,28,20,12,7,3}·하위 인기 Zipf로 뽑고 상위 라벨을 함께 넣는다(하위 ⇒ 상위). 태그 12개 상한.
+coffee의 하위 = drip espresso roasting latte grinder beans cold_brew pour_over cupping. 검증용 정확 순위는
+12-1 S3 공식을 그대로 옮긴 파이썬으로 계산했다(IDF = max(log(N/freq), 1e-3), N은 hidden 포함 전체 item 수).
+
+</details>
 
 #### X2 — `I_eligible` 시나리오와 출시 후 계측 (후보 6, C11의 임계값)
 
@@ -900,6 +1007,9 @@ name="topic_neighbors" type="tags" column="item.Labels.topics"`). 쿼리 item은
 **2026-09-03 시점 상태**: `D22` 채택(7+9로 시작, 여유율 50%). 열린 것은 C11의 잔여 둘 — `N*`의 숫자(X3), ①
 쪽 조합(X1·X4). C7(가시성)은 9가 해소 경로이고 X5가 확인한다.
 
+**2026-09-04**: X1 완료 — 공식 검증 통과, 센티넬 유효, 단 "coverage 순"은 틀려서 12-4 행 1을 고쳐 썼다. **후보 1의 채택은
+오너 결정으로 남아 있다**(결과 소절 참조). 다음은 X5.
+
 **환경**(모든 실험 공통): `gorse-in-one` v0.5.11, playground 없이 `/etc/gorse/config.toml` 주입(§11 서두·M5),
 `[[recommend.item-to-item]] name="topic_neighbors" type="tags" column="item.Labels.topics"`, `n_jobs`는 코어 수.
 쿼리 item은 `IsHidden=true` + `__QUERY__`. §11의 fixture 파일이 repo에 없으므로 **X1 결과를 적을 때 fixture를
@@ -907,7 +1017,7 @@ name="topic_neighbors" type="tags" column="item.Labels.topics"`). 쿼리 item은
 
 | 순서 | 실험 | 선행 | 결과가 바꾸는 것 | 문서 갱신 |
 |---|---|---|---|---|
-| 1 | **X1** 경로 B + 센티넬 | 없음 (한 시간) | 12-4 행 1 채택/기각 | §11-2 표에 "B + 센티넬" 행 · 통과 시 `decisions.md`에 `Dnn`(출처 **실측**) · 기준 문서 §S3 "라벨별 개별 쿼리 + 가중합"에 다중 라벨 쿼리 추가 |
+| 1 | **X1** 경로 B + 센티넬 — **완료 2026-09-04** | 없음 (한 시간) | 12-4 행 1 채택/기각 (**오너 판단 대기**) | §11-2 표에 "B + 센티넬" 행 · 통과 시 `decisions.md`에 `Dnn`(출처 **실측**) · 기준 문서 §S3 "라벨별 개별 쿼리 + 가중합"에 다중 라벨 쿼리 추가 |
 | 2 | **X5** 쿼리 item 세대 재생성 | 없음 | 9의 두 확인(삭제 시 캐시 정리 · 세대 전환 원자성) | 12-4 행 9에 확인 결과 · 캐시 정리 절차가 필요하면 §12-5 X5 아래 · C7에 "해소 경로 확인" |
 | 3 | **X3** 대규모 빌드 | **합성 데이터 생성기**(라벨 3천 · Zipf s≈1 · 태그 1–12 · N = 10⁶/5×10⁶/2×10⁷) | **`N*`** | `D22`에 `N*` 숫자 · `storage_sizing.md`에 surface 1 인스턴스 이웃 캐시(`I_eligible × cache_size`) 추가 · `SURV-R3` 닫기 |
 | 4 | **X4** 컷 안 깊은 사람 비율 | X3의 10⁶ 세트 | 12-4 행 2·3 조합 (통과 기준 recall ≥ 0.9, 오너 확정) | 채택 조합 → `Dnn` · 기준 문서 §S3 · `SURV-R4`(배포 전 게이트) 판정 |
