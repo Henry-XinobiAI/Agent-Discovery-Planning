@@ -1032,10 +1032,30 @@ N*         = min(N_ram, N_cycle)
 확인 구간은 Redis에 달림). 그러면 `D22`의 뒤집는 조건은 **`I_eligible ≥ 2.5×10⁶`**. 오너가 ⑴ 박스 크기 ⑵ 가시성 목표
 (C7·C9)를 정하면 이 식에 넣어 `D22`에 숫자로 적는다. `SURV-R3`은 "5×10⁵까지 실측, 그 위는 회귀"로 갱신했다.
 
+**store 변인 (2026-09-04, 같은 날 추가)** — cache store만 바꾸고(data store는 sqlite 그대로) 10⁵ · 8 jobs를 다시 돌렸다.
+MongoDB는 `mongo:7` 컨테이너, 같은 Docker 네트워크. `[database] cache_store = "mongodb://x3-mongo:27017/gorse"`.
+
+| cache store | Push | 저장(첫 사이클) | 정상 사이클 | Gorse RSS | store 쪽 | 캐시 |
+|---|---|---|---|---|---|---|
+| sqlite(기본) | 8 s | 179 s (1.8 ms/item) | 27 s | 1.26 GB | — | 8.36M건 / 파일 1.77 GB (~210 B/건) |
+| **MongoDB 7** | 8.1 s | **109 s (1.1 ms/item)** | 29 s | 1.23 GB | mongod RSS 2.4 GB | 8.39M건 / 논리 1.53 GB (**182 B/건**) · 디스크 274 MB(WiredTiger 압축) · 인덱스 317 MB |
+| Redis | 미실행 | | | | | |
+
+- **Push·RSS는 store와 무관**하다는 것이 그대로 확인됐다(8 s · 1.2 GB).
+- 저장은 MongoDB가 sqlite보다 1.6× 빠르다. 확인 3회 읽기(정상 사이클의 나머지)는 같은 수준(17 s vs 19 s).
+- 문서당 논리 크기 182 B, 디스크는 압축으로 1/5.6. **DocumentDB는 압축·스토리지 엔진이 다르므로 이 디스크 값은 옮기지 말 것.**
+  10⁸ item × ~80건 × 182 B ≈ **1.5 TB 논리** — `storage_sizing.md` §4의 DocumentDB 행이 가정한 "유저당 문서 1개 + 배열 100개"와
+  다른 모양(건당 문서 1개)이라는 점도 S4에 적었다.
+- Gorse 버그 하나: 기동 직후 `failed to insert measurement: must provide at least one element in input slice` — 시계열
+  측정값이 비었을 때 MongoDB 드라이버의 `BulkWrite`가 빈 입력을 거절한다(sqlite 경로는 통과). 로그만 남고 기동·적재·추천은
+  정상. DocumentDB에서도 같은 로그가 날 것이다(`STO-S9`).
+- 2세대 쿼리에서 `a:newdeep`은 **5위** — 1위가 아닌 것은 동점(쿼리 집합과 같은 5태그 보유자 여럿, 점수 0.5093 동일) 안의
+  순서가 store의 반환 순서에 따라 달라서다. 동점 처리는 우리 S5(ordering)의 일이다.
+
 <details><summary>재현: 하네스 요지</summary>
 
 ```text
-config   = X5의 config.toml + [master] n_jobs = J
+config   = X5의 config.toml + [master] n_jobs = J  (+ [database] cache_store = … 로 store 변인)
 적재     = POST /api/items 5,000건 배치 (10⁵ 7 s · 5×10⁵ 34 s)
 사이클 1  = tasks API에서 "Generate item-to-item recommendation"의 Count ≥ N 시각(Push 끝) · FinishTime(전체)
 사이클 2  = a:newdeep + q:multi:g2 삽입 후 같은 측정 (저장 2건뿐 → Push + 확인 비용)

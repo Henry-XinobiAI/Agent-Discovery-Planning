@@ -411,12 +411,12 @@ U_active 1,000만 / I_eligible 500만          (도쿄 기준)
 | **S1** | `U_active`·`I_eligible` 목표값 | 제품·측정 | **미정. 이 장 전체의 전제** |
 | S2 | Gorse가 SQL/document backend에서 cache store를 **실제로 어떤 스키마로** 쓰는가 | 실측 | 미확인. §4의 Aurora 판정이 여기에 걸린다 |
 | S3 | 리전 단가 | 확인 | **닫힘(§3).** 도쿄·서울 동일 수준, us-east-1 대비 +20% |
-| S4 | `gorse.md` §8-2의 neighbor·fallback 캐시가 §2 산정에 더하는 양 | 측정 | **일부 실측(`GOR-X3`, 2026-09-04)**: surface 1 인스턴스의 item 이웃 캐시는 **item당 ~80건**(sqlite ~210 B/건, 5×10⁵에서 7.8 GB). 10⁸ item이면 ~8×10⁹건 — Redis 단가는 미측정. master RAM은 별도로 **≈ 8.3 KB/item** |
+| S4 | `gorse.md` §8-2의 neighbor·fallback 캐시가 §2 산정에 더하는 양 | 측정 | **일부 실측(`GOR-X3`, 2026-09-04)**: surface 1 인스턴스의 item 이웃 캐시는 **item당 ~80건**(sqlite ~210 B/건, 5×10⁵에서 7.8 GB). 10⁸ item이면 ~8×10⁹건 — Redis 단가는 미측정. **MongoDB 7 실측**: 논리 182 B/건, 디스크는 WiredTiger 압축으로 ~33 B/건(DocumentDB엔 옮기지 말 것). Gorse의 MongoDB 캐시는 **이웃 1건 = 문서 1개**라 §4 DocumentDB 행의 "유저당 문서 1개 + 배열 100개" 가정과 모양이 다르다. master RAM은 별도로 **≈ 8.3 KB/item** |
 | S5 | 서울 이전 시 r6gd 부재를 무엇으로 대체하는가 | 설계 | **조건부.** 도쿄를 쓰는 동안은 열리지 않는다(§3-1) |
 | S6 | 디스크 상주 cache store가 견디는 QPS | 측정 | **§4·§6-2의 최저가 안이 전부 여기 걸린다.** 인덱스는 RAM에 들어가지만 working set을 벗어난 읽기는 gp3 IOPS를 친다 |
 | S7 | `gorse.md` §8-3의 폴백(Gorse 없이 RRF ordering)이 실제로 구현되어 있는가 | 확인 | **자체 운영 검토의 전제**(§6-3) |
 | S8 | 공용 Valkey의 `maxmemory-policy`와 현재 사용률 | 확인 | **얹기 전 필수**(§6-6). TTL 없는 키가 차면 축출이 아니라 쓰기 실패이고, deferq에는 재시도가 없다 |
-| **S9** | **DocumentDB가 Gorse v0.5.11의 MongoDB 백엔드 연산을 지원하는가** | 문서 대조 (실행 아님) | **2026-09-04 대조 완료 — 아래 표.** cache store는 **5.0에서 대시보드 시계열 하나만 깨지고**(`$top`, 8.0.1+에서만 지원) 추천 경로는 전부 지원. data store는 **5.0 이상 필수**(`$text`·text index·`$meta`가 3.6/4.0에 없음). Elastic cluster는 둘 다 불가. **실제 클러스터에서 한 번 돌려 보기 전까지는 문서상 판정이다** |
+| **S9** | **DocumentDB가 Gorse v0.5.11의 MongoDB 백엔드 연산을 지원하는가** | 문서 대조 (실행 아님) | **2026-09-04 대조 완료 — 아래 표.** cache store는 **5.0에서 대시보드 시계열 하나만 깨지고**(`$top`, 8.0.1+에서만 지원) 추천 경로는 전부 지원. data store는 **5.0 이상 필수**(`$text`·text index·`$meta`가 3.6/4.0에 없음). Elastic cluster는 둘 다 불가. **실제 클러스터에서 한 번 돌려 보기 전까지는 문서상 판정이다.** 로컬 `mongo:7`로는 동작·성능 확인(`gorse.md` §12-5 X3 store 변인): 저장 1.1 ms/item(sqlite의 1.6×), 정상 사이클 동일. 기동 시 빈 `BulkWrite` 오류 로그 1건(무해) |
 
 **S9 상세 — Gorse v0.5.11 `storage/cache/mongodb.go`·`storage/data/mongodb.go`가 쓰는 연산 vs AWS 문서
 [Supported MongoDB APIs](https://docs.aws.amazon.com/documentdb/latest/developerguide/mongo-apis.html)·[Text search](https://docs.aws.amazon.com/documentdb/latest/developerguide/text-search.html)** (2026-09-04 열람):
