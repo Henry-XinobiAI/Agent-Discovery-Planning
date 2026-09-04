@@ -46,7 +46,7 @@
      §7  surface 1 = CF 가 아니다(§7-1 실측) → 성립하는 형태(§7-3)
 
 3. recsys_opensource/README.md  §8
-     문서 근거가 실행에 뒤집힌 다섯          ← 왜 증거 등급을 나눴는가
+     문서 근거가 실행에 뒤집히거나 넓혀진 다섯          ← 왜 증거 등급을 나눴는가
 
 4. inbound_event_contract.md               무엇을 받아야 하나
 ```
@@ -66,7 +66,7 @@
 
 - **surface 1과 surface 2를 섞어 읽지 않는다.** 같은 도구가 한 surface에서는 엔진이고 다른 surface에서는 오답이다.
   `recsys_opensource/README.md` §2 표가 그 축이다.
-- **`문서` 근거와 `실측`을 구분한다.** `recsys_opensource/gorse.md`는 §1–§10이 문서 근거, §11이 실측이고,
+- **`문서` 근거와 `실측`을 구분한다.** `recsys_opensource/gorse.md`는 §1–§10이 문서 근거, §11이 실측, §12가 소스 근거 + 실험(X1–X6)이고,
   §11이 앞 절 다섯 개를 뒤집는다. §6-1·§6-2·§9에 ⚠ 포인터가 있다.
 - **R1이 열려 있다.** "surface 2가 `friends` 보유까지 근거로 삼는가"가 §6 전체의 전제다.
   `public`만이면 Gorse가 성립하고 `friends`까지면 구조적으로 막힌다.
@@ -97,15 +97,15 @@ recsys_opensource/README.md §2 배치표에서 관심 있는 칸을 찾고
 
 | 문서 | 무엇 | 상태 |
 |---|---|---|
-| `recsys_opensource/gorse.md` | 올인원 엔진 | §1–§10 `문서` · **§11 `실측`** |
+| `recsys_opensource/gorse.md` | 올인원 엔진 | §1–§10 `문서` · **§11 `실측`** · §12 `소스` + 실험 `GOR-X1`–`X6` |
 | `recsys_opensource/implicit.md` | CF 라이브러리 | 문서 조사 |
 | `recsys_opensource/cornac.md` | 실험 하네스 | 문서 조사 |
 | `recsys_opensource/surprise.md` | explicit rating | 문서 조사. 현재 비활성 — rating 계약이 생기면 |
 | `recsys_opensource/ranking.md` | LR → GBDT 재순위 | 초안 |
 | `recsys_opensource/off_policy.md` | 반사실 평가 | 초안. **노출 필드 계약을 소유** |
 | `recsys_opensource/concentration_metrics.md` | 집중도·공급 지표 | 초안 |
-| `recsys_opensource/storage_sizing.md` | 저장소 규모·비용 (1억 전제) · managed 대 자체 운영 | 초안. **결론은 §6·§7이 아니라 §11에 걸린다** |
-| `recsys_opensource/feedback_semantics.md` | feedback 타입 → 엔진 동작 | 초안. `문서`(v0.5.11 **소스 독해**) — §11 실측과 등급이 다르다 |
+| `recsys_opensource/storage_sizing.md` | 저장소 규모·비용 (1억 전제) · managed 대 자체 운영 | 초안. **결론은 §6·§7이 아니라 `recsys_opensource/README.md` §11(규모)에 걸린다** |
+| `recsys_opensource/feedback_semantics.md` | feedback 타입 → 엔진 동작 | 초안. `문서`(v0.5.11 **소스 독해**) — `gorse.md` §11 실측과 등급이 다르다 |
 
 `recsys_opensource/README.md` §9(우리가 계속 소유할 것)와 §10(도구별 운영 책임)이 도입 판단에서
 실제로 비교할 두 표다.
@@ -159,6 +159,6 @@ facets_ownership_split_discussion.md  값의 소유            ← 같은 경계
 | `recommendation_scoring_design.md` §11–§12 | N1–N5(지금 만들 것) · D1–D8(나중에 정할 것) · Q1–Q14 |
 | `inbound_event_contract.md` §6 | `EVT-E1`–`E9` 협의 상태. **E1이 임계경로** |
 | `recsys_opensource/README.md` §13 | `SURV-R1`–`R11`. **R1은 여전히 surface 2의 전제**(friends까지 근거로 삼으면 전역 label이 성립하지 않는다). **R4는 배포 전 게이트로 승격**(`decisions.md` §4) |
-| `recsys_opensource/gorse.md` §12 | **1억 규모에서 깨지는 것 둘과 개선 후보 열 가지 + 실험 `GOR-X1`–`X5`.** 7·9는 `D22`. **실행 순서·다음 결정은 §12-6** |
+| `recsys_opensource/gorse.md` §12 | **1억 규모에서 깨지는 것 둘과 개선 후보 열한 가지 + 실험 `GOR-X1`–`X6`(전부 완료).** 7·9는 `D22`, 1은 `D23`, 11은 `D24`. 남은 결정은 `N*`. **실행 순서·상태는 §12-6** |
 | ~~`recsys_adoption_discussion.md` §9~~ | **레지스터가 아니다**(`decisions.md` §5). 논의 기록이고 번호가 `SURV-R`과 겹치되 뜻이 다르다 |
 | 코드 repo `tasks/todo.md` | 구현 plan의 단일 소스 (이 repo에 병렬 plan을 두지 않는다) |

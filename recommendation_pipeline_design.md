@@ -1,6 +1,6 @@
 # Agent 추천 파이프라인 재설계 — topic-api 소비 기반
 
-> **문서 지위**: 설계 기준 문서 (rev 5.16, 외부 리뷰 5회 반영). **결정은 이 문서가 소유하지 않는다** —
+> **문서 지위**: 설계 기준 문서 (rev 5.17, 외부 리뷰 5회 반영). **결정은 이 문서가 소유하지 않는다** —
 > [`decisions.md`](decisions.md)가 소유하고 여기서는 `Dnn`을 인용한다.
 > 입력 = `topic_api_analysis.md` **rev 8**
 > (2026-08-25, topic-api HEAD `9ee67f3`) + bourbon-agent의 기왕 계약
@@ -30,7 +30,7 @@ S2 Grounding        probe별 GET …/search/topics → is_match 트리 → **con
    ▼                1 topic 확정** (못 고르면 ambiguous)
                     산출물: GroundingResult (outcome 4종)
                     [expansion 정상+전체 0건 → 422 / expansion 실패+fallback 0건 → 503]
-S3 Candidate        확정 topic을 **라벨별 개별 쿼리 + 가중합**으로 Gorse에 물어 후보를 만든다(D07)
+S3 Candidate        확정 topic을 **라벨별 개별 쿼리 + 가중합**(D07) **+ topic당 다중 라벨·센티넬 쿼리 1개**(D23)로 Gorse에 물어 후보를 만든다. item = agent × 최상위 topic(D24)
    ▼                (Gorse 불능 → topic-api 보유자 랭킹으로 fallback, `candidates_fallback` 선언 — D20)
                     산출물: CandidateSet
 S4 Merge/Filter     미보유자 필터(복제본 D10·D08) → stub 방어 → exclusion → eligibility
@@ -219,13 +219,13 @@ ExpansionResult {
   한 그룹(위 shape가 구조로 보장), ⑵ **정규화 기준 동일 probe의 그룹 간 중복 금지**,
   ⑶ 그룹 수 ≤ 3(`열린 결정` ②의 "확정 topic ≤3"과 같은 값·같은 안건), ⑷ 그룹당 probe ≥ 1.
 - **malformed 출력**(그룹 간 중복 probe·빈 그룹·상한 초과·파싱 불가): 그 LLM 출력을
-  **통째로 버리고** degraded 경로로 진행한다 — 원문 probe 1개짜리 단일 그룹(C4 규율:
+  **통째로 버리고** degraded 경로로 진행한다 — 원문 probe 1개짜리 단일 그룹(판단-도달 규율(rev 14 승계 — 레지스터 `C4`와 다름):
   판단에 도달하지 못한 출력을 고쳐 쓰지 않는다). 부분 구제(살릴 그룹만 살리기)는 하지
   않는다 — 중복이 있었다는 사실 자체가 그룹 경계 전체를 불신하게 만든다.
 
 **실패**: LLM 실패/timeout → probe = 원문 1개로 진행(`degraded=true`). **degraded 상태의
 0건은 422가 아니다** — expansion이 살아 있었다면 발견했을 topic일 수 있으므로, 판단에
-도달하지 못한 것으로 보고 §4의 unavailable(503) 경로로 보낸다(C4 규율: 재시도 기준은
+도달하지 못한 것으로 보고 §4의 unavailable(503) 경로로 보낸다(판단-도달 규율(rev 14 승계 — 레지스터 `C4`와 다름): 재시도 기준은
 "판단에 도달했는가"). degraded 상태에서 원문 probe가 exact hit를 냈을 때만 degraded 성공.
 
 **계측**: probe 수 분포, 언어별 히트 기여(en/ko probe 각각이 확정 topic을 몇 번 맞췄나 —
@@ -284,11 +284,14 @@ probe는 topic/context 파생이라 관심사·개인정보가 실릴 수 있고
 
 ### S3 Candidate — 확정 topic으로 후보 만들기
 
-**동작** (`D07`·`D23`·`D24`, rev 5.16): 확정 topic들을 **라벨별 개별 쿼리 + 가중합**으로 Gorse에 묻고
-(`recsys_opensource/gorse.md` §11-2 경로 C), 여기에 **topic당 다중 라벨 쿼리 하나**를 더한다(`D23`) —
-확정 topic의 라벨 전부와 센티넬 `__QUERY__`를 한 쿼리 item에 실은 것. 라벨마다 센티넬 태그를 넣은
-쿼리 item의 이웃을 묻고, 상위 라벨은 **recall 장치**로, 하위 라벨은 **랭킹 가중**으로 쓴다. 호출당
-약 1.1 ms이므로 라벨이 열 개가 되어도 문제가 없다.
+**동작** (`D07`·`D23`·`D24`, rev 5.17): 확정 topic마다 Gorse에 **두 종류의 쿼리**를 보낸다.
+
+1. **라벨별 개별 쿼리 × L개**(`D07`, `recsys_opensource/gorse.md` §11-2 경로 C) — 라벨마다 센티넬 태그를 넣은
+   쿼리 item의 이웃을 묻고 **가중합**한다. 상위 라벨은 **recall 장치**, 하위 라벨은 **랭킹 가중**이다.
+2. **다중 라벨 쿼리 × 1개**(`D23`, 같은 절 경로 B + 센티넬) — 확정 topic의 라벨 전부와 센티넬 `__QUERY__`를 한
+   쿼리 item에 실은 것. 깊은 사람(하위를 많이 가진 사람)을 컷 안으로 들이는 것이 목적이다.
+
+호출당 약 1.1 ms(sqlite·Redis; MongoDB는 4–36 ms)이므로 라벨이 열 개가 되어도 문제가 없다.
 
 다중 라벨 쿼리가 있는 이유는 **`cache_size`의 100 컷**이다. 라벨 하나짜리 쿼리의 이웃 100은 `√wsum(d)`만으로
 갈려 보유 폭이 좁은 사람으로 채워진다 — 10⁴ 합성 실측에서 깊은 사람 회수 0(`gorse.md` §12-5 X1 결과). 다중
@@ -299,8 +302,9 @@ probe는 topic/context 파생이라 관심사·개인정보가 실릴 수 있고
 **item의 단위는 agent가 아니라 agent × 최상위 topic이다**(`D24`, rev 5.16). surface 1 인스턴스의 item id는 `agent_id#top_topic_id`,
 태그는 그 최상위와 그 아래 보유 하위만. 그래야 Gorse 공식의 `√wsum(d)`에 다른 주제가 안 들어가 "coffee만 하는 사람"으로 컷이
 채워지는 focus 편향이 사라진다(25만 agent 실측 recall 34 → 94, `gorse.md` §12-5 X6). **S3은 id를 agent로 되돌리고, S4는 agent
-기준으로 dedup한다**(다중 부모 라벨의 안전장치 — topic-api는 모든 topic을 한 최상위 아래에 보이므로 보통 중복이 없다). 알려진 결함 — 태그가 아주 많은 깊은 사람은 그 컷에서도 밀린다 — 은 `gorse.md` §12-4의 2가 맡고,
-그 채택은 `GOR-X4` 뒤다.
+기준으로 dedup한다** — 같은 agent가 두 item으로 나오는 경우는 한 요청의 확정 topic들이 서로 다른 최상위에 걸릴 때이고,
+다중 부모 라벨은 topic-api가 한 최상위를 골라 주므로(`ancestor_path`) 보통 중복이 없다. X4가 잰 결함 — 태그가 많은 깊은 사람이 그 컷에서도 밀린다 — 는 후보 2(`#deep`)로는 고쳐지지 않았고(기각), 아래
+`D24`의 item 단위가 완화한다(25만 agent에서 recall 34 → 94).
 
 **이 단계가 topic-api의 컷을 벗어나는 이유가 `D07`의 전부다.** 보유자 랭킹은 그들 score로 상위
 100명에서 잘리고 페이징이 없어서, 그 주제를 가장 깊게 아는 사람이 컷 밖에 있으면 어떤 방법으로도
@@ -329,7 +333,7 @@ topic도 requester마다 다른 랭킹이 되므로 — 현재 키 설계의 전
 증상이 "틀린 순위"에서 **"friends 전용 문장을 남에게 노출"**로 바뀐다. friends 채택은 상류 지원을
 본 뒤 결정하되(오너 결정 2026-08-27), 그 판단에 이 항목이 포함된다.
 
-응답에서 보존하는 것(어댑터가 버리지 않는다):
+응답에서 보존하는 것(**아래 fallback 경로**의 topic-api 응답 — 어댑터가 버리지 않는다):
 
 - `items[].user_id`, `score`(그들의 감쇠 합산 총점 — 참고값, 우리 wire에 비노출)
 - `items[].matched[]` **트리 원형**: topic·item(descriptions·blocks의 `score_detail` 포함)·
@@ -630,7 +634,7 @@ facet 무시, 기대 facet 부재는 null 처우 규칙으로 — 분석 §13-3)
 묶음으로 올린다.
 
 오귀속 금지의 축: **"카탈로그에 없다"고 말할 자격은 expansion이 정상 완료됐을 때만
-생긴다**(C4 규율 — 판단에 도달했는가). 어댑터 파싱 실패는 계약 위반 로깅 + 503 — 422로
+생긴다**(판단-도달 규율(rev 14 승계 — 레지스터 `C4`와 다름) — 판단에 도달했는가). 어댑터 파싱 실패는 계약 위반 로깅 + 503 — 422로
 위장하지 않는다.
 
 ---
@@ -721,7 +725,7 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
 
 ## §9 열린 결정 (리뷰 안건)
 
-1. ~~S3 부분 실패 규칙~~ — **rev 5에서 해소: 초기 fail-closed 확정**(확정 topic 하나라도
+1. ~~S3 부분 실패 규칙~~ — rev 5의 fail-closed는 **rev 5.13 `D20`으로 대체**(저하 선언 후 계속). (옛 문구: 확정 topic 하나라도
    실패 → 503). 부분 성공은 degraded wire·concept-group 의미가 자리잡은 뒤 재개방할 계약.
 2. **probe 수 상한(6)·grounding limit(20)·확정 topic 수(1~3)** — 기본값 제안. 측정 후 조정.
    rev 5.13 정정: 이 중 **그룹 수 ≤ 3은 이미 구조 검증이고 위반하면 fail-closed 저하**다(§S1).
@@ -773,8 +777,6 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
    `degraded`는 별도 필드로 복귀하고 **rev 5.14에서 다섯 값이 §4 표에 다 나왔다**. **값 추가는
    bourbon-agent 협의 대상**이다(`Literal` strict 파싱). 원래 질문: "no_public_holders"와
    "degraded"의 구분을 wire에 실을지.
-11. **요청 wire 길이 상한 값** (rev 5) — `topic` ≤200자·`context` ≤2,000자 제안. probe
-   ≤100자는 topic-api `NameQuery`와 동기라 제안이 아니라 제약.
 9. **응답 카드 hydration 책임** (rev 3 협의 → **rev 5.5에서 S6 선행 블로커로 승격**) —
    bourbon-agent strict wire가 `name`·`description`을 필수로 요구해(§2), 결정 전에는 S6
    구현·통합 테스트가 불가능하다. name=owner 이름·description=personal agent 현재 NULL.
@@ -791,6 +793,9 @@ TTL로만. 계약 drift는 계약 테스트 + 파싱 실패 로깅으로 잡는�
    오독이 호출자 쪽에서 재발한다.
 10. **probe 언어 배분(원문1+en3+ko2)** (rev 2) — 실측 12쌍 기준 제안값. S1 계측(언어별 히트
    기여)으로 조정.
+11. **요청 wire 길이 상한 값** (rev 5) — `topic` ≤200자·`context` ≤2,000자 제안. probe
+   ≤100자는 topic-api `NameQuery`와 동기라 제안이 아니라 제약.
+
 
 ---
 
@@ -843,6 +848,9 @@ api/               # Pydantic HTTP wire 모델 + wire ↔ domain 변환만 —
 이 절이 거절 근거다.
 
 ## 변경 이력
+
+**2026-09-04 rev 5.17** — 표현 정리(문서 리뷰). §0 S3 요약에 `D23`·`D24` 반영 · §S3 동작을 쿼리 두 종류로 나눠 다시 씀 ·
+D24 문단의 dedup 이유 정정(다른 최상위에 걸린 확정 topic들) · §9 ①의 해소 문구를 D20으로 · "판단-도달 규율(rev 14 승계 — 레지스터 `C4`와 다름)"을 레지스터 `C4`와 구분.
 
 **2026-09-04 rev 5.16** — §S3 item 단위를 **agent × 최상위 topic**으로(`D24`, `GOR-X6`). S3의 id 되돌리기와 S4의 agent 기준
 dedup을 적었다.

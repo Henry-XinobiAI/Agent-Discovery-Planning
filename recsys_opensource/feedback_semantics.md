@@ -356,6 +356,9 @@ type = "fm"                          # replacement가 이것을 요구한다 (2-
 
 ## 7. 자격 없는 agent·user에 대한 feedback
 
+> 이 절의 **Item = surface 2의 agent**(`ItemId = personal_agent_id`, `D03`)다. surface 1 전용 인스턴스(`D22`)는 user·feedback을
+> 받지 않고 item도 `agent_id#top_topic_id`(`D24`)라 이 절의 feedback 논의가 닿지 않는다.
+
 ### 7-1 `auto_insert`는 양날이고, 기본값이 켜져 있다
 
 ```toml
@@ -394,7 +397,7 @@ Ok(response, Success{RowAffected: len(feedback)})   // server/rest.go:1615
 
 **① `auto_insert_item = false`, `auto_insert_user = false`로 고정한다.**
 
-Gorse가 우리 카탈로그 경계를 넘어 실체를 만들지 못하게 한다. §5의 "가장 강한 보호는 받지 않는
+Gorse가 우리 카탈로그 경계를 넘어 실체를 만들지 못하게 한다. `README.md` §5의 "가장 강한 보호는 받지 않는
 것"이 이 설정 한 줄에 걸려 있다. `auto_insert_user`도 함께 꺼야 한다 — [`gorse.md`
 §8-3](gorse.md)이 "unknown requester를 가짜 평균 user로 기록하지 않음"으로 정해 둔 것을 기본값이
 정확히 위반한다.
@@ -433,7 +436,7 @@ Gorse가 우리 카탈로그 경계를 넘어 실체를 만들지 못하게 한�
 | (d) deleted | append — 사건은 사실이다 | **프로젝션하지 않고 기존 row도 정리**([`inbound_event_contract.md` §3-3](../inbound_event_contract.md)) |
 
 (b)가 가장 미묘하고, 스킵이 맞다. 공개 topic이 없는 사람을 Gorse에 넣는 것의 문제는 그 사람이
-추천 가능해지는 것이 아니라 **그 사람에 대한 사실이 우리 인덱스에 존재하게 되는 것**이다. §5의
+추천 가능해지는 것이 아니라 **그 사람에 대한 사실이 우리 인덱스에 존재하게 되는 것**이다. `README.md` §5의
 논지가 정확히 그것이다.
 
 **⑤ 삭제는 row 삭제로 끝나지 않는다.**

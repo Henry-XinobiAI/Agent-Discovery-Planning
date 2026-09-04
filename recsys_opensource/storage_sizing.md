@@ -114,7 +114,7 @@ ElastiCache가 0.4% 싸고 스토리지·I/O는 동일하므로 r6gd 행을 빼�
 | **ElastiCache Redis (all-RAM)** | 1,126 GB × $13.67 ≈ **$15,400** | 지연은 최고(p99 <1 ms). 순수 RAM으로 1억을 담는 것이 가장 비싼 선택 |
 | **ElastiCache Valkey (all-RAM)** | 1,126 GB × $10.94 ≈ **$12,300** | 같은 것을 20% 싸게. 엔진만 바꾸면 되고 스키마는 그대로다 |
 | **ElastiCache r6gd (티어링)** | 1,126 GB × ~$5.20 ≈ **$5,900** | **이 워크로드에 정확히 맞는다** — 거대한 캐시 + 심한 편향 접근(1억 중 대부분이 비활성). **단, 서울에는 없다**(§3-1) |
-| **DocumentDB** ⚠ | 스토리지 $67 + I/O ~$1,200 + 인스턴스 $2,400~4,800 ≈ **$3,700~6,100** | 유저당 문서 1개 + 배열 100개가 자연스러운 모양. point read 1~5 ms — surface 2의 예산에서 문제 없음. **⚠ 형태 평가이지 채택 권고가 아니다 — 6-5·6-6이 기각한다** |
+| **DocumentDB** ⚠ | 스토리지 $67 + I/O ~$1,200 + 인스턴스 $2,400~4,800 ≈ **$3,700~6,100** | ⚠ **모양 가정이 틀렸다**(S4 실측: Gorse의 MongoDB 캐시는 이웃 1건 = 문서 1개, item당 ~80건) — 아래 I/O 산정은 재검토 대상. point read 1~5 ms — surface 2의 예산에서 문제 없음. **⚠ 형태 평가이지 채택 권고가 아니다 — 6-5·6-6이 기각한다** |
 | **Aurora MySQL/PostgreSQL** | 스토리지는 같으나 **행 수가 100억** | `판단` **모양이 틀렸다.** sorted set을 `(name, member, score)` 행으로 펴면 100억 narrow row를 주기적으로 전면 재작성하게 되고, 인덱스 유지비와 (PostgreSQL이면) vacuum 부담이 여기서 터진다 |
 
 I/O 산정 근거 `판단`: 전면 refresh 1회 = 1억 문서 교체 × ~5 I/O ≈ 5억 I/O. `cache_expire` 기본 72h면
@@ -409,14 +409,14 @@ U_active 1,000만 / I_eligible 500만          (도쿄 기준)
 | # | 항목 | 성격 | 상태 |
 |---|---|---|---|
 | **S1** | `U_active`·`I_eligible` 목표값 | 제품·측정 | **미정. 이 장 전체의 전제** |
-| S2 | Gorse가 SQL/document backend에서 cache store를 **실제로 어떤 스키마로** 쓰는가 | 실측 | 미확인. §4의 Aurora 판정이 여기에 걸린다 |
+| S2 | Gorse가 SQL/document backend에서 cache store를 **실제로 어떤 스키마로** 쓰는가 | 실측 | **MongoDB는 확인**(S4·S9 — `documents` 컬렉션, 이웃 1건 = 문서 1개). **SQL/Aurora는 미확인** — §4의 Aurora 판정이 여기에 걸린다 |
 | S3 | 리전 단가 | 확인 | **닫힘(§3).** 도쿄·서울 동일 수준, us-east-1 대비 +20% |
-| S4 | `gorse.md` §8-2의 neighbor·fallback 캐시가 §2 산정에 더하는 양 | 측정 | **일부 실측(`GOR-X3`, 2026-09-04)**: surface 1 인스턴스의 item 이웃 캐시는 **item당 ~80건**(sqlite ~210 B/건, 5×10⁵에서 7.8 GB). 10⁸ item이면 ~8×10⁹건 — Redis 단가는 미측정. **MongoDB 7 실측**: 논리 182 B/건, 디스크는 WiredTiger 압축으로 ~33 B/건(DocumentDB엔 옮기지 말 것). Gorse의 MongoDB 캐시는 **이웃 1건 = 문서 1개**라 §4 DocumentDB 행의 "유저당 문서 1개 + 배열 100개" 가정과 모양이 다르다. master RAM은 별도로 **≈ 8.3 KB/item** |
+| S4 | `gorse.md` §8-2의 neighbor·fallback 캐시가 §2 산정에 더하는 양 | 측정 | **일부 실측(`GOR-X3`, 2026-09-04)**: surface 1 인스턴스의 item 이웃 캐시는 **item당 ~80건**(sqlite ~210 B/건, 5×10⁵에서 7.8 GB). 10⁸ item이면 ~8×10⁹건 — Redis 단가는 미측정. **MongoDB 7 실측**: 논리 182 B/건, 디스크는 WiredTiger 압축으로 ~33 B/건(이 압축률은 DocumentDB에 적용되지 않는다 — 엔진이 다르다). Gorse의 MongoDB 캐시는 **이웃 1건 = 문서 1개**라 §4 DocumentDB 행의 "유저당 문서 1개 + 배열 100개" 가정과 모양이 다르다. master RAM은 별도로 **≈ 8.3 KB/item** |
 | S5 | 서울 이전 시 r6gd 부재를 무엇으로 대체하는가 | 설계 | **조건부.** 도쿄를 쓰는 동안은 열리지 않는다(§3-1) |
 | S6 | 디스크 상주 cache store가 견디는 QPS | 측정 | **§4·§6-2의 최저가 안이 전부 여기 걸린다.** 인덱스는 RAM에 들어가지만 working set을 벗어난 읽기는 gp3 IOPS를 친다 |
-| S7 | `gorse.md` §8-3의 폴백(Gorse 없이 RRF ordering)이 실제로 구현되어 있는가 | 확인 | **자체 운영 검토의 전제**(§6-3) |
+| S7 | Gorse 불능 폴백(`candidates_fallback` — topic-api 보유자 랭킹, `D20`)이 실제로 구현되어 있는가 | 확인 | **자체 운영 검토의 전제**(§6-3) |
 | S8 | 공용 Valkey의 `maxmemory-policy`와 현재 사용률 | 확인 | **얹기 전 필수**(§6-6). TTL 없는 키가 차면 축출이 아니라 쓰기 실패이고, deferq에는 재시도가 없다 |
-| **S9** | **DocumentDB가 Gorse v0.5.11의 MongoDB 백엔드 연산을 지원하는가** | 문서 대조 (실행 아님) | **2026-09-04 대조 완료 — 아래 표.** cache store는 **5.0에서 대시보드 시계열 하나만 깨지고**(`$top`, 8.0.1+에서만 지원) 추천 경로는 전부 지원. data store는 **5.0 이상 필수**(`$text`·text index·`$meta`가 3.6/4.0에 없음). Elastic cluster는 둘 다 불가. **실제 클러스터에서 한 번 돌려 보기 전까지는 문서상 판정이다.** 로컬 `mongo:7`로는 동작·성능 확인(`gorse.md` §12-5 X3 store 변인): 저장 1.1 ms/item(sqlite의 1.6×), 정상 사이클 동일. 기동 시 빈 `BulkWrite` 오류 로그 1건(무해) |
+| **S9** | **DocumentDB가 Gorse v0.5.11의 MongoDB 백엔드 연산을 지원하는가** | 문서 대조 (실행 아님) | **2026-09-04 대조 완료 — 아래 표.** cache store는 **5.0에서 대시보드 시계열 하나만 깨지고**(`$top`, 8.0.1+에서만 지원) 추천 경로는 전부 지원. data store는 **5.0 이상 필수**(`$text`·text index·`$meta`가 3.6/4.0에 없음). Elastic cluster는 data store 불가(text 계열), cache store는 5.0과 같은 조건(대시보드 시계열만 깨짐). **실제 클러스터에서 한 번 돌려 보기 전까지는 문서상 판정이다.** 로컬 `mongo:7`로는 동작·성능 확인(`gorse.md` §12-5 X3 store 변인): 저장 1.1 ms/item(sqlite의 1.6×), 정상 사이클 동일. 기동 시 빈 `BulkWrite` 오류 로그 1건(무해) |
 
 **S9 상세 — Gorse v0.5.11 `storage/cache/mongodb.go`·`storage/data/mongodb.go`가 쓰는 연산 vs AWS 문서
 [Supported MongoDB APIs](https://docs.aws.amazon.com/documentdb/latest/developerguide/mongo-apis.html)·[Text search](https://docs.aws.amazon.com/documentdb/latest/developerguide/text-search.html)** (2026-09-04 열람):

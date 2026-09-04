@@ -64,10 +64,10 @@
 > **오픈소스 recsys 기술 검토 (결정 아님)** — [`recsys_opensource/`](recsys_opensource/README.md):
 > Gorse·Cornac·Surprise·implicit의 실제 입력/출력, requester User ↔ candidate Personal Agent 역할 분리,
 > topic·bio·traits, `public/friends/private` gate, 우리 pipeline의 배치 위치와 PoC 합격선을 도구별로
-> 정리한다. 도입 결정은 아니며 현행 제안은 `recommendation_scoring_design.md`가 소유한다.
+> 정리한다. 채택·기각은 `decisions.md`가 소유한다(`D06`·`D07`, 실측 근거는 `gorse.md` §11·§12).
 
 > **방향 근거는 `topic_api_analysis.md`, 설계 기준 문서는 `recommendation_pipeline_design.md`, 가려는 곳은
-> `recommendation_scoring_design.md`.** 구현 계약이던 `archive/impl/`은 `archive/impl/`로 보관됐다(§2f). `persona_topic_search_design.md`(3차 프레이밍 기록)는 2026-08-24에
+> `recommendation_scoring_design.md`.** 구현 계약이던 `impl/`은 `archive/impl/`로 보관됐다(§2f). `persona_topic_search_design.md`(3차 프레이밍 기록)는 2026-08-24에
 > `archive/`(§2e)로 이동했다. 이전 프레이밍의
 > 설계 근거 문서들(directions·implementation·Agent_Memory_Vision·technology_selection_evidence)은
 > 2026-08-20에 `archive/`(§2d)로 이동했다 — 현행 시스템이 *왜 그렇게 지어졌는지*가 궁금할 때만
@@ -204,7 +204,7 @@ framing이 SKL → anchor 그래프 → persona extractor 체인 → topic-api �
 
 ## 5. 구현 형태 (how it's wired) — 현행 shipped 시스템 기준
 
-> **이 절은 전환 전까지 가동되는 현행 시스템의 wiring이다** (구현 계약이던 `archive/impl/`은 보관됨 §2f, 설계 근거 기록은 `archive/agent_discovery_recommendation_directions.md`). 전환 후 형태는 `recommendation_pipeline_design.md` §0. API-first·thin client·moderation-gated push라는 골격은 전환 후에도 유지된다.
+> **이 절은 전환 전까지 가동되는 현행 시스템의 wiring이다** (구현 계약이던 `impl/`은 `archive/impl/`로 보관됨 §2f, 설계 근거 기록은 `archive/agent_discovery_recommendation_directions.md`). 전환 후 형태는 `recommendation_pipeline_design.md` §0. API-first·thin client·moderation-gated push라는 골격은 전환 후에도 유지된다.
 
 discovery는 호출 가능한 **백엔드 서비스(API)**로 구현한다 — 버전된 공유 인덱스(anchor 파티션·stance space·contested axes), cross-agent 집계, lifecycle 이벤트 기반 갱신이 필요해 호출마다 재구축할 수 없기 때문이다. 두 모드는 이 엔진을 부르는 *경로*가 다르다.
 
