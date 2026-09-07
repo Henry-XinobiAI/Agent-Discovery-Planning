@@ -105,6 +105,7 @@ recsys_opensource/README.md §2 배치표에서 관심 있는 칸을 찾고
 | `recsys_opensource/off_policy.md` | 반사실 평가 | 초안. **노출 필드 계약을 소유** |
 | `recsys_opensource/concentration_metrics.md` | 집중도·공급 지표 | 초안 |
 | `recsys_opensource/storage_sizing.md` | 저장소 규모·비용 — **단계별 구성(20만 → 100만 → 1천만 → 1억, `D26`)과 전환 신호(§8)** · 1억 상한의 형태 비교(§2–§5) · managed 대 자체 운영(§6) | 초안. 권고는 §8·6-6. 단계 경계는 유저 수가 아니라 계측이 정한다 |
+| `recsys_build_vs_adopt.md` | 후보 생성을 기존 오픈소스로 하나 우리 인덱스로 하나 — 장단점·채택 장애·혼합·저장소 단가·지연 | 논의 정리(2026-09-07). **자립 문서** — 이전 결정·항목 번호를 인용하지 않는다. 받으면 결정 레지스터의 Gorse 관련 결정이 재판단 대상 |
 | `recsys_opensource/feedback_semantics.md` | feedback 타입 → 엔진 동작 | 초안. `문서`(v0.5.11 **소스 독해**) — `gorse.md` §11 실측과 등급이 다르다 |
 
 `recsys_opensource/README.md` §9(우리가 계속 소유할 것)와 §10(도구별 운영 책임)이 도입 판단에서
