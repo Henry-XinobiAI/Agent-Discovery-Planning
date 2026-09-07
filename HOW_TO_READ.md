@@ -104,7 +104,7 @@ recsys_opensource/README.md §2 배치표에서 관심 있는 칸을 찾고
 | `recsys_opensource/ranking.md` | LR → GBDT 재순위 | 초안 |
 | `recsys_opensource/off_policy.md` | 반사실 평가 | 초안. **노출 필드 계약을 소유** |
 | `recsys_opensource/concentration_metrics.md` | 집중도·공급 지표 | 초안 |
-| `recsys_opensource/storage_sizing.md` | 저장소 규모·비용 (1억 전제) · managed 대 자체 운영 | 초안. **결론은 §6·§7이 아니라 `recsys_opensource/README.md` §11(규모)에 걸린다** |
+| `recsys_opensource/storage_sizing.md` | 저장소 규모·비용 — **단계별 구성(20만 → 100만 → 1천만 → 1억, `D26`)과 전환 신호(§8)** · 1억 상한의 형태 비교(§2–§5) · managed 대 자체 운영(§6) | 초안. 권고는 §8·6-6. 단계 경계는 유저 수가 아니라 계측이 정한다 |
 | `recsys_opensource/feedback_semantics.md` | feedback 타입 → 엔진 동작 | 초안. `문서`(v0.5.11 **소스 독해**) — `gorse.md` §11 실측과 등급이 다르다 |
 
 `recsys_opensource/README.md` §9(우리가 계속 소유할 것)와 §10(도구별 운영 책임)이 도입 판단에서

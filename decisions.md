@@ -46,6 +46,7 @@
 | **D22** | **surface 1 후보 생성은 Gorse로 시작한다 — surface 1 전용 인스턴스 + 쿼리 item 세대 재생성.** S3은 port로 유지해 소스 교체가 다른 단계에 닿지 않게 한다. **뒤집는 조건**: 출시 후 우리 복제본(`D10`)에서 센 `I_eligible`이 `GOR-X3`이 정할 임계값 `N*`의 **50%**에 닿으면 우리 인덱스(`gorse.md` §12-4의 5)로 전환을 **착수**한다 | `gorse.md` §12-4의 7·9, §12-3. 출시 전엔 `I_eligible`을 알 수 없어(X2) "어느 갈래"가 아니라 "시작과 뒤집는 조건"을 정한 것. `N*` 값 자체는 X3 뒤 여기에 숫자로 적는다. **X3 실측(2026-09-04)**: RAM ≈ 0.42 GB + 8.3 KB × N, 정상 사이클 ≈ 0.4 ms × N(8 jobs). `N*`는 **item** 수이고 `D24` 뒤 item = agent × 최상위 topic이므로 조건은 `I_eligible(agent) × item 배수 ≥ 0.5·N*`로 읽는다. **`N*` 값은 아직 없다** — 제안(분석, 오너 확정 전)은 C11에 있다. **오너(2026-09-07): `N*`는 지금 정하지 않는다** — Closed Beta·Open Beta를 지나 공개 보유 비율·item 배수의 평균이 실측돼야 추론할 수 있다. 그때까지 뒤집는 조건은 `N*`라는 item 수 대신 **그 정의의 두 원천 신호를 직접 본다**(제안, 분석): master RSS가 박스의 50%에 닿거나 정상 사이클이 가시성 목표(C7)의 50%에 닿으면 착수 — `N* = min(N_ram, N_cycle)`을 item으로 환산하지 않고 그대로 읽은 것이라 새 결정이 아니다 | 오너 | 2026-09-03 |
 | **D23** | **S3의 Gorse 쿼리에 topic당 다중 라벨 + 센티넬 쿼리 하나를 더한다**(`gorse.md` §12-4의 1). 확정 topic의 라벨 전부와 `__QUERY__`를 한 쿼리 item에 실어 이웃을 묻는다. 후보 2(`#deep`)·3(샤딩)은 X4 결과로 **2 기각·3 미사용**(오너 2026-09-04); 개선은 `D24` | `gorse.md` §12-5 X1 결과: 센티넬이 M2를 막고, 10⁴ 실측에서 단일 라벨 컷은 깊은 사람 회수 0, 다중 라벨 컷은 100/100이 depth ≥ 3(10⁴ 축소 확인에서). 알려진 결함 — 태그가 아주 많은 깊은 사람은 컷 아래로 간다(depth 4 중 4/35, 전부 태그 11–12개); 그것을 위한 것이 후보 2다 | 실측 | 2026-09-04 |
 | **D24** | **surface 1 인스턴스의 item은 `agent_id#top_topic_id`다** — agent 1명이 보유 최상위 topic마다 item 하나, 태그는 그 최상위 + 그 아래 보유 하위만(`gorse.md` §12-4의 11). S3이 id를 agent로 되돌리고 S4가 agent 기준 dedup. surface 2의 `ItemId = personal_agent_id`(D03)는 그대로 | `gorse.md` §12-5 X6: `√wsum(d)`에서 다른 주제가 빠져 recall 34(정확 계산) → **94**(Gorse), 25만 agent 부분집합, 상위 100의 66명이 최상위 2개 이상 — 폭 중립. 비용은 item 배수(합성 1.88, 실값은 X2(b)에서 "공개 보유 유저의 평균 최상위 topic 수"). topic-api는 모든 topic을 한 최상위 아래에 보인다(`ancestor_path`) | 실측 | 2026-09-04 |
+| **D26** | **목표 유저 풀은 단계적이다 — 1차 20만, 이어 100만, 1천만, 최종 1억까지 대응 가능해야 한다.** 공개 보유 비율·활성 비율·item 배수(`D24`)는 Closed·Open Beta 뒤에 실측하고, 그때까지 계획은 상한(유저 수 = `I_eligible` = `U_active`)으로 한다. 단계별 저장소 구성과 전환 신호는 `storage_sizing.md` §8이 갖는다(`STO-S1`). **단계 경계는 유저 수가 아니라 계측이 정한다** | 오너가 2026-09-07에 정함. `N*`를 지금 정할 수 없는 이유와 같은 뿌리(D22 주석·C11) | 오너 | 2026-09-07 |
 
 ### 저장
 
@@ -296,7 +297,7 @@ D15와 같은 성질이다.
 | `EVT-` | `inbound_event_contract.md` §6 | E1–E9 (rev 2에서 E7–E9 추가) |
 | `SURV-` | `recsys_opensource/README.md` §13 | R1–R11 |
 | `GOR-` | `recsys_opensource/gorse.md` §12-5 · §11-3·§11-4 | **X1–X6**(실험) · 무번호 2건 |
-| `STO-` | `recsys_opensource/storage_sizing.md` §9 | S1–S9 |
+| `STO-` | `recsys_opensource/storage_sizing.md` §9 | S1–S12 (S1은 `D26`으로 닫힘) |
 | `FBK-` | `recsys_opensource/feedback_semantics.md` §8 | F1–F10 |
 
 `gorse.md` §11-1의 **M1–M5는 레지스터가 아니라 실측 발견 목록**이다. rev 1에서 "이름을 바꾼다"고
