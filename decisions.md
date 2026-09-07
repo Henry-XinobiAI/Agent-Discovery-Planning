@@ -297,7 +297,7 @@ D15와 같은 성질이다.
 | `EVT-` | `inbound_event_contract.md` §6 | E1–E9 (rev 2에서 E7–E9 추가) |
 | `SURV-` | `recsys_opensource/README.md` §13 | R1–R11 |
 | `GOR-` | `recsys_opensource/gorse.md` §12-5 · §11-3·§11-4 | **X1–X6**(실험) · 무번호 2건 |
-| `STO-` | `recsys_opensource/storage_sizing.md` §9 | S1–S12 (S1은 `D26`으로 닫힘) |
+| `STO-` | `recsys_opensource/storage_sizing.md` §9 | S1–S13 (S1은 `D26`으로 닫힘) |
 | `FBK-` | `recsys_opensource/feedback_semantics.md` §8 | F1–F10 |
 
 `gorse.md` §11-1의 **M1–M5는 레지스터가 아니라 실측 발견 목록**이다. rev 1에서 "이름을 바꾼다"고

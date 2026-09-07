@@ -239,6 +239,22 @@ managed는 월 $150~360이고 1천만에서도 $1,200~1,500이다.** 거기서 �
 | `cache.r6g.large` | 13.07 GiB | $0.247 | $180 |
 | `cache.r6gd.xlarge` | 26.32 GiB | $0.937 | $684 ← **티어링 최소 크기** |
 
+`문서` 같은 메모리를 EC2로 살 때(도쿄, Linux 온디맨드, Price List API 가격표 2026-09-04 — 재현은 §10). 파드 로컬 사이드카
+안(아래)의 노드 값이다:
+
+| 인스턴스 | vCPU | 메모리 | 시간당 | 월 |
+|---|---|---|---|---|
+| `r6g.large` | 2 | 16 GiB | $0.1216 | **$89** |
+| `r7g.large` | 2 | 16 GiB | $0.1292 | $94 |
+| `m6g.xlarge` | 4 | 16 GiB | $0.1980 | **$145** |
+| `m7g.xlarge` | 4 | 16 GiB | $0.2108 | $154 |
+| `c7g.2xlarge` | 8 | 16 GiB | $0.3638 | $266 |
+| `r6g.2xlarge` | 8 | 64 GiB | $0.4864 | $355 |
+| `r7g.2xlarge` | 8 | 64 GiB | $0.5168 | $377 |
+
+스팟은 가격표에 없다(동적). 6-1의 비율(ElastiCache = EC2의 2.03배)이 이 크기에서도 그대로다 — `cache.m6g.large` 6.4 GiB Valkey
+$111 vs EC2 `r6g.large` 16 GiB $89.
+
 ★ **데이터 티어링에는 하한이 있다.** r6gd의 가장 작은 노드가 26.32 GiB다. 캐시가 그보다 작으면
 6-2에서 가장 싼 managed 안은 **선택지 자체가 아니고**, 비교 대상은 평범한 노드다.
 
@@ -288,6 +304,47 @@ managed 인스턴스를 띄운다 → Gorse 설정을 그쪽으로 돌린다
    ★ **이것이 6-2의 최저가 안을 바꾼다.** 디스크 상주 cache store에서 MongoDB가 제일 싸 보였지만,
    "나중에 managed로"를 전제하면 **PostgreSQL이 더 싸다** — 월 몇십 달러 차이를 출구 비용으로 갚기
    때문이다.
+
+#### cache store는 갈아타기 쉽다 — 그리고 파드 로컬 사이드카로 시작하는 안 (2026-09-07 논의)
+
+`판단`·`실측` **cache store 교체 = Gorse 설정 변경 + 첫 사이클 한 번.** 파생물이라 덤프·복원이 없고, 빈 store에 첫 사이클이 전 item의
+이웃 목록과 digest·시각 키를 전부 다시 쓴다는 것은 `GOR-X3`(빈 store 적재)·`GOR-X5`(digest 없음 = 무조건 재계산)로 확인돼 있다.
+오너의 제안(2026-09-07): **처음에는 Gorse를 좀 큰 파드 하나에 띄우고 cache store를 그 파드 로컬에 두다가, 나중에 managed
+ElastiCache(r6gd 티어링 등)로 옮긴다.** 성립한다 — 아래 조건 셋과 주의 둘 아래에서.
+
+**조건 1 — 로컬도 Redis 계열이어야 한다. MongoDB는 안 된다.** 우리 코드가 store 엔진에 닿는 자리가 정확히 하나 있다: `GOR-X5`가
+확정한 세대 은퇴 절차가 `DELETE /api/item` 뒤 남는 문자열 키 셋을 **cache store에서 직접 `DEL`** 한다(`gorse.md` §12-5 X5 결과 —
+Redis 키 이름은 `cache_table_prefix` + name). MongoDB면 컬렉션 삭제로 코드가 다르고, 로컬 MongoDB → ElastiCache는 엔진을 바꾸는
+이전이라 이 코드가 바뀌며 위 규칙 2에도 어긋난다. 로컬 Valkey → ElastiCache Valkey는 같은 프로토콜, 코드 변경 0. `iac`가 Valkey라
+로컬도 Valkey가 가장 깔끔하다. 성능으로도 같은 답이다 — `GOR-X4`에서 MongoDB의 이웃 조회는 4~36 ms, sqlite 1.1 ms였다.
+
+**조건 2 — 파드 RAM은 둘의 합이다.** master RSS(§7) + Valkey(§8-1). `판단`:
+
+| 단계 | master RSS | surface 1 캐시 (`S10`) | surface 2 캐시 | 합 | 노드 (위 EC2 표) |
+|---|---|---|---|---|---|
+| 20만 | 3.5 GB | 4~6 GB (id 64 B 미만이면 1.5~2.5) | 1.1 GB | **9~11 GB** | 16 GiB급 하나 — `r6g.large` $89 · `m6g.xlarge` $145 |
+| 100만 | 16 GB | 19~30 GB (압축 id면 8~12) | 5.5 GB | **40~52 GB** | 64 GiB급, 빠듯 — `r6g.2xlarge` $355. **여기가 로컬 구성의 끝** |
+
+노드는 메모리가 아니라 **vCPU로 고른다**. X3의 사이클(item당 0.4 ms)은 8 jobs 값이고 Push는 코어 수에 거의 선형이라, `r6g.large`
+2 vCPU면 20만 단계의 정상 사이클이 2.5분 → 대략 6~10분이다(첫 사이클은 저장 지배라 코어 영향이 작다). 가시성 목표(C7)가 십 분
+단위면 $89, 더 짧게 원하면 $145. `S12`(id 64 B 미만)가 여기서도 한 등급을 좌우한다.
+
+**조건 3 — 영속화를 끈다.** RDB·AOF 없음(fork 시 메모리 2배 문제도 사라진다), `emptyDir`. **파드 재시작 = 재계산**으로 받아들인다.
+PVC는 6-4의 AZ 묶임만 얻고 이득이 없다.
+
+**주의 1 — 전환 중 빈 창.** 새 store를 가리킨 순간부터 첫 사이클이 끝날 때까지 이웃 조회가 비어 있다 — 20만 단계 6~19분, 100만
+단계 30~95분(첫 사이클 1~3 ms/item). 그동안은 `candidates_fallback`(`D20`)이 받는다. 창을 없애려면 **blue/green**: 같은 data store를
+보는 Gorse 배포를 하나 더 띄워 새 cache store에 첫 사이클을 끝낸 뒤, 우리 API의 Gorse 주소만 바꾸고 옛것을 내린다. **master 둘이 한
+data store를 보는 동안의 부작용은 미확인**(`S13`) — master는 data store에 거의 읽기만 하지만 TTL 정리 쓰기가 있다.
+
+**주의 2 — 재시작마다 재계산.** 로컬 store는 파드와 수명이 같으니 배포·노드 교체·OOM마다 첫 사이클을 다시 낸다. 1차에서는 십 분
+남짓이고 폴백이 있어 괜찮다. **2차 후반에 한 시간 넘게 비는 일이 잦아지면 그것이 managed로 옮기는 신호**다 — 아래 "넘어가는 시점"의
+재계산 시간 트리거가 이 구성에서는 문자 그대로 파드 재시작 비용으로 나타난다.
+
+`판단` **돈으로는 어느 쪽도 결정적이지 않다.** 1차에서 로컬은 위 노드 하나($89~145)가 전부이고, managed는 Valkey `cache.m6g.large`
+$111 + Gorse 파드를 기존 노드에 얹는 값이다. 차이는 월 수십 달러. 로컬을 고르는 이유는 **움직이는 부품이 하나 줄고, 이전이 재계산
+한 번이라 잃을 게 없다**는 것이고, 값은 재시작 = 재계산이다. 사다리는 **1차 로컬 Valkey 사이드카 → 2차 어딘가에서 managed Valkey →
+1천만에서 r6gd 티어링**, 각 단이 설정 변경 + 재계산 한 번, 코드는 그대로다.
 
 #### 넘어가는 시점은 금액이 아니다
 
@@ -440,8 +497,8 @@ dev는 모든 단계에서 기존 MySQL·Valkey를 공유한다(6-6). prod는 �
 
 | 단계 | data store (MySQL) | cache store (Valkey) | Gorse master 파드 | 월 (인스턴스) | 비고 |
 |---|---|---|---|---|---|
-| **20만** | `db.t4g.small` Single-AZ, $36.5 | `cache.m6g.large` 6.4 GiB, ~$111 | surface 1 4 GB · surface 2 소형 | **~$150** | `cache.t4g.small`(1.37 GiB)은 surface 1 캐시 때문에 1차부터 모자란다 — 6-6의 $94 안을 이것으로 바꾼다 |
-| **100만** | `t4g.small`~`medium`, $36.5~73 | `cache.r6g.xlarge` 26 GiB, ~$288 | surface 1 16 GB | **~$325~360** | 코드 변경 0 — 노드 교체 + 재계산 한 번(6-5) |
+| **20만** | `db.t4g.small` Single-AZ, $36.5 | **(a)** managed `cache.m6g.large` 6.4 GiB, ~$111 · **(b)** 파드 로컬 Valkey 사이드카(6-5), 노드 `r6g.large` $89~`m6g.xlarge` $145에 Gorse까지 | (a) surface 1 4 GB · surface 2 소형 (b) 파드 9~11 GB | (a) **~$150** (b) **~$125~180** | `cache.t4g.small`(1.37 GiB)은 surface 1 캐시 때문에 1차부터 모자란다 — 6-6의 $94 안을 이것으로 바꾼다. (b)는 재시작 = 재계산, 로컬도 Valkey여야 한다(6-5) |
+| **100만** | `t4g.small`~`medium`, $36.5~73 | `cache.r6g.xlarge` 26 GiB, ~$288 — (b)로 왔다면 여기서 managed로(6-5) | surface 1 16 GB | **~$325~360** | 코드 변경 0 — 노드 교체 + 재계산 한 번(6-5). 로컬은 64 GiB 파드가 끝이다 |
 | **전환** | — | — | surface 1 파드 제거 | — | **`D22` 발동**: surface 1 후보를 우리 인덱스로(`gorse.md` §12-4의 5). 신호는 8-3 |
 | **1천만** | `db.r6g.large`급 또는 Aurora 검토 (feedback 2억 행) | `cache.r6gd` 티어링, 110 GB, ~$1,200(Valkey) | surface 2만 | **~$1,400~1,700** | **활성 창 projection 필수** — 전원 재계산이 신선도 창을 넘는다(§7). r6gd는 도쿄만(§3-1, `S5`) |
 | **1억** | Aurora $3,000~5,000 (§6-2) | 티어링 1.1 TB $5,900 (§4) 또는 활성 창으로 1천만 규모 유지 | surface 2만 | §4 | 병목은 저장소가 아니라 인구(§7). §2–§5의 상한 비교가 여기다 |
@@ -469,7 +526,7 @@ dev는 모든 단계에서 기존 MySQL·Valkey를 공유한다(6-6). prod는 �
 3. **전환 신호를 첫날부터 계측** — `I_eligible`(주간, `gorse.md` X2(b)), item 수, master RSS, 정상 사이클 길이, cache store 메모리,
    `U_active`. 8-3의 세 신호가 전부 이 여섯 숫자다.
 4. **Gorse store에 원본을 넣지 않는다**(6-5의 규칙 1) — 매 단계의 이전 비용이 "재계산 한 번"으로 남는 조건.
-5. **엔진은 managed 대응물이 같은 것**(6-5의 규칙 2) — MySQL·Valkey는 이미 그렇다. DocumentDB·MongoDB를 끼우지 않는다.
+5. **엔진은 managed 대응물이 같은 것**(6-5의 규칙 2) — MySQL·Valkey는 이미 그렇다. DocumentDB·MongoDB를 끼우지 않는다 — **파드 로컬로 시작해도 Valkey**다(6-5: X5의 `DEL` 절차가 엔진에 닿는 유일한 자리).
 
 ### 8-5 이 계획의 빈 실측
 
@@ -479,6 +536,7 @@ dev는 모든 단계에서 기존 MySQL·Valkey를 공유한다(6-6). prod는 �
 | MySQL data store가 5×10⁵ item에서 REST를 막지 않는가 | 1차·2차 공통(sqlite는 막았다 — `GOR-X3`) | `S11` |
 | 공유 Valkey의 `maxmemory-policy`·사용률 | dev 공유의 안전 | `S8` |
 | surface 2 유저 추천 재계산 시간 | 3번 전환 시점 | `SURV-R3`·`README.md` §11 |
+| blue/green 전환 중 master 둘이 한 data store를 보는 동안의 부작용 | 빈 창 없는 store 교체 | `S13` |
 
 ## 9. 열린 항목
 
@@ -498,6 +556,7 @@ dev는 모든 단계에서 기존 MySQL·Valkey를 공유한다(6-6). prod는 �
 | **S10** | Redis/Valkey cache store에서 surface 1 이웃 캐시의 **item당 크기**와 정상 사이클의 확인 3회 읽기 비용 | 실측 (`GOR-X3` store 변인의 Redis 행, 미실행) | **§8 1차·2차 노드 크기가 여기 걸린다.** 지금 값은 `판단`(10~16 KB/item, id 64 B 미만이면 4~6 KB). 하네스는 `gorse.md` §12-5 X3에 인라인 |
 | **S11** | MySQL data store가 5×10⁵ item에서 REST를 막지 않는가 | 실측 | sqlite는 분 단위로 막았다(`GOR-X3`). MySQL은 다를 것으로 보지만 미측정 — §8 1차·2차 공통 전제 |
 | **S12** | surface 1 item id를 **64 B 미만**으로 하는가 (`D24`의 `agent_id#top_topic_id`는 UUID 둘이면 ~73 B) | **결정** (`decisions.md`, D24 보완) | id 1바이트 = 80 × N 바이트. Redis listpack 임계를 넘으면 건당 2~3배(§8-1). S3의 id 역매핑에 닿으므로 1차 전에 정한다 |
+| **S13** | cache store를 blue/green으로 바꿀 때 **master 둘이 같은 data store를 보는 동안** 부작용이 있는가(TTL 정리 쓰기·GC) | 실측 | 6-5 "갈아타기" 주의 1. 없으면 빈 창 없이 교체 가능. 확인 전엔 짧은 창 + `candidates_fallback`로 간다 |
 
 **S9 상세 — Gorse v0.5.11 `storage/cache/mongodb.go`·`storage/data/mongodb.go`가 쓰는 연산 vs AWS 문서
 [Supported MongoDB APIs](https://docs.aws.amazon.com/documentdb/latest/developerguide/mongo-apis.html)·[Text search](https://docs.aws.amazon.com/documentdb/latest/developerguide/text-search.html)** (2026-09-04 열람):
@@ -541,6 +600,9 @@ curl -s "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonElastiCac
          | select(.value.attributes.instanceType == "cache.r6g.xlarge")
          | "\(.value.attributes.instanceType) \(.value.attributes.cacheEngine) \(.value.attributes.memory) $\($od[.key])"'
 ```
+
+EC2(6-5의 16·64 GiB 표)는 `AmazonEC2/current/ap-northeast-1/index.json`(~450 MB)에서 `operatingSystem=Linux` · `tenancy=Shared` ·
+`preInstalledSw=NA` · `capacitystatus=Used`로 걸러 `instanceType`별 OnDemand `pricePerUnit`을 읽는다(2026-09-07 조회, 가격표 게시 2026-09-04).
 
 Aurora와 DocumentDB는 같은 형태로 `AmazonRDS` · `AmazonDocDB` 가격표를 읽고 `usagetype`으로 고른다 —
 `APN1-Aurora:StorageUsage` · `:StorageIOUsage` · `:IO-OptimizedStorageUsage`, DocumentDB는
