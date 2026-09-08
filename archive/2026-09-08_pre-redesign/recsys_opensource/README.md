@@ -24,7 +24,7 @@
 | off-policy 평가 | [off_policy.md](off_policy.md) | 초안 | §9의 노출 계약을 **이 문서가 소유** |
 | learned reranking | [ranking.md](ranking.md) | 초안 | §7의 rerank 층 |
 | 집중도·공급 지표 | [concentration_metrics.md](concentration_metrics.md) | 초안 | §9의 hard capacity·집중도 |
-| **저장소 규모·비용** | [storage_sizing.md](storage_sizing.md) | 초안 | §11의 카디널리티에 AWS 단가(도쿄·서울)를 붙이고 managed 대 자체 운영을 비교한다. **`gorse.md` §6-2가 비워 둔 칸** |
+| **저장소 규모·비용** | [storage_sizing.md](storage_sizing.md) | 초안 | §11의 카디널리티에 AWS 단가(도쿄·서울)를 붙이고 managed 대 자체 운영을 비교한다. **오너의 단계 목표(20만 → 100만 → 1천만 → 1억, 2026-09-07)에 따른 단계별 구성과 전환 신호는 그 문서 §8.** **`gorse.md` §6-2가 비워 둔 칸** |
 | **feedback 의미론** | [feedback_semantics.md](feedback_semantics.md) | 초안 | §4의 observed behavior를 실제로 엔진에 넣을 때. **`gorse.md` §7-5가 멈춘 지점**이고 `inbound_event_contract.md` §3-4의 프로젝션 규칙 근거 |
 | **retrieval·검색 인덱스** | **없음** | **빈칸** | §7-5. 이전 판에서 "현재 topic-api가 유계 후보를 만들므로 불필요"로 배제했으나 그 전제가 열렸다 |
 
@@ -369,7 +369,8 @@ network auth, schema sync, retry, readiness와 version 호환 책임이 생긴�
 
 이 절은 크기를 센다. 그 크기에 AWS 단가를 붙이고 backend 넷을 비교한 것은
 [`storage_sizing.md`](storage_sizing.md)이고, 그 문서의 결론은 **1억 전제에서 병목이 저장소
-비용이 아니라 아래의 재계산 시간**이라는 것이다.
+비용이 아니라 아래의 재계산 시간**이라는 것이다. 오너가 목표를 단계(20만 → 100만 → 1천만 → 1억)로 정한 뒤(2026-09-07)로는
+그 문서 §8이 단계별 구성과 전환 신호를 맡는다.
 
 ```text
 U_registered   전체 가입자                          최대 100,000,000
@@ -471,7 +472,7 @@ factor 64, float32:  user 1억 25.6 GB + item 1억 25.6 GB = 51.2 GB (runtime ov
 | R5 | 두 surface의 피드백을 한 스트림으로 모으는 방법 | 설계 | 미설계 |
 | R6 | retrieval 인덱스 직접 소유 시의 비교표 (§7-5) | 조사 | 빈칸 |
 | R7 | 상위 라벨 가중을 0으로 둘 때 recall 손실 | 측정 | §7-3 판단의 검증 |
-| **R8** | `U_active`·`I_eligible` 목표값 | 제품·측정 | `storage_sizing.md` 전체의 전제이자 §11 병목의 입력. 그 문서 `STO-S1`과 같은 질문이고 여기 롤업이 없었다 |
+| **R8** | `U_active`·`I_eligible` 목표값 | 제품·측정 | `storage_sizing.md` 전체의 전제이자 §11 병목의 입력. 그 문서 `STO-S1`과 같은 질문 — **유저 풀 단계는 오너가 정했다(2026-09-07: 20만 → 100만 → 1천만 → 1억)**, 비율(공개 보유·활성·item 배수)은 Closed·Open Beta 뒤 실측 |
 | **R9** | 재추천 정책 — 감쇠 상수로 충분한가, 쿨다운·시간 감쇠가 필요한가 | 제품 결정 | `FBK-F1`. `D18`이 "우리 것"까지 정했고 형태는 열려 있다 |
 | **R10** | `negative`에 무엇을 넣을 것인가 | 제품 결정 | `FBK-F2`. 현재 후보로는 **공집합**일 수 있다 — owner 쪽 행동 이벤트가 없기 때문(`decisions.md` §3-C8) |
 | **R11** | Gorse backend로 ClickHouse를 두는 선택지 | 조사 | `FBK-F8`. `storage_sizing.md` §5의 후보에 없던 축이고, 채택하면 적재 의미론 전체가 달라진다 |
