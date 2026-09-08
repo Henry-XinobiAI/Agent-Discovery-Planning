@@ -37,6 +37,7 @@ user ──대화──▶ personal agent (bourbon-agent)
 - **persona / preference 추출**은 bourbon-agent가 한다. 추출되면 이벤트를 던지고 topic-api가 받아 topic에 grounding한다. topic-api도 "이 유저에 이 topic이 매핑됐다"를 이벤트로 던져 줄 수 있다.
 - **topic별 visibility**는 topic-api가 유저에게 직접 노출해 관리한다. 값은 네 가지다: `public`, `friends`, `private`, `hidden`. `hidden`은 삭제 대신 숨기기로, 본인 외 어느 목록에도 나오지 않는다. 타인이 이 유저의 agent와 대화할 때, agent는 두 사람의 관계와 topic의 visibility로 기억과 preference의 접근을 제어한다.
 - **friend 관계**는 요청과 수락으로 성립한다. bourbon-api가 관리하고, 성립·해제 시 `bourbon.friendship_changed` 이벤트를 **이미 발행한다** (`accepted` / `removed`, 두 user id를 정렬한 canonical pair). 친구 목록 조회 route도 있고, 한 유저의 친구 상한은 5,000이다.
+- **default는 private다.** 새로 생긴 topic도, agent 자체도 private로 시작하고, 유저가 명시적으로 `public`이나 `friends`로 바꾼다. **다시 private로 돌아갈 수도 있다.** 그러므로 추천 대상은 "유저가 열어 둔 것"뿐이고, 닫히면 즉시 빠져야 한다(§3-2).
 - **agent visibility**는 `public` / `private`다. private면 다른 유저와 대화할 수 없다. 지금은 public topic이 하나라도 있으면 agent도 public, 모두 private면 agent도 private로 두지만, **이 규칙은 분리될 수 있다.** 그러므로 topic에서 유도하지 말고 **받은 값을 그대로 저장**해야 한다.
 - **성숙도**는 topic 단위와 agent 단위 둘이 있다. 둘 다 전용 컴포넌트가 아직 없다. topic 성숙도는 topic-api가 임시로 단순 계산해 넣고 있고, agent 성숙도는 곧 들어올 예정이다. 추천에서는 **랭커 feature 하나**로 두고, 값의 출처가 바뀌어도 자리는 유지되게 설계한다.
 
@@ -59,7 +60,7 @@ topic-api의 두 prefix 패턴을 그대로 따른다.
 | 타입 | 호출자 | 면 | 요청자 식별 |
 |---|---|---|---|
 | ① 명시 요청 | bourbon-agent | 내부 (`/api/internal/svc/agent-discovery/…`) | 요청 body나 경로의 `user_id`. 내부 면은 edge-auth를 거치지 않으므로 **`x-user-id` 헤더를 읽지 않는다** |
-| ②, ③ 탐색 탭 | 클라이언트 (아직 미확정, 클라이언트 직접 호출 가능) | 클라이언트 (`/api/svc/agent-discovery/…`) | edge-auth가 채운 `x-user-id` |
+| ②, ③ 탐색 탭 | 클라이언트 직접 호출 (오너 2026-09-08: topic-api가 `/api/svc/topic`을 열어 둔 것과 같은 형태) | 클라이언트 (`/api/svc/agent-discovery/…`) | edge-auth가 채운 `x-user-id` |
 
 두 면이 같은 도메인 코드를 호출하고, 요청자 id가 어디서 오는지만 다르다.
 
@@ -83,18 +84,17 @@ topic-api의 두 prefix 패턴을 그대로 따른다.
 2. 그 다음 일부만 가진 agent가 나온다. 많이 가진 쪽이 먼저다.
 3. 같은 커버리지 안에서는 topic별 점수(preference 강도, 성숙도)와 agent 성숙도로 순서를 정한다.
 
-즉 1차 정렬 키는 **커버한 topic 수**이고, 2차 키가 점수다. 뽑히는 topic은 하나일 수도, 두세 개일 수도 있다. 네 개 이상이면 커버리지 격자가 커지므로 상한을 둔다(예: 3).
+즉 1차 정렬 키는 **커버한 topic 수**이고, 2차 키가 점수다. 뽑히는 topic은 하나일 수도, 두세 개일 수도 있다. **상한은 우선 3개**(오너 2026-09-08). 네 개 이상이면 커버리지 격자가 커지고 LLM 프롬프트도 흐려지므로, 3개를 넘게 뽑히면 점수 상위 3개만 쓴다.
 
 text → topic 단계는 우리 코드에 이미 있는 흐름(LLM으로 개념 묶음을 만들고, 묶음마다 topic-api 검색을 해 하나로 확정)을 쓴다. 확정된 topic이 하나도 없으면 "요청이 모호함"(4xx)이고, topic-api나 LLM이 응답하지 않아 확정을 못 한 것은 "우리가 답하지 못함"(5xx)이다. 이 둘을 섞지 않는다.
 
 ### 2-2. 타입 ②: 내 topic으로 대화해 볼 타인 agent
 
-topic-api가 이미 grounding해 둔 요청자의 topic만 쓴다. LLM도 topic-api 호출도 없다. 목록의 모양은 미확정이다(§8). 두 후보가 있다.
+topic-api가 이미 grounding해 둔 요청자의 topic만 쓴다. LLM도 topic-api 호출도 없다. **목록은 topic별 묶음**이다(오너 2026-09-08): "camping으로 대화해 볼 agent N명", "hand-drip coffee로 N명" 같이 요청자의 topic 하나가 섹션 하나다.
 
-- **topic별 묶음**: "camping으로 대화해 볼 agent 5명", "hand-drip coffee로 5명" 같이 topic 단위 섹션.
-- **하나로 합친 목록**: 요청자의 topic 여러 개를 한 질의로 보고 타입 ①과 같은 커버리지 정렬.
+따라서 타입 ②는 커버리지 정렬이 없다. topic 하나에 대해 그 topic을 가진 agent를 점수 순으로 내는 **단일 topic 조회**를 요청자의 topic 수만큼 한다. 같은 agent가 여러 섹션에 나올 수 있고, 그것은 정상이다. 요청자의 topic이 많으면(수십 개) 섹션 순서와 페이지가 필요하다: 요청자 쪽 preference 점수가 높은 topic부터, 섹션당 N명, 섹션 단위 페이지.
 
-계산은 타입 ①의 뒤 절반과 같다. 앞 절반(text → topic)만 없다.
+계산은 타입 ①의 "topic 하나 → agent 목록" 조회와 같다. 색인은 공유한다.
 
 ### 2-3. 타입 ③: 비슷한 사람들이 좋아한, 내가 좋아할 만한
 
@@ -122,7 +122,7 @@ topic-api가 이미 grounding해 둔 요청자의 topic만 쓴다. LLM도 topic-
 
 ### 3-1. 규칙
 
-추천은 public을 우선하되, 궁극적으로 friends까지 포함한다(오너). 규칙은 이렇다.
+추천은 public을 우선하되 friends까지 포함한다(오너). visibility는 이미 유저가 고르는 값이므로 **friends tier는 처음부터 후보에 든다**: friends로 열어 둔 유저는 친구에게 보일 것을 기대한다. 규칙은 이렇다.
 
 - **agent visibility가 private면 어떤 추천에도 나오지 않는다.** topic 상태와 무관하게 받은 값으로 판정한다.
 - **topic이 `public`이면** 모든 요청자에게 후보다.
@@ -132,7 +132,16 @@ topic-api가 이미 grounding해 둔 요청자의 topic만 쓴다. LLM도 topic-
 - **fail-closed**: 친구 목록을 못 가져오면 friends tier는 후보에서 빠지고 public만 답한다. 에러가 아니라 축소된 답이다. topic-api와 같은 계약이다.
 - **구별 불가**: 응답은 "friends topic이 있는데 안 보여줌"과 "그런 topic 없음"을 같게 만든다. 가려진 개수, 가려졌다는 표시를 넣지 않는다.
 
-### 3-2. 저장 모양에 주는 영향
+### 3-2. 저장 모양에 주는 영향 — 회귀(닫힘)를 먼저 설계한다
+
+default가 private이고 언제든 private로 돌아가므로, 저장소에는 **"열려 있는 (topic, agent) row만 있다"**가 불변식이다. 이벤트는 "열림"보다 "닫힘"을 놓치면 안 된다.
+
+- topic이 `public`/`friends` → `private`/`hidden`으로 바뀌면 해당 row를 **지운다.** 갱신이 아니라 삭제다.
+- agent가 `private`로 바뀌면 그 agent의 row를 **모두 지운다.**
+- 사전 계산 결과(타입 ③의 유저별 top-K, 인기도 순위)는 계산 시점의 스냅샷이다. 그 안에 있는 agent가 그 사이에 닫혔을 수 있으므로 **응답 직전에 현재 row 존재 여부로 다시 거른다.** 사전 계산은 후보를 좁힐 뿐 노출을 허가하지 않는다.
+- 이벤트를 놓친 경우를 위해 주기적 대조(topic-api의 public·friends 목록과 우리 row를 맞춤)를 둔다. 놓친 "열림"은 늦게 나타나는 손해지만, 놓친 "닫힘"은 유저가 닫은 것을 계속 보여주는 사고다.
+
+### 3-3. 저장 모양
 
 후보 row는 `(topic_id, agent_id, tier ∈ {public, friends}, 점수…)`로 tier를 같이 갖는다. 요청 시:
 
@@ -247,7 +256,8 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 | 유저 topic 수 | 분포(예: 중앙 8, 긴 꼬리 40) | topic-api 실데이터 분포가 있으면 그것으로 교체 |
 | topic 선택 | 군집 분포에서 Zipf 표본 + 소량 무작위 | 인기 topic과 희귀 topic이 같이 있어야 커버리지 정렬이 시험됨 |
 | topic 점수·성숙도 | 유저별 분포 | 랭커 2차 키 |
-| visibility | 예: public 70 / friends 20 / private 10 (topic별) | friends 필터가 결과에 실제로 영향을 주는 비율 |
+| visibility | **default private에서 유저가 연 비율**로 생성. 예: 유저의 60%가 하나 이상 열고, 연 유저의 topic 중 public 40 / friends 20 / private 40. 비율은 베타 뒤 실측으로 교체 | 추천 가능 집합이 전체보다 훨씬 작다는 현실을 반영. 이 비율이 콜드스타트와 friends 필터 효과를 좌우 |
+| 열림·닫힘 이벤트 열 | 생성 뒤 일부 topic을 닫는 이벤트 열을 함께 생성 | §3-2 삭제 경로와 응답 직전 재확인이 실제로 동작하는지 시험 |
 | agent visibility | 규칙 그대로 + 소량 예외 | 규칙이 분리될 수 있음을 시험 |
 | friend 그래프 | 군집 내 확률 높게, 평균 degree 30, 상한 5,000 | friends tier 후보가 요청자마다 달라지는 정도 |
 | 상호작용 로그 | 잠재 친화도(요청자 군집 × agent 주인 군집) + agent 인기도 + 노이즈로 (viewer, agent, 시각, turns) 생성 | CF 정답. 노이즈 비율을 바꿔 CF가 무너지는 지점을 본다 |
@@ -284,28 +294,28 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 
 ## 8. 열린 질문
 
-제품 판단이 필요한 것.
+2026-09-08에 답이 난 것: 타입 ②는 topic별 묶음(§2-2), 타입 ① topic 상한 3(§2-1), friends tier는 처음부터 후보(§3-1, default private·회귀 가능이 전제), 탐색 탭은 클라이언트가 `/api/svc/agent-discovery`로 직접 호출(§1-3).
 
-1. **타입 ②의 목록 모양**: topic별 묶음인가, 하나로 합친 목록인가 (§2-2).
-2. **타입 ① topic 상한**: 2개, 3개, 그 이상? 커버리지 격자 크기와 LLM 프롬프트가 여기에 걸린다.
-3. **friends 포함 시점**: 처음부터 friends tier를 후보에 넣나, public만으로 시작하고 나중에 여나. 저장 모양은 둘 다 수용하지만 이벤트 요청 순서가 달라진다.
-4. **탐색 탭 호출 경로**: 클라이언트 직접인가, bourbon-api 경유인가. 클라이언트 면의 prefix와 edge-auth 배치가 여기에 걸린다.
-5. **인기도 정의**: 최근 며칠, 대화 시작만인가 지속도 보나, 신규 agent 부스트가 있나.
-6. **"맞음/안 맞음" 표시**: 넣는다면 어떤 축인가(겹치는 topic, 성숙도, 비슷한 사람 수).
-7. **상호작용 이벤트의 발행 주체**: 대화 시작·지속을 bourbon-api가 내나 bourbon-agent가 내나. 어느 쪽이 대화 세션을 소유하는지에 따른다.
-8. **명시 피드백**: 좋아요/숨기기가 제품에 있나. 부정 신호의 유일한 출처다.
+제품 판단이 남은 것.
 
-기술 판단이 필요한 것.
+1. **인기도 정의**: 최근 며칠, 대화 시작만인가 지속도 보나, 신규 agent 부스트가 있나.
+2. **"맞음/안 맞음" 표시**: 넣는다면 어떤 축인가(겹치는 topic, 성숙도, 비슷한 사람 수).
+3. **상호작용 이벤트의 발행 주체**: 대화 시작·지속을 bourbon-api가 내나 bourbon-agent가 내나. 어느 쪽이 대화 세션을 소유하는지에 따른다.
+4. **명시 피드백**: 좋아요/숨기기가 제품에 있나. 부정 신호의 유일한 출처다.
+5. **타입 ② 섹션 크기와 페이지**: 섹션당 몇 명, 한 화면에 몇 섹션.
 
-9. 타입 ③ CF의 첫 구현을 아이템 기반 이웃으로 하나, ALS로 하나 (합성 데이터에서 둘 다 재 본다).
-10. friends(R)를 요청 시 조회하나 미러하나 (topic-api는 조회+TTL 캐시).
-11. A안의 엔진을 Gorse(서비스형)로 하나 `implicit`/LightFM(라이브러리형)으로 하나. 둘 다 재려면 시간이 두 배다.
+기술 판단이 남은 것.
+
+6. 타입 ③ CF의 첫 구현을 아이템 기반 이웃으로 하나, ALS로 하나 (합성 데이터에서 둘 다 재 본다).
+7. friends(R)를 요청 시 조회하나 미러하나 (topic-api는 조회+TTL 캐시).
+8. A안의 엔진을 Gorse(서비스형)로 하나 `implicit`/LightFM(라이브러리형)으로 하나. 둘 다 재려면 시간이 두 배다.
+9. 주기적 대조(§3-2)의 주기와 방식: topic-api 전수 조회인가, 변경분 조회인가.
 
 ---
 
 ## 9. 다음 할 일
 
-1. §8의 1~4에 오너 답 받기 (나머지는 진행 중 결정 가능).
+1. ~~§8의 1~4에 오너 답 받기~~ 2026-09-08 완료.
 2. 공통 계약 정의: 요청·응답 스키마(세 타입), 후보 소스 인터페이스, 랭커 feature 목록, 결정 로그 스키마.
 3. §4-2 이벤트 정의서 작성 → topic-api, bourbon-api, bourbon-agent에 요청 또는 PR.
 4. 합성 데이터 생성기 구현 (§6-2), 10만 유저 생성.
