@@ -73,6 +73,8 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
 
 **가정**: 요청자가 이미 대화를 시작한 agent는 for-you에서 제외한다(제품이 다르게 정하면 바꾼다). 합성 정답도 같은 가정을 쓴다.
 
+**사전 계산이 없는 요청자**(오래 활동하지 않아 배치 대상이 아니었던 유저, 또는 신규 유저 — R19): 인기도와 content 소스만으로 `limit`을 채운 **완전한 목록**을 답한다. `basis`가 `popularity` 또는 `content`가 되고, `degraded`는 비어 있다. 이 요청이 `agents.last_active_at`을 갱신해 다음 배치에 포함된다.
+
 ### 2-3-1. ②③의 내부 미러
 
 `GET /api/internal/svc/agent-discovery/users/{user_id}/discover/by-topic`, `…/by-topic/{topic_id}`, `…/for-you`. 요청자가 경로의 `user_id`라는 것만 다르고 쿼리·응답은 같다.
@@ -180,10 +182,10 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
 
 | 값 | 뜻 |
 |---|---|
-| `friends_unavailable` | 친구 목록을 못 읽어 friends tier를 후보에서 뺐다. public만 답했다 |
+| `friends_unavailable` | 친구 집합을 못 읽어 friends tier를 후보에서 뺐다. public만 답했다. R17·R18 배치에서는 실제로 나오지 않는 예약 값이다 — §5 불변식 3 |
 | `expansion_partial` | 타입 ①: 개념 확장 일부가 답을 못 받아 topic이 덜 뽑혔을 수 있다 |
 | `hydration_partial` | 라벨·owner_note를 다 못 채웠다 |
-| `stale_precompute` | 타입 ③: 사전 계산 결과가 갱신 주기를 넘겼다 |
+| `stale_precompute` | 타입 ③: 사전 계산 결과가 **있는데** 갱신 주기를 넘겼다. 항목이 없어서 인기도·content로 답한 경우(R19)는 이 값이 아니다 — `basis`가 그것을 말한다 |
 
 "몇 개가 가려졌다"는 어떤 형태로도 응답에 없다(§5).
 
@@ -232,9 +234,10 @@ class CandidateSource(Protocol):
     async def candidates(self, query: TopicQuery | UserQuery) -> Sequence[SourceHit]: ...
 ```
 
-- 소스는 **tier를 반드시 붙인다.** tier를 모르는 소스(예: 엔진이 준 agent 목록)는 뒤의 필터가 공개된 row 저장소에서 tier를 조회해 붙이고, row가 없으면 버린다. 즉 엔진 결과는 후보를 좁힐 뿐 노출을 허가하지 못한다.
+- **공개된 row 저장소를 읽는 소스는 visibility 술어를 쿼리 안에 넣는다**(R17): `tier = 'public' OR (tier = 'friends' AND owner_user_id = ANY(friends(요청자)))`. `topic_index`, `content_similarity`, PostgreSQL `popularity`, B안 이웃 테이블이 여기 든다. 결과는 tier가 이미 붙어 있고 필터에서 빠지는 것이 없으므로 **`limit`만큼만(응답 직전 재확인에서 빠질 몫만 여유를 두고) 읽는다.** 친구 집합은 미러(§6 `friends`)에서 배열로 넘기거나 조인한다.
+- **요청자별 사전 계산**(`cf_item`, 라이브러리형 `cf_engine`의 배치)은 배치 시점의 요청자 친구 집합으로 같은 술어를 적용해 top-K를 뽑는다. 그래도 스냅샷이므로 응답 직전 재확인(§5 불변식 4)은 남는다.
+- **tier를 모르는 소스만 넉넉히 반환한다**(예: 3배): 외부 엔진(Gorse)이 준 agent 목록처럼 술어를 넣을 수 없는 곳. 뒤의 필터가 공개된 row 저장소에서 tier를 조회해 붙이고, row가 없으면 버리고, 부족하면 파이프라인이 한 번 더 요청한다. 이 재요청 비용은 그 소스의 비용으로 비교(재설계 §6)에 기록한다. 엔진 결과는 후보를 좁힐 뿐 노출을 허가하지 못한다.
 - 한 타입이 소스 여러 개를 쓸 수 있다. 타입 ③은 `popularity + content_similarity + cf_*`.
-- 소스는 `limit`보다 넉넉히 반환한다(필터에서 빠지는 양을 감안, 예: 3배). 부족하면 파이프라인이 한 번 더 넉넉히 요청한다.
 - A안은 `cf_engine`(Gorse 등)과 `topic_index`(OpenSearch 또는 B의 인덱스), B안은 `topic_index`, `popularity`, `content_similarity`, `cf_item`을 구현한다. 혼합은 소스 조합 설정이다.
 
 ### 4-3. visibility 필터
@@ -246,7 +249,7 @@ class VisibilityFilter(Protocol):
 Degradation = frozenset[str]   # §3-4의 값 집합. 비어 있으면 완전한 답
 ```
 
-규칙은 §5. 구현은 하나다. 두 안이 공유하고, 비교에서 같은 코드를 쓴다.
+규칙은 §5. 구현은 하나다. 두 안이 공유하고, 비교에서 같은 코드를 쓴다. 역할은 둘이다: 술어를 이미 적용한 hit(`tier`가 있음)은 그대로 통과시키고, `tier = None`인 hit에는 `open_topic_rows`를 소유자 키로 조회해 tier를 붙이며(friends row는 요청자가 친구일 때만) row가 없으면 버린다. 친구 집합을 읽지 못한 요청의 처리는 §5 불변식 3.
 
 ### 4-4. 랭커
 
@@ -272,8 +275,8 @@ class Ranker(Protocol):
 ## 5. 불변식 — 두 안 모두, 언제나
 
 1. **저장소에는 공개된 row만 있다.** `(topic_id, owner, tier ∈ {public, friends})`. private·hidden은 들어오지 않고, 비공개로 되돌리면 지운다. agent가 private이면 그 소유자의 row 전부를 지운다.
-2. **friends row는 요청자가 소유자의 친구일 때만 통과한다.** 친구 여부는 bourbon-api가 기준이다.
-3. **친구 목록을 못 읽으면 friends tier는 빠진다(fail-closed).** 응답은 `degraded: ["friends_unavailable"]`, 상태는 200.
+2. **friends row는 요청자가 소유자의 친구일 때만 통과한다.** 기준은 bourbon-api이고, 판정은 `bourbon.friendship_changed`로 미러한 친구 집합으로 후보 조회 쿼리 안에서 한다(R17).
+3. **친구 집합을 못 읽으면 friends tier는 빠진다(fail-closed).** 응답은 `degraded: ["friends_unavailable"]`, 상태는 200. R17·R18 배치에서는 친구 집합이 `open_topic_rows`와 같은 PostgreSQL에 있어 "row는 읽었는데 친구 집합만 못 읽는" 경우가 없고 그 장애는 503이다. 이 항은 계약에 예약된 규칙으로 남긴다 — 친구 집합을 다른 저장소로 옮기는 날 다시 살아난다.
 4. **사전 계산 결과는 노출을 허가하지 않는다.** 응답 직전에 현재 공개된 row로 다시 거른다.
 5. **응답은 "가려짐"과 "없음"을 구별하지 못한다.** 가려진 개수, 표시, 순위 공백이 없다.
 6. **요청자 본인은 결과에 없다.**
@@ -282,22 +285,22 @@ class Ranker(Protocol):
 
 ---
 
-## 6. 공개된 row 저장 모델 — 저장소 무관
+## 6. 공개된 row 저장 모델 — 모양은 저장소 무관, 배치는 R18
 
-두 안이 공유하는 최소 모델. 어느 저장소(MySQL/PostgreSQL/DynamoDB/Redis/OpenSearch)에 두든 이 모양이다.
+두 안이 공유하는 최소 모델. 모양은 저장소와 무관하고, 배치는 R18이다: **조인·집계가 있는 집합은 PostgreSQL, 단건 키 읽기·쓰기만 있는 집합은 DynamoDB, Redis는 deferq만.** 아래 표에서 `precomputed_for_you`만 DynamoDB이고 나머지는 전부 PostgreSQL이다. `requester_topics`는 O2가 (b) 미러일 때만 생기는 집합이고, 그때는 단건 키 집합이라 R18 규칙으로 DynamoDB다.
 
 | 집합 | 키 | 값 | 갱신 |
 |---|---|---|---|
 | `open_topic_rows` | `(topic_id, tier, owner_user_id)` | `topic_score`(소유자 쪽 preference 강도), `topic_maturity`, `updated_at` | topic 변경 이벤트. 비공개 전환 = 삭제 |
 | `open_topic_rows` 보조 인덱스 | `owner_user_id` | → 그 소유자의 row들 | agent private 시 일괄 삭제용 |
-| `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, `updated_at` | `bourbon.user_registered`로 생성(추천 대상 풀), 공개 여부·성숙도 이벤트로 갱신, `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재조회가 만든다 |
+| `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, `updated_at`, **`last_active_at`**(R19) | `bourbon.user_registered`로 생성(추천 대상 풀), 공개 여부·성숙도 이벤트로 갱신, `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재조회가 만든다. `last_active_at`은 우리 API 요청·`agent_dm_opened`의 actor·`topics_updated` 셋 중 어느 것이든 갱신한다 |
 | `requester_topics` (**O2 대기**) | `user_id` | 요청자 자신의 topic 목록(점수 포함). 타입 ②의 섹션과 타입 ③의 content 쿼리에 씀 | 두 안: (a) 미러하지 않고 요청 시 topic-api 내부 route로 읽는다(권고), (b) 미러하되 소유자 키 아래에만 두고 후보 조회에는 쓰지 않는다. 결정 레지스터 O2 |
-| `friends` (선택) | `user_id` | 친구 id 집합 | `bourbon.friendship_changed`. 미러하지 않으면 요청 시 조회+TTL |
+| `friends` (**R17: 미러, 필수**) | canonical pair `(user_low, user_high)`. 조회는 `user_id` → 친구 id 집합(상한 5,000) | — | `bourbon.friendship_changed`: `accepted` → 삽입, `removed` → 삭제. 요청 시 bourbon-api 조회·TTL 캐시는 쓰지 않는다. `open_topic_rows`와 같은 저장소에 두어 후보 조회 쿼리가 배열로 받거나 조인한다 |
 | `popularity` | `owner_user_id` | 시간 감쇠 카운트 | 대화 시작 이벤트 |
-| `precomputed_for_you` | `user_id` | `[(owner_user_id, score, basis)]` top-K, `computed_at` | 배치 |
+| `precomputed_for_you` | `user_id` | `[(owner_user_id, score, basis)]` top-K, `computed_at` | 배치가 쓴다 — **`last_active_at`이 창 안인 유저만**(R19). **DynamoDB**(PK `user_id`, R18): 서빙은 단건 GetItem, 조인은 없다(재확인은 PostgreSQL `open_topic_rows`에서). 항목이 없는 요청자는 §2-3의 콜드스타트 경로 |
 | `interactions` | `(actor_user_id, owner_user_id, room_id)` | `started_at`, `reopened_count`, `turns`, `entry`, `recommendation_id` | `agent_dm_opened`로 생성, `message_created`(room_id 조인)로 `turns` 증가. CF 학습 입력 |
 
-타입 ①②의 조회는 `open_topic_rows[topic_id, public]` ∪ (`open_topic_rows[topic_id, friends]` ∩ friends(요청자)) 이고, 타입 ①은 topic ≤ 3개의 결과를 owner로 합쳐 커버리지를 센다. 엔진(A안)이 자기 저장소를 따로 가져도 위 집합은 그대로 있어야 한다. 불변식 1·4가 여기서 판정되기 때문이다.
+타입 ①②의 조회는 `open_topic_rows[topic_id, public]` ∪ (`open_topic_rows[topic_id, friends]` ∩ friends(요청자)) 이고, 타입 ①은 topic ≤ 3개의 결과를 owner로 합쳐 커버리지를 센다. 이 합집합은 쿼리 하나의 WHERE 절이다(§4-2, R17). 타입 ③의 `popularity`·`content_similarity`·이웃 조회도 같은 술어를 `open_topic_rows`에 대한 조인(또는 EXISTS)으로 붙여 요청자에게 보이는 소유자만 읽는다. 엔진(A안)이 자기 저장소를 따로 가져도 위 집합은 그대로 있어야 한다. 불변식 1·4가 여기서 판정되기 때문이다.
 
 ---
 
@@ -313,7 +316,7 @@ class Ranker(Protocol):
 | `content_similarity` | 요청자 topic 집합과 소유자 topic 집합의 가중 겹침 | 0~1 | requester_topics × open_topic_rows | ③ |
 | `cf_score` | 아이템 이웃 또는 행렬 분해 점수, 소스 안에서 정규화. **학습 입력의 confidence는 "대화 시작 1회"가 아니라 `1 + α·log(1 + turns) + β·reopen_count`** — 배우는 대화(길고 다시 찾는 대화)가 한 번 시작하고 끝난 대화보다 강한 신호다(오너 2026-09-08, 결정 레지스터 R16). α·β는 설정. 가중을 켜는 시점은 O14 | 0~1 | cf_item / cf_engine (입력: `interactions` + turn 카운터) | ③ |
 | `similar_users` | 이 agent와 대화한 유사 유저 수 | 정수 | cf_item | ③ (표시용) |
-| `recency` | 소유자의 마지막 topic 갱신이 얼마나 최근인가 | 0~1 | open_topic_rows.updated_at | 모두, 작은 가중 |
+| `recency` | 소유자의 마지막 topic 갱신이 얼마나 최근인가 | 0~1 | open_topic_rows.updated_at | 모두, 작은 가중. 오래 활동하지 않은 소유자를 **후보에서 빼지 않고** 이 feature로 내린다(R19). 하드 제외는 O17 |
 | `tier_is_friends` | 근거 row가 friends tier인가 | 0/1 | 필터 결과 | 모두. 친구를 살짝 올릴지는 제품 판단 |
 
 없는 feature는 0이고 `present`에 없다. 가중치는 설정이며 비교(재설계 §6)에서는 두 안이 같은 가중치를 쓴다.
@@ -322,7 +325,7 @@ class Ranker(Protocol):
 
 ## 8. 결정 로그
 
-응답마다 한 건. 오프라인 평가와 A/B 비교의 정답 로그다. **유저의 글은 없다.**
+응답마다 한 건. 오프라인 평가와 A/B 비교의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18): PK `recommendation_id`(대화 시작 이벤트의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 기간·타입별로 읽도록 GSI `(type, served_day)`, 보존은 TTL. 집계는 SQL이 아니라 평가 배치의 코드다.
 
 ```json
 {
@@ -340,7 +343,7 @@ class Ranker(Protocol):
   "filter": {"in": 41, "out": 29, "friends_used": true, "degraded": []},   // 개수는 로그에만. 응답엔 없음
   "ranked": [ {"owner_user_id": "uuid", "position": 1, "features": {…}, "score": 0.83} ],
   "basis": "content",                             // ③
-  "latency_ms": {"query": 640, "sources": 9, "filter": 3, "rank": 1, "assemble": 12, "total": 668},
+  "latency_ms": {"query": 640, "sources": 9, "filter": 3, "rank": 1, "assemble": 12, "total": 665},
   "served_at": "2026-09-08T…Z"
 }
 ```
@@ -355,7 +358,7 @@ class Ranker(Protocol):
 
 | 이벤트 | 상태 | payload | 우리 처리 |
 |---|---|---|---|
-| `bourbon.friendship_changed` | **있음** (bourbon-api) | `user_low, user_high, action, occurred_at` | friends 미러 갱신 또는 캐시 무효화 |
+| `bourbon.friendship_changed` | **있음** (bourbon-api) | `user_low, user_high, action, occurred_at` | `friends` 미러 갱신: `accepted` 삽입, `removed` 삭제 (R17) |
 | `bourbon.topics_updated` | **있음** (topic-api 워커, persona 동기화가 움직인 topic마다) | `user_id, topic_id, persona_revision, topic_revision` | 힌트. 유저 단위 debounce 뒤 내부 route `GET /users/{id}/topics?visibility=public&visibility=friends`(반복 파라미터)를 읽어 공개된 row를 통째로 교체. 상세 `agent_discovery_events.md` §2-1 |
 | `bourbon.user_topic_settings_updated` | 우리가 정의, topic-api api 프로세스에 요청 (그 프로세스에 AMQP 연결 필요) | `user_id, topic_id, topic_revision, touched` | 같은 debounce → 같은 재조회. **비공개 전환은 이 경로로만 오므로 핵심**. §2-2 |
 | `bourbon.personal_agent_visibility_changed` | 우리가 정의, bourbon-api에 요청 (`enabled` 재사용인지 새 필드인지 미정) | `owner_user_id, agent_id, discoverable, occurred_at` | `false` → 그 소유자 row 전부 삭제 |

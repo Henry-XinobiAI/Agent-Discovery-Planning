@@ -110,6 +110,8 @@ topic-api가 이미 grounding해 둔 요청자의 topic만 쓴다. LLM도 topic-
 
 인기도 → content → CF는 대체가 아니라 **누적**이다. 셋을 다 feature로 받는 랭커 하나가 순서를 정하고, 신호가 없을 때는 그 feature가 0이 된다.
 
+이 구조 덕에 **사전 계산은 활성 요청자에게만** 해도 화면에 구멍이 없다(R19). 셋 중 사전 계산인 것은 CF top-K 하나고 인기도·content는 요청 시 계산이라, 오랜만에 돌아온 유저의 첫 요청은 CF feature만 0인 완전한 목록을 받는다(신규 유저와 같다). 그 요청이 활성 신호가 되어 다음 배치에 든다. 후보(소유자) 쪽은 활동 여부로 빼지 않는다 — `recency`·`popularity`가 순위로 내리고, 하드 제외는 O17.
+
 ### 2-4. "왜 맞는지 / 안 맞는지"
 
 탐색 탭에서 "이 agent가 나와 어디가 맞고 어디가 안 맞는지"를 보여주는 것은 미확정이지만 필요할 수 있다. 랭커가 feature 벡터로 점수를 내면 그 feature가 그대로 설명 재료가 된다(겹치는 topic, 겹치지 않는 topic, 성숙도 차이, "비슷한 사람 N명이 대화함"). 처음부터 점수를 **feature별로 분해 가능하게** 두면 나중에 비용 없이 붙인다.
@@ -131,7 +133,7 @@ topic-api가 이미 grounding해 둔 요청자의 topic만 쓴다. LLM도 topic-
 - **topic이 `friends`면** 요청자가 그 agent 소유자의 친구일 때만 후보다.
 - **`private`, `hidden`은 후보 저장소에 들어오지 않는다.** 타인의 것은 그 두 tier를 읽지 않는다. 미러에 없으니 셀 수도 없다. 요청자 **자신의** topic 목록(타입 ②③의 입력)을 어디서 읽는지만 미정이다(결정 레지스터 O2).
 - **판정은 후보 단계**에서 한다. 랭킹 뒤에 가리면 "몇 개가 가려졌다"가 유출되고, 페이지 크기도 흔들린다.
-- **fail-closed**: 친구 목록을 못 가져오면 friends tier는 후보에서 빠지고 public만 답한다. 에러가 아니라 축소된 답이다. topic-api와 같은 계약이다.
+- **fail-closed**: 친구 집합을 못 가져오면 friends tier는 후보에서 빠지고 public만 답한다. 에러가 아니라 축소된 답이다. topic-api와 같은 계약이다. (R17·R18로 친구 집합이 공개된 row와 같은 PostgreSQL에 있으므로 이 경우는 저장소 장애 = 503이고, 축소 응답 `friends_unavailable`은 계약에 예약만 되어 있다.)
 - **구별 불가**: 응답은 "friends topic이 있는데 안 보여줌"과 "그런 topic 없음"을 같게 만든다. 가려진 개수, 가려졌다는 표시를 넣지 않는다.
 
 ### 3-2. 저장 모양에 주는 영향 — 회귀(비공개 전환)를 먼저 설계한다
@@ -152,9 +154,9 @@ default가 private이고 언제든 private로 돌아가므로, 저장소에는 *
                      ∪ (rows[topic, tier=friends] ∩ {agent | owner(agent) ∈ friends(R)})
 ```
 
-friends(R)는 요청 시 bourbon-api에서 읽거나(짧은 TTL 캐시, topic-api가 하는 방식) `bourbon.friendship_changed`로 우리 저장소에 미러해 둔다. 친구 상한 5,000이므로 한 요청자의 집합은 항상 작다. friend 관계가 바뀌어도 **재인덱싱이 필요 없다.** 교집합이 요청 시 계산이기 때문이다.
+friends(R)는 `bourbon.friendship_changed`로 우리 저장소에 **미러한다**(R17). 요청 시 bourbon-api를 읽는 방식(topic-api의 조회+TTL 캐시)은 hot path에 외부 호출을 넣고 실패하면 축소 응답을 강제하므로 쓰지 않는다. 친구 상한 5,000이므로 한 요청자의 집합은 항상 작고, 위 합집합은 **후보 조회 쿼리 하나의 WHERE 절**이다. friend 관계가 바뀌어도 **재인덱싱이 필요 없다.** 교집합이 요청 시 계산이기 때문이다.
 
-CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋아한 agent"가 요청자에게 안 보이는 tier만 가진 agent라면 후보에서 빠진다.
+CF·인기도 신호(§2-3)에도 같은 술어가 걸린다. "비슷한 사람들이 좋아한 agent"가 요청자에게 안 보이는 tier만 가진 agent라면 후보에서 빠진다. 우리 저장소를 읽는 소스는 술어를 쿼리에 넣고, 요청자별 사전 계산은 배치 시점 친구 집합으로 후보를 제한하며, 술어를 넣을 수 없는 외부 엔진 결과만 넉넉히 받아 뒤에서 거른다(계약 §4-2).
 
 ---
 
@@ -210,9 +212,9 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 
 | 역할 | 후보 | 저장소(허용 목록 안) |
 |---|---|---|
-| 타입 ③ CF + 인기도 + 유저 이웃 | Gorse (서비스형, 자체 스케줄러·대시보드, MySQL/PostgreSQL data store + Redis cache store) 또는 `implicit` / LightFM (라이브러리형, 배치로 돌려 결과를 Redis에 씀) | MySQL 또는 PostgreSQL + Redis |
-| 타입 ①② topic → agent | OpenSearch (topic id를 term으로 인덱싱, 커버리지는 matched term 수로 정렬 가능) 또는 아래 B안의 인덱스 | OpenSearch 또는 PostgreSQL/MySQL |
-| topic·friend·agent visibility 미러 | 위 저장소에 같이 | |
+| 타입 ③ CF + 인기도 + 유저 이웃 | Gorse (서비스형, 자체 스케줄러·대시보드, MySQL/PostgreSQL data store + cache store — Redis cache store는 Redis Stack 전용이라 ElastiCache 불가, 검증 §4-1) 또는 `implicit` (라이브러리형, 배치로 돌려 유저별 top-K를 `precomputed_for_you`에 씀. LightFM은 Python 3.14 빌드 실패로 제외) | Gorse: MySQL 또는 PostgreSQL 둘(data·cache). `implicit`: 결과만 DynamoDB(R18) |
+| 타입 ①② topic → agent | OpenSearch (topic id를 term으로 인덱싱, 커버리지는 matched term 수로 정렬 가능) 또는 아래 B안의 인덱스 | OpenSearch 또는 PostgreSQL |
+| topic·friend·agent visibility 미러 | B안과 같은 PostgreSQL 테이블 | PostgreSQL |
 
 **A안의 장점**: CF와 인기도, 유저-유저 이웃, 재계산 스케줄, 평가 지표를 만들지 않고 얻는다. 엔진이 검증돼 있고 커뮤니티가 있다. **A안이 어려운 점**: 엔진의 아이템·유저·feedback 모델에 우리 모양(아이템 = 유저, tier가 요청자마다 다름, 커버리지 정렬)을 끼워 넣어야 한다. 엔진이 요청자별 필터를 못 하므로 엔진 결과를 받아 우리가 다시 거르고, 걸러서 부족하면 더 받아야 한다. 컴포넌트가 하나 더 돌고, 그 컴포넌트의 재계산 비용·메모리·장애 모드를 우리가 운영한다. 실측에서 재계산 시간이 아이템 수에 비례해 자라는 것이 이미 확인됐다(이전 실측 문서 참고, 이 문서의 전제는 아님).
 
@@ -222,13 +224,13 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 
 | 역할 | 구현 | 저장소 |
 |---|---|---|
-| topic → agent 인덱스 | `(topic_id, tier, agent_id, 점수)` 역인덱스. 타입 ①은 topic별 목록을 읽어 agent별 커버 수를 세고 정렬(topic ≤ 3이므로 목록 3개 합치기). 타입 ②도 같음 | PostgreSQL 또는 MySQL (B-tree 하나), 자주 조회되는 topic 목록은 Redis |
-| 인기도 | 대화 시작 이벤트를 받아 시간 감쇠 카운터 | Redis sorted set 또는 RDB 테이블 |
-| content 유사 유저 | 요청자 topic 집합과 겹침(Jaccard/가중 겹침) 또는 topic 벡터 kNN | RDB 또는 PostgreSQL pgvector / OpenSearch kNN (필요할 때만) |
-| CF | 아이템 기반 이웃: 대화 로그에서 agent 동시 출현 → 이웃 목록. 또는 `implicit` 라이브러리로 ALS를 배치로 돌려 유저별 top-K를 Redis에 저장. **`implicit`/LightFM 같은 recsys 라이브러리를 쓰면 그것은 A안(라이브러리형)이다** — B안의 CF는 우리가 쓴 동시 출현·이웃 계산이다(O8) | Redis (유저별 top-K) + RDB (로그) |
+| topic → agent 인덱스 | `(topic_id, tier, agent_id, 점수)` 역인덱스. 타입 ①은 topic별 목록을 읽어 agent별 커버 수를 세고 정렬(topic ≤ 3이므로 목록 3개 합치기). 타입 ②도 같음 | PostgreSQL (B-tree 하나). 캐시 없음 — 실측 p50 0.8 ms라 필요 없다(검증 §2) |
+| 인기도 | 대화 시작 이벤트를 받아 시간 감쇠 카운터 | PostgreSQL 테이블. `open_topic_rows`와 같은 DB여야 visibility 술어를 조인으로 붙일 수 있다(R17). sorted set은 쓰지 않는다(R18) |
+| content 유사 유저 | 요청자 topic 집합과 겹침(Jaccard/가중 겹침) 또는 topic 벡터 kNN | PostgreSQL (같은 인덱스). 벡터 kNN은 pgvector / OpenSearch, 필요할 때만 |
+| CF | 아이템 기반 이웃: 대화 로그에서 agent 동시 출현 → 이웃 목록. 또는 `implicit` 라이브러리로 ALS를 배치로 돌려 유저별 top-K를 DynamoDB `precomputed_for_you`에 저장. **`implicit`/LightFM 같은 recsys 라이브러리를 쓰면 그것은 A안(라이브러리형)이다** — B안의 CF는 우리가 쓴 동시 출현·이웃 계산이다(O8) | 이웃 테이블은 PostgreSQL(술어 조인), 유저별 top-K는 DynamoDB `precomputed_for_you`, 로그는 PostgreSQL `interactions` (R18) |
 | 재계산 | 이벤트 도착 시 해당 유저 row만 갱신(증분). CF/인기도만 주기 배치 | |
 
-**B안의 장점**: 커버리지 정렬과 friends 필터가 인덱스 구조 그 자체다. 재계산이 "바뀐 유저의 row"로 국소화된다. 컴포넌트가 우리 API와 워커 둘이다. 저장소가 이미 있는 것(MySQL, Redis)이다. **B안이 어려운 점**: CF·평가·튜닝을 우리가 만들고 검증해야 한다. 오픈소스 엔진이 무료로 주는 대시보드·A/B·지표를 직접 만든다. 유저가 늘어 인덱스가 한 노드를 넘을 때의 샤딩을 우리가 설계한다. "검증된 recsys"라는 신뢰를 우리 테스트로 대신해야 한다.
+**B안의 장점**: 커버리지 정렬과 friends 필터가 인덱스 구조 그 자체다. 재계산이 "바뀐 유저의 row"로 국소화된다. 컴포넌트가 우리 API와 워커 둘이다. 저장소가 플랫폼에 이미 있고 운영 절차가 있는 것(PostgreSQL, DynamoDB)이다. **B안이 어려운 점**: CF·평가·튜닝을 우리가 만들고 검증해야 한다. 오픈소스 엔진이 무료로 주는 대시보드·A/B·지표를 직접 만든다. 유저가 늘어 인덱스가 한 노드를 넘을 때의 샤딩을 우리가 설계한다. "검증된 recsys"라는 신뢰를 우리 테스트로 대신해야 한다.
 
 ### 5-3. 혼합
 
@@ -245,7 +247,7 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 | 타입 ①②③ 각각의 요청 지연 시간 p50 / p95 (동시성 고정) | **CF 품질**: 합성 데이터에 심어 둔 잠재 구조가 있어야 recall@K가 의미 있다 |
 | 재계산 시간, 그 동안 CPU·RAM | **content 품질**: 합성 persona의 topic 분포가 실제와 닮아야 한다 |
 | 저장 용량, 월 비용(도쿄 단가) | |
-| 컴포넌트 수, 장애 시 동작(엔진 다운, Redis 비움, bourbon-api 불통) | |
+| 컴포넌트 수, 장애 시 동작(엔진 다운, `precomputed_for_you` 비어 있음, bourbon-api 불통) | |
 | 증분 갱신 지연 시간(이벤트 → 추천 반영) | |
 
 **합성 데이터 생성기가 비교의 절반**이다. 두 시스템이 같은 정답을 상대해야 하므로 생성기 스펙을 먼저 고정한다.
@@ -278,7 +280,7 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 | 재계산 | 전체 재계산 1회 시간과 자원, 이벤트 1건 반영 지연 시간 |
 | 저장 | 저장소별 용량(10만·100만), 도쿄 월 단가로 환산 |
 | 품질 | recall@10, NDCG@10(타입 ③), 커버리지 위반 0건(타입 ①), 콜드스타트 유저(로그 0)에서의 결과 |
-| 운영 | 컴포넌트 수, 장애 주입 3종(엔진/캐시/bourbon-api)의 응답 |
+| 운영 | 컴포넌트 수, 장애 주입 3종(엔진 / `precomputed_for_you` 비어 있음 / bourbon-api)의 응답 |
 | 확장 | 10만 → 100만에서 위 값의 증가율 |
 
 ### 6-4. 공정성 규칙
@@ -294,6 +296,10 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 ## 7. 규모 단계
 
 시험은 10만, 1차 목표 20만, 이후 100만, 1천만(오너). 생성기와 측정 스크립트는 U만 바꿔 다시 돌릴 수 있어야 하고, 비교 문서는 10만과 100만 두 점을 기록해 증가율을 보인다. 1천만 이후는 그 증가율로 외삽하고, 실제 유저 분포가 나온 뒤 다시 잰다.
+
+저장소 배치(R18)는 단계와 무관하게 처음부터 같다 — 규모가 커진다고 Redis에서 DynamoDB로 옮기는 일은 없다. 1천만 단계에서 다시 볼 것은 PostgreSQL 쪽이다: `interactions`의 turn 카운터(메시지마다 UPDATE)가 쓰기 부하로 보이면 그 카운터만 떼어낸다.
+
+유저 수에 비례해 매일 도는 비용은 `precomputed_for_you` 쓰기 하나이고, R19가 그것을 활성 유저 수에 비례하도록 바꾼다. 1천만 유저 중 30일 활성이 20 %면 DynamoDB 쓰기 비용도 1/5이다. 활성 창은 파라미터이고 합성 스펙 §8-1의 활성 분포 실측으로 정한다.
 
 ---
 
@@ -312,14 +318,14 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 기술 판단이 남은 것.
 
 6. 타입 ③ CF의 첫 구현을 아이템 기반 이웃으로 하나, ALS로 하나 (합성 데이터에서 둘 다 재 본다) (O11).
-7. friends(R)를 요청 시 조회하나 미러하나 (topic-api는 조회+TTL 캐시) (O10).
+7. ~~friends(R)를 요청 시 조회하나 미러하나~~ 미러로 결정, 판정은 후보 조회 쿼리 안에서 (R17, O10 닫힘).
 8. A안의 엔진을 Gorse(서비스형)로 하나 `implicit`/LightFM(라이브러리형)으로 하나. 둘 다 재려면 시간이 두 배다 (O8).
 
 ---
 
 ## 9. 다음 할 일
 
-1. 오너 답 받기 — 2026-09-08에 넷(타입 ② 모양, 상한, friends, 호출 API) 완료. 남은 것은 결정 레지스터 O1~O13.
+1. 오너 답 받기 — 2026-09-08에 넷(타입 ② 모양, 상한, friends, 호출 API) 완료. 남은 것은 결정 레지스터 O1~O17(O10은 닫힘).
 2. 공통 계약 정의: 요청·응답 스키마(세 타입), 후보 소스 인터페이스, 랭커 feature 목록, 결정 로그 스키마. → 초안 `agent_discovery_contract.md` (2026-09-08).
 3. §4-2 이벤트 정의서 작성 → 초안 `agent_discovery_events.md` (2026-09-08). 오너 확인 6건 뒤 repo별 요청서로 자름.
 4. 합성 데이터 생성기 구현 (§6-2), 10만 유저 생성. → 스펙 `synthetic_population_spec.md` (2026-09-08).

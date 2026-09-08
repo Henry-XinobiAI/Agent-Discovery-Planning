@@ -194,9 +194,10 @@ LLM 확장은 비용이 있으므로 두 구현안 비교에서는 **쿼리 200�
 | `turns_per_conversation` | room당 `message_created` 수의 분포 | turn 카운터 (이벤트 정의서 §2-5) |
 | `popularity_skew` | agent별 대화 시작 횟수의 순위-빈도 기울기 | 같은 테이블을 owner로 집계 |
 | `topics_per_user`, `opener_rate`, `tier_mix_of_opened` | 유저별 공개된 row 수, 공개한 유저 비율, tier 비율 | `open_topic_rows` — 단, private/hidden은 우리 저장소에 없으므로 `topics_per_user` 전체는 topic-api 내부 read로만 잴 수 있다 |
-| `friend_degree`, `friend_homophily` | degree 분포 (homophily는 군집 라벨이 없어 실측 불가 — 유지) | `friends` 미러가 있을 때만(O10) |
+| `friend_degree`, `friend_homophily` | degree 분포 (homophily는 군집 라벨이 없어 실측 불가 — 유지) | `friends` 미러에서(R17) |
 | `agent_discoverable_rule` 예외율 | discoverable인데 public row 없는 agent 비율 | `agents` × `open_topic_rows` |
 | `deactivate_rate` | 기간 내 탈퇴 / 등록 | `user_deactivated`, `user_registered` |
+| `active_window` (R19의 활성 창) | `last_active_at` 기준 7·30·90일 활성 유저 비율과 "마지막 활동 이후 경과일" 분포. 창을 어디에 두면 사전 계산 대상이 몇 %가 되는지 | `agents.last_active_at` |
 
 `affinity`, `K`, `cluster_size_alpha`, `off_cluster_topic_rate`는 잠재 구조라 직접 잴 수 없다. 대신 §6-4의 민감도 표로 남기고, 실측 가능한 파라미터가 바뀐 뒤 CF 지표가 합성과 실로그에서 같은 방향으로 움직이는지로 간접 확인한다.
 
@@ -209,7 +210,7 @@ LLM 확장은 비용이 있으므로 두 구현안 비교에서는 **쿼리 200�
 | 비용 | 집계 배치가 이벤트 수에 비례 | 요약은 유저 수에 비례하는 GROUP BY 하나 |
 | 권고 | 보조 | **기본**. 계약 §6 테이블 위에 요약만 얹는다 |
 
-(나)를 기본으로 하고, 원본 이벤트는 worker가 받는 그대로 append-only 테이블에 남기되(`event_log`: 이벤트 이름, `occurred_at`, 페이로드 JSON — 유저가 쓴 문장·이메일은 애초에 페이로드에 없다) 보존 기간을 두어 (가)의 재집계를 가능하게 한다. 저장소는 R08 안의 RDB 하나면 된다.
+(나)를 기본으로 하고, 원본 이벤트는 worker가 받는 그대로 append-only 테이블에 남기되(`event_log`: 이벤트 이름, `occurred_at`, 페이로드 JSON — 유저가 쓴 문장·이메일은 애초에 페이로드에 없다) 보존 기간을 두어 (가)의 재집계를 가능하게 한다. `event_log`는 단건 append와 보존 기간만 있으므로 **DynamoDB에 TTL 180일**로 둔다(R18). 요약 테이블 `population_stats`와 그 입력(`interactions` 등)은 집계·조인이 있으므로 PostgreSQL이다.
 
 ### 8-3. 요약 테이블과 주기
 
