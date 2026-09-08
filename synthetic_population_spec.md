@@ -51,10 +51,10 @@
 | `friend_degree` | 로그정규 median 25, σ 0.9, 상한 5,000 | 유저별 친구 수 |
 | `friend_homophily` | 0.7 | 친구 중 같은 주 군집인 비율 |
 | `affinity` | K×K 행렬: 대각 1.0, 부 군집 관계 0.5, 무작위 0.05, 잡음 N(0, 0.1) | 요청자 군집 × agent 주인 군집의 잠재 친화도 — **CF의 정답** |
-| `conversation_rate` | 유저당 포아송 λ=3 (기간 90일) | 타인 agent와 대화를 연 횟수 |
+| `conversation_rate` | 유저당 포아송 λ ∈ **{3, 10, 30}** (기간 90일). 비교는 세 값을 모두 돈다 | 타인 agent와 대화를 연 횟수. 3은 첫 초안의 추정치였고, 오너는 실제 값이 그보다 클 것으로 본다(2026-09-08: 다른 agent와 대화해 배우는 것이 핵심 feature). CF의 가치가 이 값에 가장 민감하다(`library_verification.md` §3). 실측이 오면 §8의 보정이 이 행을 갈아 끼운다 |
 | `popularity_skew` | 2.0 | agent 인기의 power-law 지수. 대화 상대 선택에 친화도와 곱해진다 |
-| `turns_per_conversation` | 기하 p=0.25, 상한 60 | 대화 하나의 turn 수 |
-| `revisit_rate` | 0.3 | 대화 중 "이미 연 쌍을 다시 여는" 비율. §3-4 |
+| `turns_per_conversation` | 기하 p=0.25, 상한 60 | 대화 하나의 turn 수. CF confidence의 입력(계약 §7 `cf_score`) |
+| `revisit_rate` | 0.3 | 대화 중 "이미 연 쌍을 다시 여는" 비율. §3-4. CF confidence의 입력 |
 | `close_rate` | 0.1 | 생성 뒤 닫힘 이벤트를 받는 열린 topic 비율 |
 | `deactivate_rate` | 0.01 | 탈퇴 이벤트를 받는 유저 비율 |
 | `explicit_queries` | 2,000 | 타입 ① free text 질의 수 |
@@ -174,3 +174,52 @@ LLM 확장은 비용이 있으므로 두 구현안 비교에서는 **질의 200�
 - 한국어·영어 외 라벨(ja)은 질의에 쓰지 않는다. 다국어 요청자는 범위 밖.
 - `entry`가 전부 `"direct"`인 세상이라 "추천이 대화를 만들었나"는 이 데이터로 잴 수 없다. 그 지표는 실서비스 로그의 몫이다.
 - topic-api 대역 서버의 응답 지연을 실제와 얼마로 맞출지. 우선 5 ms 고정.
+- **정답의 선명도** (`library_verification.md` §3-2·§5-2, 2026-09-08 실측): §2 기본값의 `affinity`와 Pareto(2) 인기도로는 정답을 전부 아는 오라클도 held-out 대화 상대를 top-10에 1.9 %만 넣는다. 방법 간 차이가 0.1 % 단위로 갈리므로 `affinity` 비대각·잡음을 줄이거나 ③ CF 지표를 "오라클 top-10과의 겹침"으로 고정해야 한다. 어느 쪽이든 §4에 적는다.
+- **대화율은 §2에서 {3, 10, 30} 세 값으로 돈다.** CF의 값이 λ=3 "인기도의 60 %"에서 λ=10 "인기도와 동률 + 군집 신호 두 배"로 바뀌었다. 오너는 실제 값이 3보다 클 것으로 본다. 실측이 오면 §8이 이 값을 대신한다.
+- **친구 degree의 정의**: §2의 median 25는 유저가 고르는 수다. 무방향 대칭화 뒤 평균 degree는 약 74가 된다. 어느 쪽을 실측과 맞출지 명시한다.
+- **CF 신호의 정의**: 이 문서의 대화 로그는 "열었다"를 1로 센다. 배움이 목표인 서비스에서는 turn 수와 재방문이 더 강한 신호다. 정답 정의 §4 ③ CF는 그대로 두되(친화도가 정답), 평가되는 구현은 계약 §7 `cf_score`의 confidence 가중을 쓴다.
+
+---
+
+## 8. 실측 보정 — 파라미터를 이벤트에서 자동으로 갱신한다
+
+§2의 값 대부분은 추정이다. 서비스가 돌기 시작하면 우리가 이미 받는 이벤트에서 같은 값을 잴 수 있으므로, **생성기 파라미터를 사람이 다시 적는 대신 주기적으로 계산해 갈아 끼우는 단계**를 둔다. 같은 계산이 CF를 켤지 정하는 근거(`decisions.md` O14)도 된다.
+
+### 8-1. 무엇을 어디서 재나
+
+| §2 파라미터 | 재는 값 | 원천 (이미 우리 저장소에 있는 것) |
+|---|---|---|
+| `conversation_rate` λ | 유저별 최근 90일 개설 수의 평균과 분포. Poisson이 맞는지는 평균/분산 비로 확인하고, 과분산이면 음이항으로 바꾼다 | `interactions` (계약 §6, `(actor_user_id, owner_user_id, room_id)`, `agent_dm_opened`로 채움) |
+| `revisit_rate` | `reopened=true` 개설 / 전체 개설 | 같은 표 |
+| `turns_per_conversation` | room당 `message_created` 수의 분포 | turn 카운터 (이벤트 정의서 §2-5) |
+| `popularity_skew` | agent별 개설 수의 순위-빈도 기울기 | 같은 표를 owner로 집계 |
+| `topics_per_user`, `opener_rate`, `tier_mix_of_opened` | 유저별 열린 row 수, 열린 유저 비율, tier 비율 | `open_topic_rows` — 단, private/hidden은 우리 저장소에 없으므로 `topics_per_user` 전체는 topic-api 내부 read로만 잴 수 있다 |
+| `friend_degree`, `friend_homophily` | degree 분포 (homophily는 군집 라벨이 없어 실측 불가 — 유지) | `friends` 미러가 있을 때만(O10) |
+| `agent_discoverable_rule` 예외율 | discoverable인데 public row 없는 agent 비율 | `agents` × `open_topic_rows` |
+| `deactivate_rate` | 기간 내 탈퇴 / 등록 | `user_deactivated`, `user_registered` |
+
+`affinity`, `K`, `cluster_size_alpha`, `off_cluster_topic_rate`는 잠재 구조라 직접 잴 수 없다. 대신 §6-4의 민감도 표로 남기고, 실측 가능한 파라미터가 바뀐 뒤 CF 지표가 합성과 실로그에서 같은 방향으로 움직이는지로 간접 확인한다.
+
+### 8-2. 두 방식 — 이벤트를 다시 읽기 vs 통계를 미리 쌓기
+
+| | (가) 원본 이벤트를 주기적으로 다시 집계 | (나) 이벤트 도착 시 카운터를 갱신하고 주기적으로 요약 |
+|---|---|---|
+| 저장 | 이벤트 원본 보관 필요. 10만 유저에 450만~500만 건/90일, 이후 비례 증가 | `interactions`·turn 카운터·`popularity`는 계약 §6이 **이미** 요구하는 표다. 추가는 요약 스냅샷 하나 |
+| 정확도 | 어떤 통계도 사후에 새로 뽑을 수 있다 | 미리 정한 통계만. 새 통계가 필요하면 그때부터 쌓인다 |
+| 비용 | 집계 배치가 이벤트 수에 비례 | 요약은 유저 수에 비례하는 GROUP BY 하나 |
+| 권고 | 보조 | **기본**. 계약 §6 표 위에 요약만 얹는다 |
+
+(나)를 기본으로 하고, 원본 이벤트는 worker가 받는 그대로 append-only 표에 남기되(`event_log`: 이벤트 이름, `occurred_at`, 페이로드 JSON — 홀더의 문장·이메일은 애초에 페이로드에 없다) 보존 기간을 두어 (가)의 재집계를 가능하게 한다. 저장소는 R08 안의 RDB 하나면 된다.
+
+### 8-3. 요약 표와 주기
+
+`population_stats(snapshot_date, window_days, param, value_json)` 한 표. 하루 한 번 worker의 주기 작업이 `window_days=90`으로 §8-1의 값을 계산해 한 줄씩 넣는다. `value_json`은 평균 하나가 아니라 **분위수(p10/p50/p90/p99)와 표본 수**를 함께 담아, 생성기가 Poisson 대신 경험 분포를 직접 쓸 수 있게 한다. 개인 식별자는 요약에 들어가지 않는다.
+
+같은 작업이 `params_measured.json`(§5 출력 형식의 `params.json`과 같은 스키마)을 낸다. 생성기는 `--params params_measured.json`으로 받고, 비교 프로토콜(재설계 §6)은 실측 파일로 다시 돈다. 실측이 없는 파라미터는 §2의 기본값이 남고 파일에 `source: "default"`로 표시된다.
+
+### 8-4. 자동으로 바뀌면 안 되는 것
+
+- **정답 정의(§4)와 시드는 파라미터가 아니다.** 보정은 §2의 값만 바꾼다.
+- 비교의 두 안은 **같은 `params_measured.json` 스냅샷**을 봐야 한다. 매일 갱신되는 값을 비교 도중에 바꾸지 않는다. 스냅샷 날짜를 비교 결과에 적는다.
+- 표본이 작을 때(활성 유저 1,000명 미만 또는 개설 5,000건 미만)는 파일을 내지 않고 기본값을 유지한다. 임계값은 `decisions.md` O16.
+- 우리 추천이 시작된 뒤의 로그에는 노출 편향이 있다(§7 `entry`). `entry`별로 나눠 요약하고, 생성기의 `entry="direct"` 세상에 맞추는 λ는 **`entry=direct`인 개설만**으로 잰다. 추천이 만든 개설은 별도 값(`conversation_rate_via_recommend`)으로 남겨 추천 효과 측정에 쓴다.

@@ -1,0 +1,30 @@
+=== lam=3
+U=100000 distinct_pairs=238287 users_with>=2_partners=70835 users_with_0_conv=5002 eval_users=5000
+train nnz=233287 density=2.33e-05
+oracle affinity*pop    HR@10=0.0188  NDCG@10=0.0106  recall@10_vs_truth=1.0000  same_cluster=0.695  (5.1s)
+popularity             HR@10=0.0090  NDCG@10=0.0052  recall@10_vs_truth=0.2756  same_cluster=0.137  (2.5s)
+random                 HR@10=0.0002  NDCG@10=0.0001  recall@10_vs_truth=0.0002  same_cluster=0.097  (6.1s)
+B item-cosine kNN      HR@10=0.0008  NDCG@10=0.0003  recall@10_vs_truth=0.0016  same_cluster=0.181  (2.9s)  build=0.0s S.nnz=505146
+B item co-occur raw    HR@10=0.0012  NDCG@10=0.0009  recall@10_vs_truth=0.0136  same_cluster=0.212  (2.7s)
+B co-occur + pop tiebrk HR@10=0.0030  NDCG@10=0.0016  recall@10_vs_truth=0.0802  same_cluster=0.230  (3.5s)
+A ALS f64 r0.05 a1.0   HR@10=0.0020  NDCG@10=0.0011  recall@10_vs_truth=0.0512  same_cluster=0.148  (5.1s)  fit=7.7s maxrss 117->154MB
+A ALS f16 r0.5 a1.0    HR@10=0.0054  NDCG@10=0.0031  recall@10_vs_truth=0.1815  same_cluster=0.185  (5.1s)  fit=0.9s maxrss 154->154MB
+A ALS f16 r0.5 a10.0   HR@10=0.0060  NDCG@10=0.0035  recall@10_vs_truth=0.1482  same_cluster=0.186  (5.3s)  fit=0.9s maxrss 154->154MB
+A ALS f64 r5.0 a10.0   HR@10=0.0042  NDCG@10=0.0023  recall@10_vs_truth=0.0960  same_cluster=0.198  (5.6s)  fit=7.8s maxrss 154->154MB
+implicit 0.7.3
+A ALS + popularity     HR@10=0.0044  NDCG@10=0.0024  recall@10_vs_truth=0.1091  same_cluster=0.197  (7.9s)
+=== lam=10
+U=100000 distinct_pairs=728983 users_with>=2_partners=99719 users_with_0_conv=1 eval_users=5000
+train nnz=723983 density=7.24e-05
+oracle affinity*pop    HR@10=0.0198  NDCG@10=0.0126  recall@10_vs_truth=1.0000  same_cluster=0.701  (4.8s)
+popularity             HR@10=0.0112  NDCG@10=0.0062  recall@10_vs_truth=0.2705  same_cluster=0.125  (2.3s)
+random                 HR@10=0.0002  NDCG@10=0.0001  recall@10_vs_truth=0.0002  same_cluster=0.098  (6.3s)
+B item-cosine kNN      HR@10=0.0002  NDCG@10=0.0001  recall@10_vs_truth=0.0000  same_cluster=0.121  (3.4s)  build=0.2s S.nnz=5154496
+B item co-occur raw    HR@10=0.0076  NDCG@10=0.0042  recall@10_vs_truth=0.1869  same_cluster=0.325  (3.3s)
+B co-occur + pop tiebrk HR@10=0.0102  NDCG@10=0.0056  recall@10_vs_truth=0.2725  same_cluster=0.308  (2.9s)
+A ALS f64 r0.05 a1.0   HR@10=0.0040  NDCG@10=0.0021  recall@10_vs_truth=0.1070  same_cluster=0.243  (5.3s)  fit=10.4s maxrss 300->300MB
+A ALS f16 r0.5 a1.0    HR@10=0.0096  NDCG@10=0.0043  recall@10_vs_truth=0.2910  same_cluster=0.272  (5.0s)  fit=1.9s maxrss 300->300MB
+A ALS f16 r0.5 a10.0   HR@10=0.0070  NDCG@10=0.0044  recall@10_vs_truth=0.2379  same_cluster=0.293  (5.2s)  fit=1.5s maxrss 300->300MB
+A ALS f64 r5.0 a10.0   HR@10=0.0066  NDCG@10=0.0037  recall@10_vs_truth=0.1558  same_cluster=0.277  (6.1s)  fit=10.9s maxrss 300->300MB
+implicit 0.7.3
+A ALS + popularity     HR@10=0.0068  NDCG@10=0.0037  recall@10_vs_truth=0.1659  same_cluster=0.273  (9.2s)

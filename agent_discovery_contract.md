@@ -311,7 +311,7 @@ class Ranker(Protocol):
 | `agent_maturity` | agent 성숙도 | 0~1 | agents | ①②③ |
 | `popularity` | 정의는 미정(결정 레지스터 O4). 첫 구현 자리표시자: 최근 N일 대화 시작 수, 시간 감쇠, 전체 최대로 정규화 | 0~1 | popularity | ③ (①②는 약한 가중) |
 | `content_similarity` | 요청자 topic 집합과 주인 topic 집합의 가중 겹침 | 0~1 | requester_topics × open_topic_rows | ③ |
-| `cf_score` | 아이템 이웃 또는 행렬 분해 점수, 소스 안에서 정규화 | 0~1 | cf_item / cf_engine | ③ |
+| `cf_score` | 아이템 이웃 또는 행렬 분해 점수, 소스 안에서 정규화. **학습 입력의 confidence는 "개설 1회"가 아니라 `1 + α·log(1 + turns) + β·reopen_count`** — 배우는 대화(길고 다시 찾는 대화)가 한 번 열고 끝난 대화보다 강한 신호다(오너 2026-09-08, 결정 레지스터 R16). α·β는 설정. 가중을 켜는 시점은 O14 | 0~1 | cf_item / cf_engine (입력: `interactions` + turn 카운터) | ③ |
 | `similar_users` | 이 agent와 대화한 유사 유저 수 | 정수 | cf_item | ③ (표시용) |
 | `recency` | 주인의 마지막 topic 갱신이 얼마나 최근인가 | 0~1 | open_topic_rows.updated_at | 모두, 작은 가중 |
 | `tier_is_friends` | 근거 row가 friends tier인가 | 0/1 | 필터 결과 | 모두. 친구를 살짝 올릴지는 제품 판단 |

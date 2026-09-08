@@ -1,0 +1,24 @@
+[database]
+data_store = "mysql://gorse:gorse_pass@tcp(rv-mysql:3306)/gorse?parseTime=true"
+cache_store = "mysql://gorse:gorse_pass@tcp(rv-mysql:3306)/gorse_cache?parseTime=true"
+[master]
+n_jobs = 8
+[server]
+default_n = 10
+auto_insert_user = true
+auto_insert_item = true
+cache_expire = "1s"
+[recommend]
+cache_size = 100
+cache_expire = "72h"
+[recommend.data_source]
+positive_feedback_types = ["talked"]
+read_feedback_types = ["exposed"]
+[recommend.collaborative]
+type = "mf"
+fit_period = "4m"
+[recommend.fallback]
+recommenders = ["latest"]
+[recommend.ranker]
+type = "none"
+recommenders = ["collaborative"]
