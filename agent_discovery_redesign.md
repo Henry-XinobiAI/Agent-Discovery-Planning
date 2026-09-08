@@ -1,0 +1,321 @@
+# agent-discovery-api 재설계 — 제품 모델, 세 가지 추천, 두 구현안, 비교 프로토콜
+
+> 2026-09-08 오너 설명을 바탕으로 새로 시작하는 문서. **이전 recsys 문서들이 내려놓은 제약과 결정을 전제하지 않는다.** 그 문서들은 참고 자료로 남고, 이 문서에서 다시 판단한다. 다른 문서 없이 읽히도록 필요한 사실은 본문에 풀어 썼다.
+>
+> 결정이 아니라 **출발점**이다. §8의 열린 질문에 답이 붙고 §6의 비교가 끝나면 그때 결정이 된다.
+
+---
+
+## 0. 한 페이지 요약
+
+- **제품**: 모든 유저는 personal agent를 하나 가진다. agent는 유저와 대화하며 persona와 preference를 배우고, topic-api가 그 preference를 topic 트리에 grounding해 유저의 관심 topic 목록을 만든다. topic마다 공개 범위가 있고, 친구 관계가 있으며, agent 자체에도 공개 여부가 있다.
+- **추천은 세 타입**이다. ① 유저가 자기 agent에게 "이 topic 잘 아는 사람 agent 찾아줘"라고 명시 요청(free text topic + context). ② 탐색 탭 서브탭: 내 topic으로 대화해 볼 수 있는 타인 agent 목록. ③ 탐색 탭 메인: 나와 비슷한 사람들이 좋아했고 내가 좋아할 만한 타인 agent 목록.
+- **두 구현안을 둘 다 만들어 비교한다.** A안은 검증된 오픈소스 recsys를 중심에 두고, B안은 우리 서비스 모양에 맞춰 직접 구현한다. 10만 합성 유저로 지연·재계산 비용·저장 비용·품질을 같은 조건에서 재고, 그 결과로 최종 선택한다. 둘 중 하나만 고르는 것이 아니라 섞을 수 있다.
+- **저장소는 MySQL, PostgreSQL, DynamoDB, Redis, OpenSearch 다섯 가지 안에서** 고른다. 다른 저장소 추가는 선호하지 않는다.
+- **지금 없는 것은 상호작용 로그다.** 타입 ③의 협업 필터링(CF)은 "누가 어떤 agent와 대화했나"가 쌓여야 학습된다. 이벤트는 우리가 정의해 발행 측에 요청하거나 PR로 추가한다. 쌓이기 전까지 메인 탭은 인기도로 시작해도 된다.
+
+---
+
+## 1. 제품 모델
+
+### 1-1. 구성 요소와 데이터 흐름
+
+```
+user ──대화──▶ personal agent (bourbon-agent)
+                  │  persona + preference 추출
+                  ▼  이벤트
+             topic-api ── grounding ──▶ user topics (topic_id, visibility, 임시 성숙도)
+                  │                         │ 유저에게 표시, 유저가 visibility 편집
+                  ▼  이벤트(발행 가능)        ▼
+          agent-discovery-api  ◀── friend 관계 이벤트 ── bourbon-api
+                  │                                      (agent visibility도 여기)
+                  ▼
+        타인 agent 추천 (세 타입) ──▶ 유저가 타인 agent와 대화 시작
+```
+
+- **personal agent의 id는 user id에서 결정론적으로 계산**된다. 따라서 "agent를 추천한다"와 "그 agent의 주인 유저를 고른다"는 같은 일이고, 추천 대상 집합의 크기는 유저 수와 같다.
+- **persona / preference 추출**은 bourbon-agent가 한다. 추출되면 이벤트를 던지고 topic-api가 받아 topic에 grounding한다. topic-api도 "이 유저에 이 topic이 매핑됐다"를 이벤트로 던져 줄 수 있다.
+- **topic별 visibility**는 topic-api가 유저에게 직접 노출해 관리한다. 값은 네 가지다: `public`, `friends`, `private`, `hidden`. `hidden`은 삭제 대신 숨기기로, 본인 외 어느 목록에도 나오지 않는다. 타인이 이 유저의 agent와 대화할 때, agent는 두 사람의 관계와 topic의 visibility로 기억과 preference의 접근을 제어한다.
+- **friend 관계**는 요청과 수락으로 성립한다. bourbon-api가 관리하고, 성립·해제 시 `bourbon.friendship_changed` 이벤트를 **이미 발행한다** (`accepted` / `removed`, 두 user id를 정렬한 canonical pair). 친구 목록 조회 route도 있고, 한 유저의 친구 상한은 5,000이다.
+- **agent visibility**는 `public` / `private`다. private면 다른 유저와 대화할 수 없다. 지금은 public topic이 하나라도 있으면 agent도 public, 모두 private면 agent도 private로 두지만, **이 규칙은 분리될 수 있다.** 그러므로 topic에서 유도하지 말고 **받은 값을 그대로 저장**해야 한다.
+- **성숙도**는 topic 단위와 agent 단위 둘이 있다. 둘 다 전용 컴포넌트가 아직 없다. topic 성숙도는 topic-api가 임시로 단순 계산해 넣고 있고, agent 성숙도는 곧 들어올 예정이다. 추천에서는 **랭커 feature 하나**로 두고, 값의 출처가 바뀌어도 자리는 유지되게 설계한다.
+
+### 1-2. 코드에서 확인한 사실 (2026-09-08)
+
+| 사실 | 어디서 |
+|---|---|
+| visibility는 `public / friends / private / hidden` 네 값 | topic-api `topic/structs.py` `Visibility` |
+| friend 성립·해제 이벤트 `bourbon.friendship_changed`가 이미 있다 | bourbon-api `friends/events.py` |
+| topic-api는 friends tier를 **fail-closed**로 판정한다: bourbon-api 조회에 실패하면 "친구 없음"으로 답하고 public만 보여준다. 실패는 캐시하지 않는다 | topic-api `topic/visibility/friends.py` |
+| topic-api의 타인 topic 조회는 "friends tier를 안 가짐"과 "친구가 아니라서 안 보여줌"을 응답에서 구별할 수 없게 만든다. 구별되면 숨긴 topic의 존재가 새기 때문 | topic-api `api/routers/users/router.py` |
+| topic-api는 같은 라우터를 두 prefix로 붙인다. `/api/svc/topic`은 edge-auth가 `x-user-id`를 채우는 클라이언트 면, `/api/internal/svc/topic`은 서비스가 user_id를 경로에 명시하는 내부 면 | topic-api `api/main.py`, `api/surfaces.py` |
+| free text를 topic으로 바꾸는 검색 route가 내부 면에 있다 (`/search/topics`) | topic-api `api/routers/internal/search/router.py` |
+| 우리 코드에 free text → 개념 확장(LLM) → topic-api 검색 → topic 확정 단계가 이미 있다 | 이 repo `agent_discovery/stages/grounding.py` 등 |
+
+### 1-3. 호출 면
+
+topic-api의 두 prefix 패턴을 그대로 따른다.
+
+| 타입 | 호출자 | 면 | 요청자 식별 |
+|---|---|---|---|
+| ① 명시 요청 | bourbon-agent | 내부 (`/api/internal/svc/agent-discovery/…`) | 요청 body나 경로의 `user_id`. 내부 면은 edge-auth를 거치지 않으므로 **`x-user-id` 헤더를 읽지 않는다** |
+| ②, ③ 탐색 탭 | 클라이언트 (아직 미확정, 클라이언트 직접 호출 가능) | 클라이언트 (`/api/svc/agent-discovery/…`) | edge-auth가 채운 `x-user-id` |
+
+두 면이 같은 도메인 코드를 호출하고, 요청자 id가 어디서 오는지만 다르다.
+
+---
+
+## 2. 세 가지 추천
+
+| | ① 명시 요청 | ② 탐색 서브탭 | ③ 탐색 메인 |
+|---|---|---|---|
+| 입력 | free text topic + 대화 context | 요청자의 grounding된 topic 집합 | 요청자의 persona + topic + (쌓이면) 상호작용 로그 |
+| 요청 시 외부 호출 | LLM(개념 확장) + topic-api 검색 | 없음 (topic은 이미 미러돼 있음) | 없음 |
+| 핵심 계산 | text → 1~3개 topic → **topic 커버리지 순** agent | topic → agent (content 매칭) | 유사 유저 → 그들이 좋아한 agent (CF) + 내가 좋아할 agent (content) |
+| 지연 기대 | LLM이 지배, 수백 ms~수 초 | 수십 ms | 수십 ms (사전 계산 결과 읽기) |
+| 결과 수 | 소수 (대화 안에서 제시) | 목록 | 목록 |
+
+### 2-1. 타입 ①: free text → topic → 커버리지 순서
+
+예: "캠핑하면서 핸드드립커피" → `camping`, `hand-drip coffee` 두 topic(라벨은 예시). 순서 규칙은 오너가 말한 대로다.
+
+1. **뽑힌 topic을 모두 가진 agent가 먼저** 나온다.
+2. 그 다음 일부만 가진 agent가 나온다. 많이 가진 쪽이 먼저다.
+3. 같은 커버리지 안에서는 topic별 점수(preference 강도, 성숙도)와 agent 성숙도로 순서를 정한다.
+
+즉 1차 정렬 키는 **커버한 topic 수**이고, 2차 키가 점수다. 뽑히는 topic은 하나일 수도, 두세 개일 수도 있다. 네 개 이상이면 커버리지 격자가 커지므로 상한을 둔다(예: 3).
+
+text → topic 단계는 우리 코드에 이미 있는 흐름(LLM으로 개념 묶음을 만들고, 묶음마다 topic-api 검색을 해 하나로 확정)을 쓴다. 확정된 topic이 하나도 없으면 "요청이 모호함"(4xx)이고, topic-api나 LLM이 응답하지 않아 확정을 못 한 것은 "우리가 답하지 못함"(5xx)이다. 이 둘을 섞지 않는다.
+
+### 2-2. 타입 ②: 내 topic으로 대화해 볼 타인 agent
+
+topic-api가 이미 grounding해 둔 요청자의 topic만 쓴다. LLM도 topic-api 호출도 없다. 목록의 모양은 미확정이다(§8). 두 후보가 있다.
+
+- **topic별 묶음**: "camping으로 대화해 볼 agent 5명", "hand-drip coffee로 5명" 같이 topic 단위 섹션.
+- **하나로 합친 목록**: 요청자의 topic 여러 개를 한 질의로 보고 타입 ①과 같은 커버리지 정렬.
+
+계산은 타입 ①의 뒤 절반과 같다. 앞 절반(text → topic)만 없다.
+
+### 2-3. 타입 ③: 비슷한 사람들이 좋아한, 내가 좋아할 만한
+
+두 신호가 섞인다.
+
+- **"비슷한 사람들이 좋아했던"** = CF. (요청자, 타인 agent) 상호작용이 있어야 한다. 아이템 수가 유저 수와 같고, 한 유저가 대화해 볼 agent는 많지 않으므로 행렬은 매우 희소하다. CF가 의미 있으려면 로그가 어느 정도 쌓여야 하고, 그 전까지는 다음 순서로 간다.
+  1. **인기도** (오너 허용): 최근 기간에 많이 대화가 시작된 agent. 새 유저에게도 답이 나온다.
+  2. **content 유사도**: 요청자의 topic 집합과 겹치는 topic을 가진 agent, 또는 topic 벡터가 가까운 유저의 agent.
+  3. **CF**: 로그가 쌓이면 아이템 기반 이웃(같은 agent와 대화한 사람들이 또 대화한 agent)이나 행렬 분해 점수를 랭커 feature로 섞는다.
+- **"내가 좋아할 만한"** = content. 2번과 같다.
+
+인기도 → content → CF는 대체가 아니라 **누적**이다. 셋을 다 feature로 받는 랭커 하나가 순서를 정하고, 신호가 없을 때는 그 feature가 0이 된다.
+
+### 2-4. "왜 맞는지 / 안 맞는지"
+
+탐색 탭에서 "이 agent가 나와 어디가 맞고 어디가 안 맞는지"를 보여주는 것은 미확정이지만 필요할 수 있다. 랭커가 feature 벡터로 점수를 내면 그 feature가 그대로 설명 재료가 된다(겹치는 topic, 겹치지 않는 topic, 성숙도 차이, "비슷한 사람 N명이 대화함"). 처음부터 점수를 **feature별로 분해 가능하게** 두면 나중에 비용 없이 붙인다.
+
+### 2-5. 확장
+
+네 번째 타입이 들어오면 **질의 생성기 하나와 후보 소스 조합 하나**를 추가하는 일이어야 한다(§5). 랭커·필터·응답 조립은 공유한다.
+
+---
+
+## 3. visibility와 friend — 후보 필터
+
+### 3-1. 규칙
+
+추천은 public을 우선하되, 궁극적으로 friends까지 포함한다(오너). 규칙은 이렇다.
+
+- **agent visibility가 private면 어떤 추천에도 나오지 않는다.** topic 상태와 무관하게 받은 값으로 판정한다.
+- **topic이 `public`이면** 모든 요청자에게 후보다.
+- **topic이 `friends`면** 요청자가 그 agent 주인의 친구일 때만 후보다.
+- **`private`, `hidden`은 우리 저장소에 들어오지 않는다.** 이 서비스는 그 두 tier를 읽지 않는다. 미러에 없으니 셀 수도 없다.
+- **판정은 후보 단계**에서 한다. 랭킹 뒤에 가리면 "몇 개가 가려졌다"가 새고, 페이지 크기도 흔들린다.
+- **fail-closed**: 친구 목록을 못 가져오면 friends tier는 후보에서 빠지고 public만 답한다. 에러가 아니라 축소된 답이다. topic-api와 같은 계약이다.
+- **구별 불가**: 응답은 "friends topic이 있는데 안 보여줌"과 "그런 topic 없음"을 같게 만든다. 가려진 개수, 가려졌다는 표시를 넣지 않는다.
+
+### 3-2. 저장 모양에 주는 영향
+
+후보 row는 `(topic_id, agent_id, tier ∈ {public, friends}, 점수…)`로 tier를 같이 갖는다. 요청 시:
+
+```
+후보(topic, 요청자 R) = rows[topic, tier=public]
+                     ∪ (rows[topic, tier=friends] ∩ {agent | owner(agent) ∈ friends(R)})
+```
+
+friends(R)는 요청 시 bourbon-api에서 읽거나(짧은 TTL 캐시, topic-api가 하는 방식) `bourbon.friendship_changed`로 우리 저장소에 미러해 둔다. 친구 상한 5,000이므로 한 요청자의 집합은 항상 작다. friend 관계가 바뀌어도 **재색인이 필요 없다.** 교집합이 요청 시 계산이기 때문이다.
+
+CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋아한 agent"가 요청자에게 안 보이는 tier만 가진 agent라면 후보에서 빠진다.
+
+---
+
+## 4. 이벤트 — 있는 것과 정의해야 할 것
+
+이벤트는 우리가 필요한 것을 정의하고, 줄 수 있는 컴포넌트에 요청하거나 우리가 PR로 추가한다(오너). 지금 없는 것은 "아직 안 붙인 것"이지 "붙일 수 없는 것"이 아니다.
+
+### 4-1. 있는 것
+
+| 이벤트 | 발행 | 내용 | 우리 용도 |
+|---|---|---|---|
+| `bourbon.friendship_changed` | bourbon-api | `user_low, user_high, action(accepted/removed), occurred_at` | friends tier 필터의 친구 집합 |
+
+### 4-2. 정의해서 요청할 것
+
+| 이벤트(가칭) | 발행 후보 | 최소 payload | 용도 |
+|---|---|---|---|
+| user topic 변경 | topic-api | `user_id, topic_id, 무엇이 바뀌었나(visibility / score / 추가 / 제거)` | 후보 row 갱신. 지금 topic-api는 "매핑됐다"를 던질 수 있다고 하니 이 모양으로 요청 |
+| agent visibility 변경 | bourbon-api | `user_id(=agent 주인), visibility` | private agent 전체 제외 |
+| topic 성숙도 / agent 성숙도 변경 | 성숙도 컴포넌트(예정), 그 전엔 topic-api 임시값 | `user_id, (topic_id), maturity` | 랭커 feature |
+| **대화 시작** | bourbon-api 또는 bourbon-agent | `viewer_user_id, agent_owner_user_id, started_at, 진입 경로(추천 타입 ①/②/③ / 직접), 추천 요청 id` | CF의 기본 상호작용. 진입 경로가 있어야 "추천이 대화로 이어졌나"를 셀 수 있다 |
+| **대화 지속 / 종료** | 같은 곳 | `…, turns, duration` | 시작만으로는 "한 번 눌러보고 나감"과 "오래 대화함"이 같다. 가중치 재료 |
+| 재방문 | 위에서 유도 가능 | 같은 pair의 두 번째 이후 시작 | 강한 긍정 신호 |
+| 명시 피드백(있다면) | 클라이언트 | 좋아요 / 숨기기 / 관심 없음 | 부정 신호는 로그로 유도가 안 되므로 있으면 가치가 크다 |
+
+우리 자신은 **추천 노출과 선택**을 기록한다: 어떤 요청에 어떤 agent를 어느 순위로 내놨고 무엇이 선택됐나. 대화 시작 이벤트의 `추천 요청 id`가 이 기록과 이어진다. 이것이 오프라인 평가의 정답 로그다.
+
+이 데이터는 처음에 없다. 그래서 타입 ③은 인기도부터 시작하고, 인기도의 정의는 "최근 N일 대화 시작 수"처럼 위 이벤트에서 계산된다. **즉 대화 시작 이벤트는 CF 전에 인기도를 위해서도 첫 번째로 필요하다.**
+
+---
+
+## 5. 두 구현안의 공통 뼈대
+
+두 안은 **같은 요청·응답 계약, 같은 필터, 같은 평가 로그**를 갖는다. 클라이언트와 bourbon-agent는 어느 안이 뒤에 있는지 모른다. 그래야 §6의 비교가 공정하고, 최종 선택 뒤에 교체가 가능하다.
+
+```
+요청 ─▶ 질의 생성 ─▶ 후보 소스들 ─▶ visibility 필터 ─▶ 랭커 ─▶ 조립(설명 포함) ─▶ 응답
+        타입별      A/B가 갈리는 곳   공통               공통     공통
+```
+
+- **질의 생성**: 타입 ①은 text → topic 목록, 타입 ②는 요청자 topic 목록, 타입 ③은 요청자 id(사전 계산 결과의 키). 새 타입 = 새 질의 생성기.
+- **후보 소스**: `(질의) → [(agent_id, tier, 소스별 점수)]`를 내는 것들. 한 요청이 여러 소스를 합칠 수 있다. A안과 B안은 **이 소스의 구현**이 다르다.
+- **visibility 필터**: §3. 소스와 무관하게 하나.
+- **랭커**: feature 벡터 → 점수. feature는 커버리지(타입 ①), topic 점수, topic 성숙도, agent 성숙도, 인기도, CF 점수, 최근성. 처음엔 가중합, 로그가 쌓이면 학습.
+- **조립**: 응답 + 설명 재료 + 결정 로그.
+
+### 5-1. A안 — 오픈소스 recsys를 중심에
+
+검증된 엔진을 쓰되, 타입 ①②의 "topic 커버리지 순서"와 "요청자별 friends 필터"는 **어느 범용 엔진도 그대로 제공하지 않는다.** 따라서 A안도 후보 단계에 우리 색인이 하나는 필요하다. A안의 정체는 "타입 ③의 CF·인기도·유사 이웃 계산을 엔진에 맡긴다"이다.
+
+| 역할 | 후보 | 저장소(허용 목록 안) |
+|---|---|---|
+| 타입 ③ CF + 인기도 + 유저 이웃 | Gorse (서비스형, 자체 스케줄러·대시보드, MySQL/PostgreSQL data store + Redis cache store) 또는 `implicit` / LightFM (라이브러리형, 배치로 돌려 결과를 Redis에 씀) | MySQL 또는 PostgreSQL + Redis |
+| 타입 ①② topic → agent | OpenSearch (topic id를 term으로 색인, 커버리지는 matched term 수로 정렬 가능) 또는 아래 B안의 색인 | OpenSearch 또는 PostgreSQL/MySQL |
+| topic·friend·agent visibility 미러 | 위 저장소에 같이 | |
+
+**A안의 장점**: CF와 인기도, 유저-유저 이웃, 재계산 스케줄, 평가 지표를 만들지 않고 얻는다. 엔진이 검증돼 있고 커뮤니티가 있다. **A안이 어려운 점**: 엔진의 아이템·유저·feedback 모델에 우리 모양(아이템 = 유저, tier가 요청자마다 다름, 커버리지 정렬)을 끼워 넣어야 한다. 엔진이 요청자별 필터를 못 하므로 엔진 결과를 받아 우리가 다시 거르고, 걸러서 부족하면 더 받아야 한다. 컴포넌트가 하나 더 돌고, 그 컴포넌트의 재계산 비용·메모리·장애 모드를 우리가 운영한다. 실측에서 재계산 시간이 아이템 수에 비례해 자라는 것이 이미 확인됐다(이전 실측 문서 참고, 이 문서의 전제는 아님).
+
+### 5-2. B안 — 우리 서비스 모양에 맞춘 직접 구현
+
+기존 recsys의 계산법을 참고해 우리가 구현한다. 목표는 **빠른 응답, 낮은 재계산 비용, 우리 모양 그대로**다.
+
+| 역할 | 구현 | 저장소 |
+|---|---|---|
+| topic → agent 색인 | `(topic_id, tier, agent_id, 점수)` 역색인. 타입 ①은 topic별 목록을 읽어 agent별 커버 수를 세고 정렬(topic ≤ 3이므로 목록 3개 합치기). 타입 ②도 같음 | PostgreSQL 또는 MySQL (B-tree 하나), 뜨거운 topic 목록은 Redis |
+| 인기도 | 대화 시작 이벤트를 받아 시간 감쇠 카운터 | Redis sorted set 또는 RDB 테이블 |
+| content 유사 유저 | 요청자 topic 집합과 겹침(Jaccard/가중 겹침) 또는 topic 벡터 kNN | RDB 또는 PostgreSQL pgvector / OpenSearch kNN (필요할 때만) |
+| CF | 아이템 기반 이웃: 대화 로그에서 agent 동시 등장 → 이웃 목록. 또는 `implicit` 라이브러리로 ALS를 배치로 돌려 유저별 top-K를 Redis에 저장. **라이브러리 사용은 B안이다** — 서비스형 엔진을 운영하지 않는다는 뜻 | Redis (유저별 top-K) + RDB (로그) |
+| 재계산 | 이벤트 도착 시 해당 유저 row만 갱신(증분). CF/인기도만 주기 배치 | |
+
+**B안의 장점**: 커버리지 정렬과 friends 필터가 색인 구조 그 자체다. 재계산이 "바뀐 유저의 row"로 국소화된다. 컴포넌트가 우리 API와 워커 둘이다. 저장소가 이미 있는 것(MySQL, Redis)이다. **B안이 어려운 점**: CF·평가·튜닝을 우리가 만들고 검증해야 한다. 오픈소스 엔진이 무료로 주는 대시보드·A/B·지표를 직접 만든다. 유저가 늘어 색인이 한 노드를 넘을 때의 샤딩을 우리가 설계한다. "검증된 recsys"라는 신뢰를 우리 테스트로 대신해야 한다.
+
+### 5-3. 혼합
+
+가장 유력한 혼합은 **B안의 색인으로 타입 ①②를, A안의 엔진(또는 라이브러리)으로 타입 ③의 CF 점수를** 내고 랭커에서 합치는 것이다. §6의 비교는 A, B 순수형 둘과 이 혼합형을 같이 잰다.
+
+---
+
+## 6. 비교 프로토콜 — 10만 합성 유저
+
+### 6-1. 무엇을 공정하게 비교할 수 있나
+
+| 공정하게 비교됨 | 조건이 붙음 |
+|---|---|
+| 타입 ①②③ 각각의 요청 지연 p50 / p95 (동시성 고정) | **CF 품질**: 합성 데이터에 심어 둔 잠재 구조가 있어야 recall@K가 의미 있다 |
+| 재계산 시간, 그 동안 CPU·RAM | **content 품질**: 합성 persona의 topic 분포가 실제와 닮아야 한다 |
+| 저장 용량, 월 비용(도쿄 단가) | |
+| 컴포넌트 수, 장애 시 동작(엔진 다운, Redis 비움, bourbon-api 불통) | |
+| 증분 갱신 지연(이벤트 → 추천 반영) | |
+
+**합성 데이터 생성기가 비교의 절반**이다. 두 시스템이 같은 정답을 상대해야 하므로 생성기 스펙을 먼저 고정한다.
+
+### 6-2. 합성 데이터 생성기 스펙 (초안)
+
+파라미터 U(유저 수)로 돌릴 수 있게 만들어 10만에서 재고 100만으로 다시 잰다.
+
+| 요소 | 생성 방식 | 왜 |
+|---|---|---|
+| persona 군집 | K개 군집(예: 50), 군집마다 topic 선호 분포 | "비슷한 사람"의 정답. CF와 content 유사도의 ground truth |
+| 유저 → 군집 | 각 유저는 주 군집 1 + 부 군집 0~2 | 경계가 흐린 유저가 있어야 현실적 |
+| 유저 topic 수 | 분포(예: 중앙 8, 긴 꼬리 40) | topic-api 실데이터 분포가 있으면 그것으로 교체 |
+| topic 선택 | 군집 분포에서 Zipf 표본 + 소량 무작위 | 인기 topic과 희귀 topic이 같이 있어야 커버리지 정렬이 시험됨 |
+| topic 점수·성숙도 | 유저별 분포 | 랭커 2차 키 |
+| visibility | 예: public 70 / friends 20 / private 10 (topic별) | friends 필터가 결과에 실제로 영향을 주는 비율 |
+| agent visibility | 규칙 그대로 + 소량 예외 | 규칙이 분리될 수 있음을 시험 |
+| friend 그래프 | 군집 내 확률 높게, 평균 degree 30, 상한 5,000 | friends tier 후보가 요청자마다 달라지는 정도 |
+| 상호작용 로그 | 잠재 친화도(요청자 군집 × agent 주인 군집) + agent 인기도 + 노이즈로 (viewer, agent, 시각, turns) 생성 | CF 정답. 노이즈 비율을 바꿔 CF가 무너지는 지점을 본다 |
+| 타입 ① 질의 | topic 라벨 1~3개를 자연어 템플릿에 끼움 | text → topic 단계와 커버리지 정렬 평가 |
+
+정답은 생성기가 안다: 유저 u에 대해 "같은 군집 유저가 많이 대화한 agent", "u의 topic을 모두 가진 agent" 등. 이걸로 recall@10, NDCG@10, 커버리지 정렬 위반 수를 계산한다.
+
+### 6-3. 측정 항목
+
+| 항목 | 어떻게 |
+|---|---|
+| 지연 | 타입별 p50/p95, 동시성 1·10·50. text → topic 단계는 둘이 같으므로 분리 측정해 뺀 값도 기록 |
+| 재계산 | 전체 재계산 1회 시간과 자원, 이벤트 1건 반영 지연 |
+| 저장 | 저장소별 용량(10만·100만), 도쿄 월 단가로 환산 |
+| 품질 | recall@10, NDCG@10(타입 ③), 커버리지 위반 0건(타입 ①②), 콜드스타트 유저(로그 0)에서의 결과 |
+| 운영 | 컴포넌트 수, 장애 주입 3종(엔진/캐시/bourbon-api)의 응답 |
+| 확장 | 10만 → 100만에서 위 값의 증가율 |
+
+### 6-4. 공정성 규칙
+
+같은 머신, 같은 합성 데이터, 같은 visibility 필터 코드, 같은 랭커 feature 정의. 엔진마다 유리한 튜닝은 각자 하되 기록한다. 단계별로 따로 재서 "어디서 시간이 가나"가 보이게 한다.
+
+### 6-5. 산출물
+
+비교 결과 문서 한 편. 표로 정리된 위 측정치와, 그 위에서 내리는 **최종 선택(순수 A / 순수 B / 혼합)**. 그 문서가 결정 기록이 된다.
+
+---
+
+## 7. 규모 단계
+
+시험은 10만, 1차 목표 20만, 이후 100만, 1천만(오너). 생성기와 측정 스크립트는 U만 바꿔 다시 돌릴 수 있어야 하고, 비교 문서는 10만과 100만 두 점을 기록해 증가율을 보인다. 1천만 이후는 그 증가율로 외삽하고, 실제 유저 분포가 나온 뒤 다시 잰다.
+
+---
+
+## 8. 열린 질문
+
+제품 판단이 필요한 것.
+
+1. **타입 ②의 목록 모양**: topic별 묶음인가, 하나로 합친 목록인가 (§2-2).
+2. **타입 ① topic 상한**: 2개, 3개, 그 이상? 커버리지 격자 크기와 LLM 프롬프트가 여기에 걸린다.
+3. **friends 포함 시점**: 처음부터 friends tier를 후보에 넣나, public만으로 시작하고 나중에 여나. 저장 모양은 둘 다 수용하지만 이벤트 요청 순서가 달라진다.
+4. **탐색 탭 호출 경로**: 클라이언트 직접인가, bourbon-api 경유인가. 클라이언트 면의 prefix와 edge-auth 배치가 여기에 걸린다.
+5. **인기도 정의**: 최근 며칠, 대화 시작만인가 지속도 보나, 신규 agent 부스트가 있나.
+6. **"맞음/안 맞음" 표시**: 넣는다면 어떤 축인가(겹치는 topic, 성숙도, 비슷한 사람 수).
+7. **상호작용 이벤트의 발행 주체**: 대화 시작·지속을 bourbon-api가 내나 bourbon-agent가 내나. 어느 쪽이 대화 세션을 소유하는지에 따른다.
+8. **명시 피드백**: 좋아요/숨기기가 제품에 있나. 부정 신호의 유일한 출처다.
+
+기술 판단이 필요한 것.
+
+9. 타입 ③ CF의 첫 구현을 아이템 기반 이웃으로 하나, ALS로 하나 (합성 데이터에서 둘 다 재 본다).
+10. friends(R)를 요청 시 조회하나 미러하나 (topic-api는 조회+TTL 캐시).
+11. A안의 엔진을 Gorse(서비스형)로 하나 `implicit`/LightFM(라이브러리형)으로 하나. 둘 다 재려면 시간이 두 배다.
+
+---
+
+## 9. 다음 할 일
+
+1. §8의 1~4에 오너 답 받기 (나머지는 진행 중 결정 가능).
+2. 공통 계약 정의: 요청·응답 스키마(세 타입), 후보 소스 인터페이스, 랭커 feature 목록, 결정 로그 스키마.
+3. §4-2 이벤트 정의서 작성 → topic-api, bourbon-api, bourbon-agent에 요청 또는 PR.
+4. 합성 데이터 생성기 구현 (§6-2), 10만 유저 생성.
+5. B안 구현 (색인 + 인기도 + content 유사도), A안 구현 (엔진 + 우리 필터), 혼합형 조립.
+6. §6-3 측정, 비교 문서, 최종 선택.
+
+---
+
+## 10. 이전 문서와의 관계
+
+`recsys_opensource/`, `recommendation_pipeline_design.md`, `recommendation_scoring_design.md`, `recsys_build_vs_adopt.md`는 Gorse 실측, 저장 비용 단가, 파이프라인 단계 정의, 지연 추정 등 **사실과 계산**을 담고 있어 참고 가치가 있다. 그러나 그 문서들이 내린 **결정과 제약은 이 문서의 전제가 아니다.** 이 문서의 비교가 끝나면 결정 레지스터를 새 결과로 다시 쓴다.
+
+같은 이유로 이 문서는 이전 문서의 결정 번호나 항목 번호를 인용하지 않는다.
