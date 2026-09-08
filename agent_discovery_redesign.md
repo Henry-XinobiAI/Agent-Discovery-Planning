@@ -53,7 +53,7 @@ user ──대화──▶ personal agent (bourbon-agent)
 | free text를 topic으로 바꾸는 검색 route가 내부 면에 있다 (`/search/topics`) | topic-api `api/routers/internal/search/router.py` |
 | 우리 코드에 free text → 개념 확장(LLM) → topic-api 검색 → topic 확정 단계가 이미 있다 | 이 repo `agent_discovery/stages/grounding.py` 등 |
 | topic-api는 deferq 워커로 `bourbon.persona_updated`를 소비해 persona를 topic에 동기화하고, 움직인 topic마다 `bourbon.topics_updated`를 발행한다. 유저의 visibility 편집(api 프로세스)은 아무것도 발행하지 않는다 | topic-api `worker/listener.py`, `worker/events.py` |
-| 타인 agent와의 대화는 `AGENT_DM` room(`A:B'`, 방향성). main에서는 두 사람이 친구여야 열 수 있고, 임시 브랜치가 그 게이트를 내린다 | bourbon-api `rooms/models.py` `RoomType`, `rooms/service.py` `ensure_agent_dm_room` |
+| 타인 agent와의 대화는 `AGENT_DM` room(`A:B'`, 방향성). main에서는 두 사람이 친구여야 열 수 있고, 임시 브랜치가 그 게이트를 내린다. **오너(2026-09-08): 친구가 아니어도 열 수 있게 할 것이며 방법은 bourbon-api의 몫.** 추천은 public agent가 누구에게나 열린다고 전제한다 | bourbon-api `rooms/models.py` `RoomType`, `rooms/service.py` `ensure_agent_dm_room` |
 
 ### 1-3. 호출 면
 

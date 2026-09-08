@@ -31,7 +31,7 @@
 
 ### 새로 발견한 것 — 확인 필요
 
-- **main에서 agent DM을 열려면 두 사람이 친구여야 한다** (`_assert_friends_to_open`). 그대로면 public agent를 친구 아닌 사람에게 추천해도 대화를 열 수 없다. 원격 브랜치 `temp/agent-dm-open-without-friendship`(2026-09-02, "임시")이 그 게이트를 내린다. **어느 쪽이 제품 의도인지**가 타입 ①②③ 전부에 걸린다(§5-1).
+- **main에서 agent DM을 열려면 두 사람이 친구여야 한다** (`_assert_friends_to_open`). 원격 브랜치 `temp/agent-dm-open-without-friendship`(2026-09-02)이 그 게이트를 내린다. **오너 답(2026-09-08)**: 친구가 아니어도, 어떤 방향으로든 대화를 열 수 있게 할 것이고 그 방법(방 종류)은 bourbon-api의 몫이다. DM으로 결정될 가능성이 크다. 우리 이벤트(§2-4)는 방 종류에 의존하지 않는 모양으로 두고, bourbon-api의 결정에 맞춰 이름과 발행 지점을 조정한다.
 - **우리 워커가 미러하는 `bourbon.user_topic_updated`(`touched` 필드)는 topic-api에 없다.** 실제 이름은 `bourbon.topics_updated`이고 payload도 다르다. 우리 코드 쪽 정정 대상이다(§4).
 
 ---
@@ -108,7 +108,9 @@ class PersonalAgentVisibilityChangedPayload(BaseModel):
 
 ### 2-4. `bourbon.agent_dm_opened` — 우리가 정의, bourbon-api에 요청
 
-대화 시작 = `ensure_agent_dm_room(actor_id, other_id)`가 room을 **만들었을 때**, 그리고 나갔던 멤버가 **다시 들어왔을 때**. 이미 들어 있는 방을 다시 열 때(find)는 내지 않는다 — 그건 시작이 아니다. `actor_id == other_id`(자기 agent)는 내지 않는다.
+대화 시작 = 타인의 agent와의 방이 **만들어졌을 때**, 그리고 나갔던 사람이 **다시 들어왔을 때**. 지금 코드에서는 `ensure_agent_dm_room(actor_id, other_id)`의 create와 re-enter 분기다. 이미 들어 있는 방을 다시 열 때(find)는 내지 않는다 — 그건 시작이 아니다. `actor_id == other_id`(자기 agent)는 내지 않는다.
+
+**방 종류에 의존하지 않는다.** bourbon-api가 친구 게이트를 풀면서 방 종류를 바꾸거나 새 경로를 만들 수 있다(오너: DM이 유력). 아래 payload에는 방 종류가 없고 `room_id`만 있으므로 그 결정이 바뀌어도 payload는 그대로다. 이름 `agent_dm_opened`는 결정 뒤 bourbon-api의 용어에 맞춰 바꿀 수 있다(예: `agent_conversation_opened`).
 
 ```python
 class AgentDmOpenedPayload(BaseModel):
@@ -194,7 +196,7 @@ topic 단위는 재읽기의 `score`가 자리다. 컴포넌트가 `score`를 �
 
 ## 5. 오너 확인 항목
 
-1. **agent DM의 친구 게이트**: main은 친구여야 열린다. 임시 브랜치는 게이트를 내린다. 추천은 어느 전제인가. 게이트가 남으면 친구 아닌 사람의 public agent를 추천하는 것은 "대화 못 여는 카드"가 된다.
+1. ~~agent DM의 친구 게이트~~ **답 있음(2026-09-08)**: 친구가 아니어도 열 수 있게 한다. 방법은 bourbon-api가 정하고(DM 유력), 우리 이벤트는 그에 맞춰 조정한다. 추천은 "public agent는 누구에게나 열린다"를 전제한다.
 2. **agent 공개 여부의 필드**: `enabled` 재사용인지 새 필드인지. 결정 전까지 §2-3은 미러만 하고 소비하지 않는다.
 3. **`recommendation_id`의 여행**: 클라이언트가 agent DM 열기 요청에 실어야 한다. 타입 ①은 bourbon-agent의 카드 → 클라이언트 → route. 이 사슬을 지금 요청 범위에 넣는가.
 4. **재읽기 tier 범위**: `visibility=public,friends`만 읽어 저장하고, 타입 ②③에 필요한 요청자 자신의 topic 목록은 요청 시 topic-api를 읽는다(권고). 아니면 요청자 자신의 것은 tier 무관하게 미러하되 주인 키 아래에만 둔다.
