@@ -26,7 +26,7 @@ user ──대화──▶ personal agent (bourbon-agent)
                   ▼  이벤트
              topic-api ── grounding ──▶ user topics (topic_id, visibility, 임시 성숙도)
                   │                         │ 유저에게 표시, 유저가 visibility 편집
-                  ▼  이벤트(발행 가능)        ▼
+                  ▼  이벤트(있음: bourbon.topics_updated) ▼
           agent-discovery-api  ◀── friend 관계 이벤트 ── bourbon-api
                   │                                      (agent visibility도 여기)
                   ▼
@@ -34,7 +34,7 @@ user ──대화──▶ personal agent (bourbon-agent)
 ```
 
 - **personal agent의 id는 user id에서 결정론적으로 계산**된다. 따라서 "agent를 추천한다"와 "그 agent의 주인 유저를 고른다"는 같은 일이고, 추천 대상 집합의 크기는 유저 수와 같다.
-- **persona / preference 추출**은 bourbon-agent가 한다. 추출되면 이벤트를 던지고 topic-api가 받아 topic에 grounding한다. topic-api도 "이 유저에 이 topic이 매핑됐다"를 이벤트로 던져 줄 수 있다.
+- **persona / preference 추출**은 bourbon-agent가 한다. 추출되면 `bourbon.persona_updated`를 던지고 topic-api 워커가 받아 topic에 grounding한다(연결은 진행 중). topic-api는 움직인 topic마다 `bourbon.topics_updated`를 이미 발행한다.
 - **topic별 visibility**는 topic-api가 유저에게 직접 노출해 관리한다. 값은 네 가지다: `public`, `friends`, `private`, `hidden`. `hidden`은 삭제 대신 숨기기로, 본인 외 어느 목록에도 나오지 않는다. 타인이 이 유저의 agent와 대화할 때, agent는 두 사람의 관계와 topic의 visibility로 기억과 preference의 접근을 제어한다.
 - **friend 관계**는 요청과 수락으로 성립한다. bourbon-api가 관리하고, 성립·해제 시 `bourbon.friendship_changed` 이벤트를 **이미 발행한다** (`accepted` / `removed`, 두 user id를 정렬한 canonical pair). 친구 목록 조회 route도 있고, 한 유저의 친구 상한은 5,000이다.
 - **default는 private다.** 새로 생긴 topic도, agent 자체도 private로 시작하고, 유저가 명시적으로 `public`이나 `friends`로 바꾼다. **다시 private로 돌아갈 수도 있다.** 그러므로 추천 대상은 "유저가 열어 둔 것"뿐이고, 닫히면 즉시 빠져야 한다(§3-2).
@@ -73,7 +73,7 @@ topic-api의 두 prefix 패턴을 그대로 따른다.
 | | ① 명시 요청 | ② 탐색 서브탭 | ③ 탐색 메인 |
 |---|---|---|---|
 | 입력 | free text topic + 대화 context | 요청자의 grounding된 topic 집합 | 요청자의 persona + topic + (쌓이면) 상호작용 로그 |
-| 요청 시 외부 호출 | LLM(개념 확장) + topic-api 검색 | 없음 (topic은 이미 미러돼 있음) | 없음 |
+| 요청 시 외부 호출 | LLM(개념 확장) + topic-api 검색 | 없음 또는 요청자 topic 목록 조회 1회 (결정 레지스터 O2) | 없음 또는 같은 조회 1회 (O2) |
 | 핵심 계산 | text → 1~3개 topic → **topic 커버리지 순** agent | topic → agent (content 매칭) | 유사 유저 → 그들이 좋아한 agent (CF) + 내가 좋아할 agent (content) |
 | 지연 기대 | LLM이 지배, 수백 ms~수 초 | 수십 ms | 수십 ms (사전 계산 결과 읽기) |
 | 결과 수 | 소수 (대화 안에서 제시) | 목록 | 목록 |
@@ -129,7 +129,7 @@ topic-api가 이미 grounding해 둔 요청자의 topic만 쓴다. LLM도 topic-
 - **agent visibility가 private면 어떤 추천에도 나오지 않는다.** topic 상태와 무관하게 받은 값으로 판정한다.
 - **topic이 `public`이면** 모든 요청자에게 후보다.
 - **topic이 `friends`면** 요청자가 그 agent 주인의 친구일 때만 후보다.
-- **`private`, `hidden`은 우리 저장소에 들어오지 않는다.** 이 서비스는 그 두 tier를 읽지 않는다. 미러에 없으니 셀 수도 없다.
+- **`private`, `hidden`은 후보 저장소에 들어오지 않는다.** 타인의 것은 그 두 tier를 읽지 않는다. 미러에 없으니 셀 수도 없다. 요청자 **자신의** topic 목록(타입 ②③의 입력)을 어디서 읽는지만 미정이다(결정 레지스터 O2).
 - **판정은 후보 단계**에서 한다. 랭킹 뒤에 가리면 "몇 개가 가려졌다"가 새고, 페이지 크기도 흔들린다.
 - **fail-closed**: 친구 목록을 못 가져오면 friends tier는 후보에서 빠지고 public만 답한다. 에러가 아니라 축소된 답이다. topic-api와 같은 계약이다.
 - **구별 불가**: 응답은 "friends topic이 있는데 안 보여줌"과 "그런 topic 없음"을 같게 만든다. 가려진 개수, 가려졌다는 표시를 넣지 않는다.
@@ -172,14 +172,15 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 
 > 아래 표는 첫 스케치다. 세 repo 코드 조사 뒤의 정의는 `agent_discovery_events.md`가 갖는다 — topic 변경은 이미 있는 `bourbon.topics_updated`를 힌트로 받아 재읽기, 닫힘은 topic-api api 프로세스에 새 이벤트 요청, 대화 시작은 `AGENT_DM` room 열기, turn은 이미 있는 `message_created`로. 진행 방식은 우리가 먼저 정의·발행·시험하고 뒤에 요청한다(오너 2026-09-08).
 
-| 이벤트(가칭) | 발행 후보 | 최소 payload | 용도 |
-|---|---|---|---|
-| user topic 변경 | topic-api | `user_id, topic_id, 무엇이 바뀌었나(visibility / score / 추가 / 제거)` | 후보 row 갱신. 지금 topic-api는 "매핑됐다"를 던질 수 있다고 하니 이 모양으로 요청 |
-| agent visibility 변경 | bourbon-api | `user_id(=agent 주인), visibility` | private agent 전체 제외 |
-| topic 성숙도 / agent 성숙도 변경 | 성숙도 컴포넌트(예정), 그 전엔 topic-api 임시값 | `user_id, (topic_id), maturity` | 랭커 feature |
-| **대화 시작** | bourbon-api 또는 bourbon-agent | `viewer_user_id, agent_owner_user_id, started_at, 진입 경로(추천 타입 ①/②/③ / 직접), 추천 요청 id` | CF의 기본 상호작용. 진입 경로가 있어야 "추천이 대화로 이어졌나"를 셀 수 있다 |
-| **대화 지속 / 종료** | 같은 곳 | `…, turns, duration` | 시작만으로는 "한 번 눌러보고 나감"과 "오래 대화함"이 같다. 가중치 재료 |
-| 재방문 | 위에서 유도 가능 | 같은 pair의 두 번째 이후 시작 | 강한 긍정 신호 |
+| 필요 | 정의 |
+|---|---|
+| user topic 변경(열림·점수) | 있음 — `bourbon.topics_updated`를 힌트로 재읽기 → 이벤트 정의서 §2-1 |
+| user topic 닫힘(visibility 편집) | 우리가 정의 — `bourbon.user_topic_settings_updated` → 정의서 §2-2 |
+| agent 공개 여부 | 우리가 정의, 필드 결정 대기(O1) → 정의서 §2-3 |
+| 대화 시작(귀속 키 포함) | 우리가 정의 — `bourbon.agent_dm_opened` → 정의서 §2-4 |
+| 대화 진행(turn) | 있음 — `bourbon.message_created` 조인 → 정의서 §2-5 |
+| agent 성숙도 | 컴포넌트 생기면 → 정의서 §2-6 |
+| 재방문 | 위에서 유도 — 같은 (actor, owner)의 두 번째 이후 시작. 강한 긍정 신호 |
 | 명시 피드백(있다면) | 클라이언트 | 좋아요 / 숨기기 / 관심 없음 | 부정 신호는 로그로 유도가 안 되므로 있으면 가치가 크다 |
 
 우리 자신은 **추천 노출과 선택**을 기록한다: 어떤 요청에 어떤 agent를 어느 순위로 내놨고 무엇이 선택됐나. 대화 시작 이벤트의 `추천 요청 id`가 이 기록과 이어진다. 이것이 오프라인 평가의 정답 로그다.
@@ -200,7 +201,7 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 - **질의 생성**: 타입 ①은 text → topic 목록, 타입 ②는 요청자 topic 목록, 타입 ③은 요청자 id(사전 계산 결과의 키). 새 타입 = 새 질의 생성기.
 - **후보 소스**: `(질의) → [(agent_id, tier, 소스별 점수)]`를 내는 것들. 한 요청이 여러 소스를 합칠 수 있다. A안과 B안은 **이 소스의 구현**이 다르다.
 - **visibility 필터**: §3. 소스와 무관하게 하나.
-- **랭커**: feature 벡터 → 점수. feature는 커버리지(타입 ①), topic 점수, topic 성숙도, agent 성숙도, 인기도, CF 점수, 최근성. 처음엔 가중합, 로그가 쌓이면 학습.
+- **랭커**: feature 벡터 → 점수. feature 목록은 계약 §7(커버리지, topic 점수, topic 성숙도, agent 성숙도, 인기도, content 유사도, CF 점수, 유사 유저 수, 최근성, friends tier 여부). 처음엔 가중합, 로그가 쌓이면 학습.
 - **조립**: 응답 + 설명 재료 + 결정 로그.
 
 ### 5-1. A안 — 오픈소스 recsys를 중심에
@@ -224,7 +225,7 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 | topic → agent 색인 | `(topic_id, tier, agent_id, 점수)` 역색인. 타입 ①은 topic별 목록을 읽어 agent별 커버 수를 세고 정렬(topic ≤ 3이므로 목록 3개 합치기). 타입 ②도 같음 | PostgreSQL 또는 MySQL (B-tree 하나), 뜨거운 topic 목록은 Redis |
 | 인기도 | 대화 시작 이벤트를 받아 시간 감쇠 카운터 | Redis sorted set 또는 RDB 테이블 |
 | content 유사 유저 | 요청자 topic 집합과 겹침(Jaccard/가중 겹침) 또는 topic 벡터 kNN | RDB 또는 PostgreSQL pgvector / OpenSearch kNN (필요할 때만) |
-| CF | 아이템 기반 이웃: 대화 로그에서 agent 동시 등장 → 이웃 목록. 또는 `implicit` 라이브러리로 ALS를 배치로 돌려 유저별 top-K를 Redis에 저장. **라이브러리 사용은 B안이다** — 서비스형 엔진을 운영하지 않는다는 뜻 | Redis (유저별 top-K) + RDB (로그) |
+| CF | 아이템 기반 이웃: 대화 로그에서 agent 동시 등장 → 이웃 목록. 또는 `implicit` 라이브러리로 ALS를 배치로 돌려 유저별 top-K를 Redis에 저장. **`implicit`/LightFM 같은 recsys 라이브러리를 쓰면 그것은 A안(라이브러리형)이다** — B안의 CF는 우리가 쓴 동시 등장·이웃 계산이다(O8) | Redis (유저별 top-K) + RDB (로그) |
 | 재계산 | 이벤트 도착 시 해당 유저 row만 갱신(증분). CF/인기도만 주기 배치 | |
 
 **B안의 장점**: 커버리지 정렬과 friends 필터가 색인 구조 그 자체다. 재계산이 "바뀐 유저의 row"로 국소화된다. 컴포넌트가 우리 API와 워커 둘이다. 저장소가 이미 있는 것(MySQL, Redis)이다. **B안이 어려운 점**: CF·평가·튜닝을 우리가 만들고 검증해야 한다. 오픈소스 엔진이 무료로 주는 대시보드·A/B·지표를 직접 만든다. 유저가 늘어 색인이 한 노드를 넘을 때의 샤딩을 우리가 설계한다. "검증된 recsys"라는 신뢰를 우리 테스트로 대신해야 한다.
@@ -255,15 +256,15 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 
 | 요소 | 생성 방식 | 왜 |
 |---|---|---|
-| persona 군집 | K개 군집(예: 50), 군집마다 topic 선호 분포 | "비슷한 사람"의 정답. CF와 content 유사도의 ground truth |
+| persona 군집 | K개 군집(값은 `synthetic_population_spec.md` §2), 군집마다 topic 선호 분포 | "비슷한 사람"의 정답. CF와 content 유사도의 ground truth |
 | 유저 → 군집 | 각 유저는 주 군집 1 + 부 군집 0~2 | 경계가 흐린 유저가 있어야 현실적 |
-| 유저 topic 수 | 분포(예: 중앙 8, 긴 꼬리 40) | topic-api 실데이터 분포가 있으면 그것으로 교체 |
+| 유저 topic 수 | 로그정규(값은 스펙 §2) | topic-api 실데이터 분포가 있으면 그것으로 교체 |
 | topic 선택 | 군집 분포에서 Zipf 표본 + 소량 무작위 | 인기 topic과 희귀 topic이 같이 있어야 커버리지 정렬이 시험됨 |
 | topic 점수·성숙도 | 유저별 분포 | 랭커 2차 키 |
 | visibility | **default private에서 유저가 연 비율**로 생성. 예: 유저의 60%가 하나 이상 열고, 연 유저의 topic 중 public 40 / friends 20 / private 40. 비율은 베타 뒤 실측으로 교체 | 추천 가능 집합이 전체보다 훨씬 작다는 현실을 반영. 이 비율이 콜드스타트와 friends 필터 효과를 좌우 |
 | 열림·닫힘 이벤트 열 | 생성 뒤 일부 topic을 닫는 이벤트 열을 함께 생성 | §3-2 삭제 경로와 응답 직전 재확인이 실제로 동작하는지 시험 |
 | agent visibility | 규칙 그대로 + 소량 예외 | 규칙이 분리될 수 있음을 시험 |
-| friend 그래프 | 군집 내 확률 높게, 평균 degree 30, 상한 5,000 | friends tier 후보가 요청자마다 달라지는 정도 |
+| friend 그래프 | 군집 내 확률 높게, degree 로그정규(스펙 §2), 상한 5,000 | friends tier 후보가 요청자마다 달라지는 정도 |
 | 상호작용 로그 | 잠재 친화도(요청자 군집 × agent 주인 군집) + agent 인기도 + 노이즈로 (viewer, agent, 시각, turns) 생성 | CF 정답. 노이즈 비율을 바꿔 CF가 무너지는 지점을 본다 |
 | 타입 ① 질의 | topic 라벨 1~3개를 자연어 템플릿에 끼움 | text → topic 단계와 커버리지 정렬 평가 |
 
@@ -276,7 +277,7 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 | 지연 | 타입별 p50/p95, 동시성 1·10·50. text → topic 단계는 둘이 같으므로 분리 측정해 뺀 값도 기록 |
 | 재계산 | 전체 재계산 1회 시간과 자원, 이벤트 1건 반영 지연 |
 | 저장 | 저장소별 용량(10만·100만), 도쿄 월 단가로 환산 |
-| 품질 | recall@10, NDCG@10(타입 ③), 커버리지 위반 0건(타입 ①②), 콜드스타트 유저(로그 0)에서의 결과 |
+| 품질 | recall@10, NDCG@10(타입 ③), 커버리지 위반 0건(타입 ①), 콜드스타트 유저(로그 0)에서의 결과 |
 | 운영 | 컴포넌트 수, 장애 주입 3종(엔진/캐시/bourbon-api)의 응답 |
 | 확장 | 10만 → 100만에서 위 값의 증가율 |
 
@@ -286,7 +287,7 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 
 ### 6-5. 산출물
 
-비교 결과 문서 한 편. 표로 정리된 위 측정치와, 그 위에서 내리는 **최종 선택(순수 A / 순수 B / 혼합)**. 그 문서가 결정 기록이 된다.
+비교 결과 문서 한 편. 표로 정리된 위 측정치와, 그 위에서 내리는 **최종 선택(순수 A / 순수 B / 혼합)**. 그 문서는 근거이고, 결정은 `decisions.md`에 R 행으로 적는다.
 
 ---
 
@@ -304,22 +305,21 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 
 1. **인기도 정의**: 최근 며칠, 대화 시작만인가 지속도 보나, 신규 agent 부스트가 있나.
 2. **"맞음/안 맞음" 표시**: 넣는다면 어떤 축인가(겹치는 topic, 성숙도, 비슷한 사람 수).
-3. **상호작용 이벤트의 발행 주체**: 대화 시작·지속을 bourbon-api가 내나 bourbon-agent가 내나. 어느 쪽이 대화 세션을 소유하는지에 따른다.
+3. ~~상호작용 이벤트의 발행 주체~~ 분석으로 정해짐(R15): 시작은 bourbon-api의 방 열기, turn은 이미 있는 `message_created`.
 4. **명시 피드백**: 좋아요/숨기기가 제품에 있나. 부정 신호의 유일한 출처다.
-5. **타입 ② 섹션 크기와 페이지**: 섹션당 몇 명, 한 화면에 몇 섹션.
+5. **타입 ② 섹션 크기와 페이지**: 섹션당 몇 명, 한 화면에 몇 섹션 (O9).
 
 기술 판단이 남은 것.
 
-6. 타입 ③ CF의 첫 구현을 아이템 기반 이웃으로 하나, ALS로 하나 (합성 데이터에서 둘 다 재 본다).
-7. friends(R)를 요청 시 조회하나 미러하나 (topic-api는 조회+TTL 캐시).
-8. A안의 엔진을 Gorse(서비스형)로 하나 `implicit`/LightFM(라이브러리형)으로 하나. 둘 다 재려면 시간이 두 배다.
-9. 주기적 대조(§3-2)의 주기와 방식: topic-api 전수 조회인가, 변경분 조회인가.
+6. 타입 ③ CF의 첫 구현을 아이템 기반 이웃으로 하나, ALS로 하나 (합성 데이터에서 둘 다 재 본다) (O11).
+7. friends(R)를 요청 시 조회하나 미러하나 (topic-api는 조회+TTL 캐시) (O10).
+8. A안의 엔진을 Gorse(서비스형)로 하나 `implicit`/LightFM(라이브러리형)으로 하나. 둘 다 재려면 시간이 두 배다 (O8).
 
 ---
 
 ## 9. 다음 할 일
 
-1. ~~§8의 1~4에 오너 답 받기~~ 2026-09-08 완료.
+1. 오너 답 받기 — 2026-09-08에 넷(타입 ② 모양, 상한, friends, 호출 면) 완료. 남은 것은 결정 레지스터 O1~O13.
 2. 공통 계약 정의: 요청·응답 스키마(세 타입), 후보 소스 인터페이스, 랭커 feature 목록, 결정 로그 스키마. → 초안 `agent_discovery_contract.md` (2026-09-08).
 3. §4-2 이벤트 정의서 작성 → 초안 `agent_discovery_events.md` (2026-09-08). 오너 확인 6건 뒤 repo별 요청서로 자름.
 4. 합성 데이터 생성기 구현 (§6-2), 10만 유저 생성. → 스펙 `synthetic_population_spec.md` (2026-09-08).
