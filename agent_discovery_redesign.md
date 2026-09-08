@@ -52,6 +52,8 @@ user ──대화──▶ personal agent (bourbon-agent)
 | topic-api는 같은 라우터를 두 prefix로 붙인다. `/api/svc/topic`은 edge-auth가 `x-user-id`를 채우는 클라이언트 면, `/api/internal/svc/topic`은 서비스가 user_id를 경로에 명시하는 내부 면 | topic-api `api/main.py`, `api/surfaces.py` |
 | free text를 topic으로 바꾸는 검색 route가 내부 면에 있다 (`/search/topics`) | topic-api `api/routers/internal/search/router.py` |
 | 우리 코드에 free text → 개념 확장(LLM) → topic-api 검색 → topic 확정 단계가 이미 있다 | 이 repo `agent_discovery/stages/grounding.py` 등 |
+| topic-api는 deferq 워커로 `bourbon.persona_updated`를 소비해 persona를 topic에 동기화하고, 움직인 topic마다 `bourbon.topics_updated`를 발행한다. 유저의 visibility 편집(api 프로세스)은 아무것도 발행하지 않는다 | topic-api `worker/listener.py`, `worker/events.py` |
+| 타인 agent와의 대화는 `AGENT_DM` room(`A:B'`, 방향성). main에서는 두 사람이 친구여야 열 수 있고, 임시 브랜치가 그 게이트를 내린다 | bourbon-api `rooms/models.py` `RoomType`, `rooms/service.py` `ensure_agent_dm_room` |
 
 ### 1-3. 호출 면
 
@@ -139,7 +141,7 @@ default가 private이고 언제든 private로 돌아가므로, 저장소에는 *
 - topic이 `public`/`friends` → `private`/`hidden`으로 바뀌면 해당 row를 **지운다.** 갱신이 아니라 삭제다.
 - agent가 `private`로 바뀌면 그 agent의 row를 **모두 지운다.**
 - 사전 계산 결과(타입 ③의 유저별 top-K, 인기도 순위)는 계산 시점의 스냅샷이다. 그 안에 있는 agent가 그 사이에 닫혔을 수 있으므로 **응답 직전에 현재 row 존재 여부로 다시 거른다.** 사전 계산은 후보를 좁힐 뿐 노출을 허가하지 않는다.
-- 놓친 이벤트에 대비한다. 놓친 "열림"은 늦게 나타나는 손해지만, 놓친 "닫힘"은 유저가 닫은 것을 계속 보여주는 사고다. **topic 이벤트를 델타가 아니라 "유저의 현재 열린 집합 전체 + revision" 스냅샷으로 받으면** 다음 스냅샷이 어긋남을 고치므로 별도 대조가 필요 없다(`agent_discovery_events.md` §1·§2-1).
+- 놓친 이벤트에 대비한다. 놓친 "열림"은 늦게 나타나는 손해지만, 놓친 "닫힘"은 유저가 닫은 것을 계속 보여주는 사고다. **topic 이벤트를 힌트로만 받고 그 유저의 열린 집합을 topic-api에서 다시 읽어 통째로 교체하면** 다음 힌트의 재읽기가 어긋남을 고치므로 별도 대조가 필요 없다. topic-api가 스스로 이벤트를 그렇게 정의했다(`agent_discovery_events.md` §1·§2-1).
 
 ### 3-3. 저장 모양
 
@@ -168,7 +170,7 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 
 ### 4-2. 정의해서 요청할 것
 
-> 아래 표는 첫 스케치다. 세 repo 코드 조사 뒤의 정의는 `agent_discovery_events.md`가 갖는다 — topic 이벤트는 델타가 아니라 스냅샷으로, 대화 시작은 group room 착석으로, 발행 주체와 전제 조건까지 거기서 정한다. 조사에서 설명과 코드가 다른 세 곳(bourbon-agent → topic-api 이벤트 경로 없음, agent visibility 필드 없음, 타인 agent 대화는 group room)도 그 문서 §0에 있다.
+> 아래 표는 첫 스케치다. 세 repo 코드 조사 뒤의 정의는 `agent_discovery_events.md`가 갖는다 — topic 변경은 이미 있는 `bourbon.topics_updated`를 힌트로 받아 재읽기, 닫힘은 topic-api api 프로세스에 새 이벤트 요청, 대화 시작은 `AGENT_DM` room 열기, turn은 이미 있는 `message_created`로. 진행 방식은 우리가 먼저 정의·발행·시험하고 뒤에 요청한다(오너 2026-09-08).
 
 | 이벤트(가칭) | 발행 후보 | 최소 payload | 용도 |
 |---|---|---|---|

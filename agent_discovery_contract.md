@@ -344,14 +344,15 @@ class Ranker(Protocol):
 | 이벤트 | 상태 | payload | 우리 처리 |
 |---|---|---|---|
 | `bourbon.friendship_changed` | **있음** (bourbon-api) | `user_low, user_high, action, occurred_at` | friends 미러 갱신 또는 캐시 무효화 |
-| `bourbon.user_topics_snapshot` | 정의해 요청 (topic-api, deferq 도입 필요) | `user_id, revision, occurred_at, topics: [{topic_id, visibility, score, score_version, updated_at}]` — 유저의 **현재 열린 집합 전체** | `revision`이 더 크면 그 유저의 열린 row를 스냅샷으로 통째로 교체(없어진 것은 삭제). 델타가 아니라 스냅샷이라 놓친 닫힘이 다음 스냅샷에서 고쳐진다. 상세 `agent_discovery_events.md` §2-1 |
-| `bourbon.personal_agent_visibility_changed` | 정의해 요청 (bourbon-api — **visibility 필드 자체가 아직 모델에 없음**) | `owner_user_id, agent_id, visibility, occurred_at` | private → 그 주인 row 전부 삭제 |
+| `bourbon.topics_updated` | **있음** (topic-api 워커, persona 동기화가 움직인 topic마다) | `user_id, topic_id, persona_revision, topic_revision` | 힌트. 유저 단위 debounce 뒤 내부 route `GET /users/{id}/topics?visibility=public,friends`를 읽어 열린 row를 통째로 교체. 상세 `agent_discovery_events.md` §2-1 |
+| `bourbon.user_topic_settings_updated` | 우리가 정의, topic-api api 프로세스에 요청 (그 프로세스에 AMQP 연결 필요) | `user_id, topic_id, topic_revision, touched` | 같은 debounce → 같은 재읽기. **닫힘은 이 경로로만 오므로 핵심**. §2-2 |
+| `bourbon.personal_agent_visibility_changed` | 우리가 정의, bourbon-api에 요청 (`enabled` 재사용인지 새 필드인지 미정) | `owner_user_id, agent_id, discoverable, occurred_at` | `false` → 그 주인 row 전부 삭제 |
 | `bourbon.agent_maturity_changed` | 정의해 요청 (성숙도 컴포넌트, 예정) | `user_id, maturity, occurred_at` | `agents` 갱신 |
-| `bourbon.personal_agent_seated` | 정의해 요청 (bourbon-api — 타인 agent와의 대화는 group room **착석**으로 시작된다) | `room_id, agent_id, owner_user_id, actor_user_id, entry, recommendation_id?, occurred_at` | `interactions` 기록, `popularity` 증가. `recommendation_id`는 클라이언트가 착석 요청에 실어야 온다 |
-| `bourbon.personal_agent_turn` | 정의해 요청 (bourbon-agent 권고, 대안 bourbon-api) | `room_id, agent_id, owner_user_id, speaker_user_id, occurred_at` | `interactions`의 turn 수·지속 보강 |
+| `bourbon.agent_dm_opened` | 우리가 정의, bourbon-api에 요청 (타인 agent와의 대화는 `AGENT_DM` room `A:B'`. `ensure_agent_dm_room`의 create·re-enter) | `room_id, actor_user_id, owner_user_id, agent_id, reopened, entry, recommendation_id?, occurred_at` | `interactions` 기록, `popularity` 증가. `recommendation_id`는 클라이언트가 열기 요청에 실어야 온다 |
+| `bourbon.message_created` | **있음** (bourbon-api) | `room_id, message_id, sender_id, sender_type, room_type` | `room_type == agent_dm`인 유저 메시지를 `room_id`로 `agent_dm_opened` 기록과 조인해 turn을 셈. 새 turn 이벤트 불필요 |
 | `bourbon.user_deactivated` | **있음** (bourbon-api) | `user_id` | 그 유저의 모든 데이터 삭제 |
 
-topic 스냅샷의 tier 범위(public·friends만 / private 포함)와 turn 이벤트 발행 주체는 `agent_discovery_events.md` §5의 오너 확인 항목이다.
+진행 방식은 우리가 먼저 미러·발행·시험하고 그 뒤 요청한다. 재읽기 tier 범위와 agent DM 친구 게이트는 `agent_discovery_events.md` §5의 오너 확인 항목이다.
 
 ### 9-2. 우리가 내는 것
 
