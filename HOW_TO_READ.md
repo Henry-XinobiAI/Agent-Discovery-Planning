@@ -108,6 +108,7 @@ recsys_opensource/README.md §2 배치표에서 관심 있는 칸을 찾고
 | `agent_discovery_redesign.md` | **먼저 읽을 것.** 재설계 출발점 — 제품 모델, 세 타입, visibility/friend 필터, 이벤트, 두 구현안, 비교 프로토콜 | 2026-09-08. **자립 문서** — 이전 결정·항목 번호를 인용하지 않고 전제로 삼지 않는다 |
 | `agent_discovery_contract.md` | 재설계의 공통 계약 — route, 스키마, 인터페이스, 불변식, 결정 로그, 이벤트 | 초안 2026-09-08. 두 구현안과 비교 측정의 공통 기반 |
 | `agent_discovery_events.md` | 있는 이벤트의 소비 방식, 우리가 먼저 정의할 이벤트, 발행 지점의 필드 검증, 오너 확인 항목 | rev 2, 2026-09-08(최신 코드). `inbound_event_contract.md`의 원칙을 이어받되 Gorse 전제 없이 다시 씀 |
+| `synthetic_population_spec.md` | 10만(→100만) 합성 유저 생성기의 파라미터·순서·출력·정답·검증 | 초안 2026-09-08. 코드로 옮길 때 파라미터 이름을 그대로 쓴다 |
 | `recsys_build_vs_adopt.md` | 후보 생성을 기존 오픈소스로 하나 우리 인덱스로 하나 — 장단점·채택 장애·혼합·저장소 단가·지연 | 논의 정리(2026-09-07). **자립 문서** — 이전 결정·항목 번호를 인용하지 않는다. 받으면 결정 레지스터의 Gorse 관련 결정이 재판단 대상 |
 | `recsys_opensource/feedback_semantics.md` | feedback 타입 → 엔진 동작 | 초안. `문서`(v0.5.11 **소스 독해**) — `gorse.md` §11 실측과 등급이 다르다 |
 
