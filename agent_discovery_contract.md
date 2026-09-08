@@ -278,7 +278,7 @@ class Ranker(Protocol):
 |---|---|---|---|
 | `open_topic_rows` | `(topic_id, tier, owner_user_id)` | `topic_score`(요청자 쪽 preference 강도), `topic_maturity`, `updated_at` | topic 변경 이벤트. 닫힘 = 삭제 |
 | `open_topic_rows` 보조 색인 | `owner_user_id` | → 그 주인의 row들 | agent private 시 일괄 삭제용 |
-| `agents` | `owner_user_id` | `visibility`, `agent_maturity`, `updated_at` | agent 변경 이벤트 |
+| `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, `updated_at` | `bourbon.user_registered`로 생성(추천 대상의 모집단), 공개 여부·성숙도 이벤트로 갱신, `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재읽기가 만든다 |
 | `requester_topics` | `user_id` | 요청자 자신의 topic 목록(tier 무관, 점수 포함) | topic 변경 이벤트. 타입 ②의 섹션과 타입 ③의 content 질의에 씀 |
 | `friends` (선택) | `user_id` | 친구 id 집합 | `bourbon.friendship_changed`. 미러하지 않으면 요청 시 조회+TTL |
 | `popularity` | `owner_user_id` | 시간 감쇠 카운트 | 대화 시작 이벤트 |
@@ -350,6 +350,7 @@ class Ranker(Protocol):
 | `bourbon.agent_maturity_changed` | 정의해 요청 (성숙도 컴포넌트, 예정) | `user_id, maturity, occurred_at` | `agents` 갱신 |
 | `bourbon.agent_dm_opened` | 우리가 정의, bourbon-api에 요청 (타인 agent와의 대화는 `AGENT_DM` room `A:B'`. `ensure_agent_dm_room`의 create·re-enter) | `room_id, actor_user_id, owner_user_id, agent_id, reopened, entry, recommendation_id?, occurred_at` | `interactions` 기록, `popularity` 증가. `recommendation_id`는 클라이언트가 열기 요청에 실어야 온다 |
 | `bourbon.message_created` | **있음** (bourbon-api) | `room_id, message_id, sender_id, sender_type, room_type` | `room_type == agent_dm`인 유저 메시지를 `room_id`로 `agent_dm_opened` 기록과 조인해 turn을 셈. 새 turn 이벤트 불필요 |
+| `bourbon.user_registered` | **있음** (bourbon-api, 활성화 전이) | `user_id, email` | `agents` row 생성(`discoverable=false`). `email`은 읽지 않는다 |
 | `bourbon.user_deactivated` | **있음** (bourbon-api) | `user_id` | 그 유저의 모든 데이터 삭제 |
 
 진행 방식은 우리가 먼저 미러·발행·시험하고 그 뒤 요청한다. 재읽기 tier 범위와 agent DM 친구 게이트는 `agent_discovery_events.md` §5의 오너 확인 항목이다.

@@ -17,6 +17,7 @@
 | 열린 집합 읽기 | **있음** `GET /api/internal/svc/topic/users/{id}/topics?visibility=public,friends` — 항목마다 `score, visibility, revision, updated_at, support` | 재읽기의 실제 호출 | 없음 |
 | agent 공개 여부 | **미정.** `Agent.enabled`가 그 역할을 할지 새 필드가 생길지 결정 전(오너) | 결정 뒤 이벤트 하나 | 결정 뒤 (§2-3) |
 | friend 관계 변화 | **있음** `bourbon.friendship_changed` | 구독 | 없음 |
+| 유저 가입 (추천 대상 agent의 등장) | **있음** `bourbon.user_registered` (`CREATED → ACTIVATED` 전이에서 발행) | 구독 → `agents` row 생성 (§2-7) | 없음 |
 | 유저 탈퇴 | **있음** `bourbon.user_deactivated` | 구독 → 전부 삭제 | 없음 |
 | 타인 agent와 대화 시작 | **없음.** 대화는 `AGENT_DM` room(`A:B'`)이고 `ensure_agent_dm_room`이 find-or-create 하지만 이벤트는 없다 | 우리가 정의 (§2-4) | bourbon-api + 클라이언트(귀속 키) |
 | 대화 진행(turn) | **있음** `bourbon.message_created` (`room_id, sender_id, sender_type, room_type=agent_dm`) | 대화 시작 이벤트의 `room_id`와 조인 | 없음 — **새 turn 이벤트가 필요 없다** |
@@ -151,6 +152,7 @@ topic 단위는 재읽기의 `score`가 자리다. 컴포넌트가 `score`를 �
 | 이벤트 | payload | 우리 처리 |
 |---|---|---|
 | `bourbon.friendship_changed` | `user_low, user_high, action, occurred_at` | friends 미러 갱신 또는 조회 캐시 무효화 |
+| `bourbon.user_registered` | `user_id, email` | **추천 대상 agent의 등록.** `agents`에 `(owner_user_id, agent_id, discoverable=false, registered_at)` row를 만든다. agent id는 bourbon-api가 `uuid5(AGENT_NAMESPACE, f"personal_agent:{user_id}")`로 결정론적으로 만들므로 읽어 올 필요 없이 같은 규칙으로 계산한다(네임스페이스 상수를 공유하거나, 첫 `agent_dm_opened`·공개 여부 이벤트에서 받은 `agent_id`로 채운다). **`email`은 저장도 로그도 하지 않는다** — payload에서 읽지 않는다. 이 row가 있어야 topic이 하나도 열리지 않은 agent도 "존재하는 대상"으로 세어지고, 콜드스타트 신규 agent 부스트와 타입 ③의 모집단 크기가 정의된다 |
 | `bourbon.user_deactivated` | `user_id` | 그 유저의 열린 row·agents·사전 계산·요청자 데이터 삭제. 상호작용 로그의 actor 쪽은 익명화 |
 | `bourbon.persona_updated` | `user_id, revision, changes[…]` | 직접 쓰지 않는다. topic id가 없다. `topics_updated`가 곧 온다는 뜻일 뿐 |
 
@@ -197,6 +199,7 @@ topic 단위는 재읽기의 `score`가 자리다. 컴포넌트가 `score`를 �
 3. **`recommendation_id`의 여행**: 클라이언트가 agent DM 열기 요청에 실어야 한다. 타입 ①은 bourbon-agent의 카드 → 클라이언트 → route. 이 사슬을 지금 요청 범위에 넣는가.
 4. **재읽기 tier 범위**: `visibility=public,friends`만 읽어 저장하고, 타입 ②③에 필요한 요청자 자신의 topic 목록은 요청 시 topic-api를 읽는다(권고). 아니면 요청자 자신의 것은 tier 무관하게 미러하되 주인 키 아래에만 둔다.
 5. **topic-api 워커 0 replicas**: prod에서 persona 동기화가 안 돌면 `topics_updated`도 없다. 우리 시험은 dev에서 하되, prod 시점에는 이 전제가 풀려 있어야 한다.
+6. **재활성 이벤트가 없다.** bourbon-api에는 `user_registered`(활성화 전이)와 `user_deactivated`만 있고, 탈퇴 뒤 돌아오는 유저를 알리는 이벤트는 없다. 돌아오면 `user_registered`가 다시 나오는지, 아니면 조용히 재활성되는지 확인이 필요하다. 조용하면 우리 `agents` row가 없는 채로 topic 이벤트가 오므로, 재읽기 task가 `agents` row를 **없으면 만든다**로 방어한다.
 
 ---
 
