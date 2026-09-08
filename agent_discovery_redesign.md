@@ -139,7 +139,7 @@ default가 private이고 언제든 private로 돌아가므로, 저장소에는 *
 - topic이 `public`/`friends` → `private`/`hidden`으로 바뀌면 해당 row를 **지운다.** 갱신이 아니라 삭제다.
 - agent가 `private`로 바뀌면 그 agent의 row를 **모두 지운다.**
 - 사전 계산 결과(타입 ③의 유저별 top-K, 인기도 순위)는 계산 시점의 스냅샷이다. 그 안에 있는 agent가 그 사이에 닫혔을 수 있으므로 **응답 직전에 현재 row 존재 여부로 다시 거른다.** 사전 계산은 후보를 좁힐 뿐 노출을 허가하지 않는다.
-- 이벤트를 놓친 경우를 위해 주기적 대조(topic-api의 public·friends 목록과 우리 row를 맞춤)를 둔다. 놓친 "열림"은 늦게 나타나는 손해지만, 놓친 "닫힘"은 유저가 닫은 것을 계속 보여주는 사고다.
+- 놓친 이벤트에 대비한다. 놓친 "열림"은 늦게 나타나는 손해지만, 놓친 "닫힘"은 유저가 닫은 것을 계속 보여주는 사고다. **topic 이벤트를 델타가 아니라 "유저의 현재 열린 집합 전체 + revision" 스냅샷으로 받으면** 다음 스냅샷이 어긋남을 고치므로 별도 대조가 필요 없다(`agent_discovery_events.md` §1·§2-1).
 
 ### 3-3. 저장 모양
 
@@ -167,6 +167,8 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 | `bourbon.friendship_changed` | bourbon-api | `user_low, user_high, action(accepted/removed), occurred_at` | friends tier 필터의 친구 집합 |
 
 ### 4-2. 정의해서 요청할 것
+
+> 아래 표는 첫 스케치다. 세 repo 코드 조사 뒤의 정의는 `agent_discovery_events.md`가 갖는다 — topic 이벤트는 델타가 아니라 스냅샷으로, 대화 시작은 group room 착석으로, 발행 주체와 전제 조건까지 거기서 정한다. 조사에서 설명과 코드가 다른 세 곳(bourbon-agent → topic-api 이벤트 경로 없음, agent visibility 필드 없음, 타인 agent 대화는 group room)도 그 문서 §0에 있다.
 
 | 이벤트(가칭) | 발행 후보 | 최소 payload | 용도 |
 |---|---|---|---|
@@ -317,7 +319,7 @@ CF 신호(§2-3)에도 같은 필터가 걸린다. "비슷한 사람들이 좋�
 
 1. ~~§8의 1~4에 오너 답 받기~~ 2026-09-08 완료.
 2. 공통 계약 정의: 요청·응답 스키마(세 타입), 후보 소스 인터페이스, 랭커 feature 목록, 결정 로그 스키마. → 초안 `agent_discovery_contract.md` (2026-09-08).
-3. §4-2 이벤트 정의서 작성 → topic-api, bourbon-api, bourbon-agent에 요청 또는 PR.
+3. §4-2 이벤트 정의서 작성 → 초안 `agent_discovery_events.md` (2026-09-08). 오너 확인 6건 뒤 repo별 요청서로 자름.
 4. 합성 데이터 생성기 구현 (§6-2), 10만 유저 생성.
 5. B안 구현 (색인 + 인기도 + content 유사도), A안 구현 (엔진 + 우리 필터), 혼합형 조립.
 6. §6-3 측정, 비교 문서, 최종 선택.

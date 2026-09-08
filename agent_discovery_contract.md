@@ -344,13 +344,14 @@ class Ranker(Protocol):
 | 이벤트 | 상태 | payload | 우리 처리 |
 |---|---|---|---|
 | `bourbon.friendship_changed` | **있음** (bourbon-api) | `user_low, user_high, action, occurred_at` | friends 미러 갱신 또는 캐시 무효화 |
-| `bourbon.user_topic_changed` | 정의해 요청 (topic-api) | `user_id, topic_id, visibility(변경 후), score, maturity, change: "opened" \| "closed" \| "updated" \| "removed", occurred_at` | `closed`/`removed` → row 삭제. `opened`/`updated` → row upsert (tier가 public/friends일 때만). `requester_topics`는 tier 무관 갱신 |
-| `bourbon.agent_visibility_changed` | 정의해 요청 (bourbon-api) | `user_id, visibility, occurred_at` | private → 그 주인 row 전부 삭제 |
+| `bourbon.user_topics_snapshot` | 정의해 요청 (topic-api, deferq 도입 필요) | `user_id, revision, occurred_at, topics: [{topic_id, visibility, score, score_version, updated_at}]` — 유저의 **현재 열린 집합 전체** | `revision`이 더 크면 그 유저의 열린 row를 스냅샷으로 통째로 교체(없어진 것은 삭제). 델타가 아니라 스냅샷이라 놓친 닫힘이 다음 스냅샷에서 고쳐진다. 상세 `agent_discovery_events.md` §2-1 |
+| `bourbon.personal_agent_visibility_changed` | 정의해 요청 (bourbon-api — **visibility 필드 자체가 아직 모델에 없음**) | `owner_user_id, agent_id, visibility, occurred_at` | private → 그 주인 row 전부 삭제 |
 | `bourbon.agent_maturity_changed` | 정의해 요청 (성숙도 컴포넌트, 예정) | `user_id, maturity, occurred_at` | `agents` 갱신 |
-| `bourbon.conversation_started` | 정의해 요청 (세션 소유자: bourbon-api 또는 bourbon-agent, 미정) | `viewer_user_id, agent_owner_user_id, started_at, entry: {kind: "recommend_explicit" \| "discover_by_topic" \| "discover_for_you" \| "direct", recommendation_id?}` | `interactions` 기록, `popularity` 증가 |
-| `bourbon.conversation_ended` | 정의해 요청 (같은 곳) | `viewer_user_id, agent_owner_user_id, started_at, ended_at, turns` | `interactions` 보강 |
+| `bourbon.personal_agent_seated` | 정의해 요청 (bourbon-api — 타인 agent와의 대화는 group room **착석**으로 시작된다) | `room_id, agent_id, owner_user_id, actor_user_id, entry, recommendation_id?, occurred_at` | `interactions` 기록, `popularity` 증가. `recommendation_id`는 클라이언트가 착석 요청에 실어야 온다 |
+| `bourbon.personal_agent_turn` | 정의해 요청 (bourbon-agent 권고, 대안 bourbon-api) | `room_id, agent_id, owner_user_id, speaker_user_id, occurred_at` | `interactions`의 turn 수·지속 보강 |
+| `bourbon.user_deactivated` | **있음** (bourbon-api) | `user_id` | 그 유저의 모든 데이터 삭제 |
 
-`change`에 "변경 전 값"은 요구하지 않는다. 우리 저장소에 row가 있는지로 충분하다. `visibility`가 private/hidden이면 삭제, 아니면 upsert.
+topic 스냅샷의 tier 범위(public·friends만 / private 포함)와 turn 이벤트 발행 주체는 `agent_discovery_events.md` §5의 오너 확인 항목이다.
 
 ### 9-2. 우리가 내는 것
 

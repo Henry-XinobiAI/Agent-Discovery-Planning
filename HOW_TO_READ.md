@@ -107,6 +107,7 @@ recsys_opensource/README.md §2 배치표에서 관심 있는 칸을 찾고
 | `recsys_opensource/storage_sizing.md` | 저장소 규모·비용 — **단계별 구성(20만 → 100만 → 1천만 → 1억, `D26`)과 전환 신호(§8)** · 1억 상한의 형태 비교(§2–§5) · managed 대 자체 운영(§6) | 초안. 권고는 §8·6-6. 단계 경계는 유저 수가 아니라 계측이 정한다 |
 | `agent_discovery_redesign.md` | **먼저 읽을 것.** 재설계 출발점 — 제품 모델, 세 타입, visibility/friend 필터, 이벤트, 두 구현안, 비교 프로토콜 | 2026-09-08. **자립 문서** — 이전 결정·항목 번호를 인용하지 않고 전제로 삼지 않는다 |
 | `agent_discovery_contract.md` | 재설계의 공통 계약 — route, 스키마, 인터페이스, 불변식, 결정 로그, 이벤트 | 초안 2026-09-08. 두 구현안과 비교 측정의 공통 기반 |
+| `agent_discovery_events.md` | 받을 이벤트·요청할 이벤트·발행 지점·오너 확인 항목 | 초안 2026-09-08. `inbound_event_contract.md`(rev 2)의 원칙을 이어받되 Gorse 전제 없이 다시 씀 |
 | `recsys_build_vs_adopt.md` | 후보 생성을 기존 오픈소스로 하나 우리 인덱스로 하나 — 장단점·채택 장애·혼합·저장소 단가·지연 | 논의 정리(2026-09-07). **자립 문서** — 이전 결정·항목 번호를 인용하지 않는다. 받으면 결정 레지스터의 Gorse 관련 결정이 재판단 대상 |
 | `recsys_opensource/feedback_semantics.md` | feedback 타입 → 엔진 동작 | 초안. `문서`(v0.5.11 **소스 독해**) — `gorse.md` §11 실측과 등급이 다르다 |
 
