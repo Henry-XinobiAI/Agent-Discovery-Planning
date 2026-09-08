@@ -10,7 +10,7 @@
 
 ## 0. 한눈에
 
-| 타입 | route | 면 | 요청자 |
+| 타입 | route | API | 요청자 |
 |---|---|---|---|
 | ① 명시 요청 | `POST /recommend/explicit` | 내부 `/api/internal/svc/agent-discovery` | body `user_id` |
 | ② topic별 목록 | `GET /discover/by-topic` (섹션 개요), `GET /discover/by-topic/{topic_id}` (섹션 한 개, 페이지) | 클라이언트 `/api/svc/agent-discovery` | edge-auth `x-user-id` |
@@ -21,14 +21,14 @@
 
 ---
 
-## 1. 두 면
+## 1. 두 API
 
 topic-api와 같은 방식이다. 라우터는 하나씩이고, 앱이 두 prefix로 두 번 붙인다.
 
-- **클라이언트 면** `/api/svc/agent-discovery/…`: edge-auth 사이드카가 `x-user-id`를 덮어쓴다. 요청자는 그 헤더다. 헤더가 없거나 UUID가 아니면 "인증 안 됨"이 아니라 "검사를 우회했다"이므로 403.
-- **내부 면** `/api/internal/svc/agent-discovery/…`: 게이트웨이의 내부 게이트만 지난다. edge-auth가 없으므로 **어떤 route도 `x-user-id`를 읽지 않는다.** 요청자는 body나 경로의 `user_id`다.
+- **클라이언트 API** `/api/svc/agent-discovery/…`: edge-auth 사이드카가 `x-user-id`를 덮어쓴다. 요청자는 그 헤더다. 헤더가 없거나 UUID가 아니면 "인증 안 됨"이 아니라 "검사를 우회했다"이므로 403.
+- **내부 API** `/api/internal/svc/agent-discovery/…`: 게이트웨이의 내부 게이트만 지난다. edge-auth가 없으므로 **어떤 route도 `x-user-id`를 읽지 않는다.** 요청자는 body나 경로의 `user_id`다.
 
-타입 ①은 내부 면에만 있다(호출자가 bourbon-agent). 타입 ②③은 클라이언트 면이 본 면이고, 내부 미러는 시험·운영 확인·다른 서비스 용이다.
+타입 ①은 내부 API에만 있다(호출자가 bourbon-agent). 타입 ②③은 클라이언트 API가 기본이고, 내부 미러는 테스트·운영 확인·다른 서비스 용이다.
 
 ---
 
@@ -52,7 +52,7 @@ topic-api와 같은 방식이다. 라우터는 하나씩이고, 앱이 두 prefi
 ### 2-2. 타입 ② `GET /discover/by-topic`
 
 ```
-GET /discover/by-topic?per_section=5&sections=10&lang=ko      // 기본값 5·10은 자리표시자 — 섹션 크기와 페이지는 미정(결정 레지스터 O9)
+GET /discover/by-topic?per_section=5&sections=10&lang=ko      // 기본값 5·10은 플레이스홀더 — 섹션 크기와 페이지는 미정(결정 레지스터 O9)
 ```
 
 요청자의 grounding된 topic 중 preference 점수 상위 `sections`개를 섹션으로, 섹션마다 agent `per_section`명. 응답의 각 섹션에 `next_cursor`가 있고, 더 보기는 아래 route다.
@@ -71,7 +71,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
 
 입력은 요청자 id뿐이다. persona·topic·로그는 서버가 이미 갖고 있다.
 
-**가정**: 요청자가 이미 대화를 열었던 agent는 for-you에서 제외한다(제품이 다르게 정하면 바꾼다). 합성 정답도 같은 가정을 쓴다.
+**가정**: 요청자가 이미 대화를 시작한 agent는 for-you에서 제외한다(제품이 다르게 정하면 바꾼다). 합성 정답도 같은 가정을 쓴다.
 
 ### 2-3-1. ②③의 내부 미러
 
@@ -80,7 +80,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
 ### 2-4. 공통 규칙
 
 - `lang`은 topic 라벨의 언어 힌트다. 응답은 항상 `ko`, `en` 두 키를 주고 없으면 null이다.
-- 페이지는 불투명 `cursor`다. 오프셋을 노출하지 않는다(사전 계산 결과가 갈아엎어지면 오프셋은 의미가 없다).
+- 페이지네이션은 opaque `cursor`다. 오프셋을 노출하지 않는다(사전 계산 결과가 갈아엎어지면 오프셋은 의미가 없다).
 - 요청자 본인의 agent는 어느 타입에서도 결과에 없다.
 
 ---
@@ -92,14 +92,14 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
 ```json
 {
   "agent_id": "uuid",              // personal agent id
-  "owner_user_id": "uuid",         // agent 주인. agent_id에서 유도되지만 클라이언트가 유도하지 않게 준다
+  "owner_user_id": "uuid",         // agent 소유자. agent_id에서 유도되지만 클라이언트가 유도하지 않게 준다
   "position": 1,                   // 이 응답 안의 순위 (1부터). 페이지가 이어져도 계속 증가
   "matched_topics": [              // 이 agent가 여기 있게 만든 topic들
     {
       "topic_id": "…",
       "labels": {"ko": "캠핑", "en": "Camping"},
       "requested": true,           // 타입 ①: 뽑힌 topic 중 하나인가. 타입 ②: 섹션 topic이면 true
-      "owner_note": {"ko": "…", "en": null}   // 주인이 그 topic에 쓴 한 문장(topic-api 유저 topic의 descriptions). 응답 직전 hydration으로 채움. 선택, null 가능
+      "owner_note": {"ko": "…", "en": null}   // 소유자가 그 topic에 쓴 한 문장(topic-api 유저 topic의 descriptions). 응답 직전 hydration으로 채움. 선택, null 가능
     }
   ],
   "signals": {                     // 왜 여기 있나 — 랭커 feature 중 보여줘도 되는 것 (§7)
@@ -113,9 +113,9 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
 }
 ```
 
-`owner_note`는 주인이 쓴 글이다. **응답에 실리는 것으로 여행이 끝난다.** 로그, 예외, 결정 로그, Sentry에 들어가지 않는다.
+`owner_note`는 소유자가 쓴 글이다. **응답에 싣는 것으로 끝이다.** 로그, 예외, 결정 로그, Sentry에 들어가지 않는다.
 
-### 3-2. 타입별 봉투
+### 3-2. 타입별 envelope
 
 **① `POST /recommend/explicit` → 200**
 
@@ -147,7 +147,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
 }
 ```
 
-섹션이 비면(그 topic을 연 타인이 없음) 섹션은 `agents: []`로 남긴다. 섹션이 아예 없으면(요청자가 topic이 없음) `sections: []`.
+섹션이 비면(그 topic을 공개한 타인이 없음) 섹션은 `agents: []`로 남긴다. 섹션이 아예 없으면(요청자가 topic이 없음) `sections: []`.
 
 **③ `GET /discover/for-you` → 200**
 
@@ -167,7 +167,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
 | 상태 | 언제 | 타입 |
 |---|---|---|
 | 200 + 빈 목록 | 요청자에게 보일 수 있는 agent가 없다. "없다"와 "있지만 가려졌다"를 구분하는 값은 없다(§5-5) | 모두 (①은 `empty: true`, ②는 빈 `agents`, ③은 빈 `agents`) |
-| 403 | 클라이언트 면에서 `x-user-id` 없음/비정상 | ②③ |
+| 403 | 클라이언트 API에서 `x-user-id` 없음/비정상 | ②③ |
 | 404 | `by-topic/{topic_id}`의 topic이 요청자 것이 아님 | ② |
 | 422 | `topic_text`에서 확정된 topic이 0개 (요청이 모호함) | ① |
 | 503 | topic 확정을 시도하지 못했다(LLM·topic-api 무응답), 또는 저장소 무응답 | 모두 |
@@ -176,7 +176,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
 
 ### 3-4. `degraded`
 
-응답이 완전하지 않지만 답할 수 있을 때. 값은 요청자 개인이나 특정 주인에 관한 사실을 새기지 않는 것만 허용한다.
+응답이 완전하지 않지만 답할 수 있을 때. 값은 요청자 개인이나 특정 소유자에 관한 사실을 드러내지 않는 것만 허용한다.
 
 | 값 | 뜻 |
 |---|---|
@@ -196,7 +196,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
         타입별          A/B가 다름          공통                 공통      공통
 ```
 
-### 4-1. 질의
+### 4-1. 쿼리
 
 ```python
 @dataclass(frozen=True)
@@ -232,10 +232,10 @@ class CandidateSource(Protocol):
     async def candidates(self, query: TopicQuery | UserQuery) -> Sequence[SourceHit]: ...
 ```
 
-- 소스는 **tier를 반드시 붙인다.** tier를 모르는 소스(예: 엔진이 준 agent 목록)는 뒤의 필터가 열린 row 저장소에서 tier를 조회해 붙이고, row가 없으면 버린다. 즉 엔진 결과는 후보를 좁힐 뿐 노출을 허가하지 못한다.
+- 소스는 **tier를 반드시 붙인다.** tier를 모르는 소스(예: 엔진이 준 agent 목록)는 뒤의 필터가 공개된 row 저장소에서 tier를 조회해 붙이고, row가 없으면 버린다. 즉 엔진 결과는 후보를 좁힐 뿐 노출을 허가하지 못한다.
 - 한 타입이 소스 여러 개를 쓸 수 있다. 타입 ③은 `popularity + content_similarity + cf_*`.
-- 소스는 `limit`보다 넉넉히 낸다(필터에서 빠지는 양을 감안, 예: 3배). 부족하면 파이프라인이 한 번 더 넉넉히 요청한다.
-- A안은 `cf_engine`(Gorse 등)과 `topic_index`(OpenSearch 또는 B의 색인), B안은 `topic_index`, `popularity`, `content_similarity`, `cf_item`을 구현한다. 혼합은 소스 조합 설정이다.
+- 소스는 `limit`보다 넉넉히 반환한다(필터에서 빠지는 양을 감안, 예: 3배). 부족하면 파이프라인이 한 번 더 넉넉히 요청한다.
+- A안은 `cf_engine`(Gorse 등)과 `topic_index`(OpenSearch 또는 B의 인덱스), B안은 `topic_index`, `popularity`, `content_similarity`, `cf_item`을 구현한다. 혼합은 소스 조합 설정이다.
 
 ### 4-3. visibility 필터
 
@@ -263,18 +263,18 @@ class Ranker(Protocol):
 
 타입 ①은 `score` 앞에 커버리지 정렬이 온다: `(coverage desc, score desc)`. 타입 ②③은 `score desc`. 처음엔 가중합(가중치는 설정 파일), 로그가 쌓이면 학습 모델로 교체하되 인터페이스는 같다.
 
-### 4-5. 조립
+### 4-5. 응답 조립
 
-`RecommendedAgent`를 만들고 라벨·owner_note를 채운다(hydration). hydration은 응답 직전이고 실패하면 `hydration_partial`. **응답 직전에 열린 row 존재를 다시 확인**한다(§5 불변식 4).
+`RecommendedAgent`를 만들고 라벨·owner_note를 채운다(hydration). hydration은 응답 직전이고 실패하면 `hydration_partial`. **응답 직전에 공개된 row가 존재하는지 다시 확인**한다(§5 불변식 4).
 
 ---
 
 ## 5. 불변식 — 두 안 모두, 언제나
 
-1. **저장소에는 열린 row만 있다.** `(topic_id, owner, tier ∈ {public, friends})`. private·hidden은 들어오지 않고, 닫히면 지운다. agent private면 그 주인의 row 전부를 지운다.
-2. **friends row는 요청자가 주인의 친구일 때만 통과한다.** 친구 여부는 bourbon-api가 기준이다.
+1. **저장소에는 공개된 row만 있다.** `(topic_id, owner, tier ∈ {public, friends})`. private·hidden은 들어오지 않고, 비공개로 되돌리면 지운다. agent가 private이면 그 소유자의 row 전부를 지운다.
+2. **friends row는 요청자가 소유자의 친구일 때만 통과한다.** 친구 여부는 bourbon-api가 기준이다.
 3. **친구 목록을 못 읽으면 friends tier는 빠진다(fail-closed).** 응답은 `degraded: ["friends_unavailable"]`, 상태는 200.
-4. **사전 계산 결과는 노출을 허가하지 않는다.** 응답 직전에 현재 열린 row로 다시 거른다.
+4. **사전 계산 결과는 노출을 허가하지 않는다.** 응답 직전에 현재 공개된 row로 다시 거른다.
 5. **응답은 "가려짐"과 "없음"을 구별하지 못한다.** 가려진 개수, 표시, 순위 공백이 없다.
 6. **요청자 본인은 결과에 없다.**
 7. **유저의 글(topic_text, context, owner_note)은 로그·예외·Sentry에 원문으로 실리지 않는다.** 결정 로그에도 없다.
@@ -282,22 +282,22 @@ class Ranker(Protocol):
 
 ---
 
-## 6. 열린 row 저장 모델 — 저장소 무관
+## 6. 공개된 row 저장 모델 — 저장소 무관
 
 두 안이 공유하는 최소 모델. 어느 저장소(MySQL/PostgreSQL/DynamoDB/Redis/OpenSearch)에 두든 이 모양이다.
 
 | 집합 | 키 | 값 | 갱신 |
 |---|---|---|---|
-| `open_topic_rows` | `(topic_id, tier, owner_user_id)` | `topic_score`(주인 쪽 preference 강도), `topic_maturity`, `updated_at` | topic 변경 이벤트. 닫힘 = 삭제 |
-| `open_topic_rows` 보조 색인 | `owner_user_id` | → 그 주인의 row들 | agent private 시 일괄 삭제용 |
-| `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, `updated_at` | `bourbon.user_registered`로 생성(추천 대상의 모집단), 공개 여부·성숙도 이벤트로 갱신, `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재읽기가 만든다 |
-| `requester_topics` (**O2 대기**) | `user_id` | 요청자 자신의 topic 목록(점수 포함). 타입 ②의 섹션과 타입 ③의 content 질의에 씀 | 두 안: (a) 미러하지 않고 요청 시 topic-api 내부 route로 읽는다(권고), (b) 미러하되 주인 키 아래에만 두고 후보 조회에는 쓰지 않는다. 결정 레지스터 O2 |
+| `open_topic_rows` | `(topic_id, tier, owner_user_id)` | `topic_score`(소유자 쪽 preference 강도), `topic_maturity`, `updated_at` | topic 변경 이벤트. 비공개 전환 = 삭제 |
+| `open_topic_rows` 보조 인덱스 | `owner_user_id` | → 그 소유자의 row들 | agent private 시 일괄 삭제용 |
+| `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, `updated_at` | `bourbon.user_registered`로 생성(추천 대상 풀), 공개 여부·성숙도 이벤트로 갱신, `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재조회가 만든다 |
+| `requester_topics` (**O2 대기**) | `user_id` | 요청자 자신의 topic 목록(점수 포함). 타입 ②의 섹션과 타입 ③의 content 쿼리에 씀 | 두 안: (a) 미러하지 않고 요청 시 topic-api 내부 route로 읽는다(권고), (b) 미러하되 소유자 키 아래에만 두고 후보 조회에는 쓰지 않는다. 결정 레지스터 O2 |
 | `friends` (선택) | `user_id` | 친구 id 집합 | `bourbon.friendship_changed`. 미러하지 않으면 요청 시 조회+TTL |
 | `popularity` | `owner_user_id` | 시간 감쇠 카운트 | 대화 시작 이벤트 |
 | `precomputed_for_you` | `user_id` | `[(owner_user_id, score, basis)]` top-K, `computed_at` | 배치 |
 | `interactions` | `(actor_user_id, owner_user_id, room_id)` | `started_at`, `reopened_count`, `turns`, `entry`, `recommendation_id` | `agent_dm_opened`로 생성, `message_created`(room_id 조인)로 `turns` 증가. CF 학습 입력 |
 
-타입 ①②의 조회는 `open_topic_rows[topic_id, public]` ∪ (`open_topic_rows[topic_id, friends]` ∩ friends(요청자)) 이고, 타입 ①은 topic ≤ 3개의 결과를 owner로 합쳐 커버 수를 센다. 엔진(A안)이 자기 저장소를 따로 가져도 위 집합은 그대로 있어야 한다. 불변식 1·4가 여기서 판정되기 때문이다.
+타입 ①②의 조회는 `open_topic_rows[topic_id, public]` ∪ (`open_topic_rows[topic_id, friends]` ∩ friends(요청자)) 이고, 타입 ①은 topic ≤ 3개의 결과를 owner로 합쳐 커버리지를 센다. 엔진(A안)이 자기 저장소를 따로 가져도 위 집합은 그대로 있어야 한다. 불변식 1·4가 여기서 판정되기 때문이다.
 
 ---
 
@@ -306,14 +306,14 @@ class Ranker(Protocol):
 | feature | 정의 | 범위 | 출처 | 타입 |
 |---|---|---|---|---|
 | `coverage` | 뽑힌 topic 중 가진 수 | 0~3 | topic_index | ① (1차 정렬 키) |
-| `topic_score` | 주인 쪽 preference 강도, matched topic 합 또는 최대 | 0~1 | open_topic_rows | ①② |
+| `topic_score` | 소유자 쪽 preference 강도, matched topic 합 또는 최대 | 0~1 | open_topic_rows | ①② |
 | `topic_maturity` | matched topic 성숙도 최대 | 0~1 | open_topic_rows (임시값 → 컴포넌트) | ①②③ |
 | `agent_maturity` | agent 성숙도 | 0~1 | agents | ①②③ |
-| `popularity` | 정의는 미정(결정 레지스터 O4). 첫 구현 자리표시자: 최근 N일 대화 시작 수, 시간 감쇠, 전체 최대로 정규화 | 0~1 | popularity | ③ (①②는 약한 가중) |
-| `content_similarity` | 요청자 topic 집합과 주인 topic 집합의 가중 겹침 | 0~1 | requester_topics × open_topic_rows | ③ |
-| `cf_score` | 아이템 이웃 또는 행렬 분해 점수, 소스 안에서 정규화. **학습 입력의 confidence는 "개설 1회"가 아니라 `1 + α·log(1 + turns) + β·reopen_count`** — 배우는 대화(길고 다시 찾는 대화)가 한 번 열고 끝난 대화보다 강한 신호다(오너 2026-09-08, 결정 레지스터 R16). α·β는 설정. 가중을 켜는 시점은 O14 | 0~1 | cf_item / cf_engine (입력: `interactions` + turn 카운터) | ③ |
+| `popularity` | 정의는 미정(결정 레지스터 O4). 첫 구현 플레이스홀더: 최근 N일 대화 시작 수, 시간 감쇠, 전체 최대로 정규화 | 0~1 | popularity | ③ (①②는 약한 가중) |
+| `content_similarity` | 요청자 topic 집합과 소유자 topic 집합의 가중 겹침 | 0~1 | requester_topics × open_topic_rows | ③ |
+| `cf_score` | 아이템 이웃 또는 행렬 분해 점수, 소스 안에서 정규화. **학습 입력의 confidence는 "대화 시작 1회"가 아니라 `1 + α·log(1 + turns) + β·reopen_count`** — 배우는 대화(길고 다시 찾는 대화)가 한 번 시작하고 끝난 대화보다 강한 신호다(오너 2026-09-08, 결정 레지스터 R16). α·β는 설정. 가중을 켜는 시점은 O14 | 0~1 | cf_item / cf_engine (입력: `interactions` + turn 카운터) | ③ |
 | `similar_users` | 이 agent와 대화한 유사 유저 수 | 정수 | cf_item | ③ (표시용) |
-| `recency` | 주인의 마지막 topic 갱신이 얼마나 최근인가 | 0~1 | open_topic_rows.updated_at | 모두, 작은 가중 |
+| `recency` | 소유자의 마지막 topic 갱신이 얼마나 최근인가 | 0~1 | open_topic_rows.updated_at | 모두, 작은 가중 |
 | `tier_is_friends` | 근거 row가 friends tier인가 | 0/1 | 필터 결과 | 모두. 친구를 살짝 올릴지는 제품 판단 |
 
 없는 feature는 0이고 `present`에 없다. 가중치는 설정이며 비교(재설계 §6)에서는 두 안이 같은 가중치를 쓴다.
@@ -356,16 +356,16 @@ class Ranker(Protocol):
 | 이벤트 | 상태 | payload | 우리 처리 |
 |---|---|---|---|
 | `bourbon.friendship_changed` | **있음** (bourbon-api) | `user_low, user_high, action, occurred_at` | friends 미러 갱신 또는 캐시 무효화 |
-| `bourbon.topics_updated` | **있음** (topic-api 워커, persona 동기화가 움직인 topic마다) | `user_id, topic_id, persona_revision, topic_revision` | 힌트. 유저 단위 debounce 뒤 내부 route `GET /users/{id}/topics?visibility=public&visibility=friends`(반복 파라미터)를 읽어 열린 row를 통째로 교체. 상세 `agent_discovery_events.md` §2-1 |
-| `bourbon.user_topic_settings_updated` | 우리가 정의, topic-api api 프로세스에 요청 (그 프로세스에 AMQP 연결 필요) | `user_id, topic_id, topic_revision, touched` | 같은 debounce → 같은 재읽기. **닫힘은 이 경로로만 오므로 핵심**. §2-2 |
-| `bourbon.personal_agent_visibility_changed` | 우리가 정의, bourbon-api에 요청 (`enabled` 재사용인지 새 필드인지 미정) | `owner_user_id, agent_id, discoverable, occurred_at` | `false` → 그 주인 row 전부 삭제 |
+| `bourbon.topics_updated` | **있음** (topic-api 워커, persona 동기화가 움직인 topic마다) | `user_id, topic_id, persona_revision, topic_revision` | 힌트. 유저 단위 debounce 뒤 내부 route `GET /users/{id}/topics?visibility=public&visibility=friends`(반복 파라미터)를 읽어 공개된 row를 통째로 교체. 상세 `agent_discovery_events.md` §2-1 |
+| `bourbon.user_topic_settings_updated` | 우리가 정의, topic-api api 프로세스에 요청 (그 프로세스에 AMQP 연결 필요) | `user_id, topic_id, topic_revision, touched` | 같은 debounce → 같은 재조회. **비공개 전환은 이 경로로만 오므로 핵심**. §2-2 |
+| `bourbon.personal_agent_visibility_changed` | 우리가 정의, bourbon-api에 요청 (`enabled` 재사용인지 새 필드인지 미정) | `owner_user_id, agent_id, discoverable, occurred_at` | `false` → 그 소유자 row 전부 삭제 |
 | `bourbon.agent_maturity_changed` | 정의해 요청 (성숙도 컴포넌트, 예정) | `owner_user_id, maturity, maturity_version, occurred_at` | `agents` 갱신 |
-| `bourbon.agent_dm_opened` | 우리가 정의, bourbon-api에 요청 (타인 agent와의 대화는 `AGENT_DM` room `A:B'`. `ensure_agent_dm_room`의 create·re-enter) | `room_id, actor_user_id, owner_user_id, agent_id, reopened, entry, recommendation_id?, occurred_at` | `interactions` 기록, `popularity` 증가. `recommendation_id`는 클라이언트가 열기 요청에 실어야 온다 |
+| `bourbon.agent_dm_opened` | 우리가 정의, bourbon-api에 요청 (타인 agent와의 대화는 `AGENT_DM` room `A:B'`. `ensure_agent_dm_room`의 create·re-enter) | `room_id, actor_user_id, owner_user_id, agent_id, reopened, entry, recommendation_id?, occurred_at` | `interactions` 기록, `popularity` 증가. `recommendation_id`는 클라이언트가 대화 시작 요청에 실어야 온다 |
 | `bourbon.message_created` | **있음** (bourbon-api) | `room_id, message_id, sender_id, sender_type, type, room_type` | `room_type == agent_dm`인 유저 메시지를 `room_id`로 `agent_dm_opened` 기록과 조인해 turn을 셈. 새 turn 이벤트 불필요 |
 | `bourbon.user_registered` | **있음** (bourbon-api, 활성화 전이) | `user_id, email` | `agents` row 생성(`discoverable=false`). `email`은 읽지 않는다 |
 | `bourbon.user_deactivated` | **있음** (bourbon-api) | `user_id` | 그 유저의 모든 데이터 삭제. `interactions`의 actor 쪽만 익명화 |
 
-진행 방식은 우리가 먼저 미러·발행·시험하고 그 뒤 요청한다. 재읽기 tier 범위는 결정 레지스터 O2다.
+진행 방식은 우리가 먼저 미러·발행·테스트하고 그 뒤 요청한다. 재조회 tier 범위는 결정 레지스터 O2다.
 
 ### 9-2. 우리가 내는 것
 
@@ -375,11 +375,11 @@ class Ranker(Protocol):
 
 ## 10. 버전과 호환
 
-세 봉투 모두 `contract_version: 1`을 갖는다. 필드 추가는 같은 버전, 필드 의미 변경이나 삭제는 버전을 올린다. 비교 기간에 A·B가 같은 버전으로 답해야 하고, `implementation`은 결정 로그에만 있고 응답에는 없다.
+세 envelope 모두 `contract_version: 1`을 갖는다. 필드 추가는 같은 버전, 필드 의미 변경이나 삭제는 버전을 올린다. 비교 기간에 A·B가 같은 버전으로 답해야 하고, `implementation`은 결정 로그에만 있고 응답에는 없다.
 
 ---
 
-## 11. 이 계약이 열어 둔 것
+## 11. 이 계약의 열린 항목
 
 - `fit`의 내용(제품 미확정). 자리만 있다.
 - `tier_is_friends`에 가중치를 줄지 (결정 레지스터 O12).
