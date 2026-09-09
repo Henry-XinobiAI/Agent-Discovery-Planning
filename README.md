@@ -7,7 +7,7 @@
 | 순서 | 문서 | 내용 | 상태 |
 |---|---|---|---|
 | 1 | [`agent_discovery_redesign.md`](agent_discovery_redesign.md) | 제품 모델(세 타입·visibility·friend·성숙도), 두 구현안(오픈소스 중심 / 직접 구현)과 혼합, 10만 합성 유저 비교 프로토콜, 열린 항목. 나머지 문서의 뿌리 | 출발점 |
-| 2 | [`decisions.md`](decisions.md) | 오너가 정한 것(R01–R19)과 정해지지 않은 것(O1–O17, O10은 닫힘). **본문이 이 표와 다르면 표가 맞다** | 유효 |
+| 2 | [`decisions.md`](decisions.md) | 오너가 정한 것(R01–R21)과 정해지지 않은 것(O1–O17, O10은 닫힘). **본문이 이 표와 다르면 표가 맞다** | 유효 |
 | 3 | [`agent_discovery_contract.md`](agent_discovery_contract.md) | 두 구현안이 똑같이 지키는 것: 타입별 route·요청·응답, 후보 소스/필터/랭커 인터페이스, 불변식 8개, 저장 모델, feature 표, 결정 로그 | 초안 |
 | 4 | [`agent_discovery_events.md`](agent_discovery_events.md) | 있는 이벤트의 소비, 우리가 먼저 정의할 이벤트, 발행 지점 필드 검증, 확인 항목 | 초안 rev 2 |
 | 5 | [`synthetic_population_spec.md`](synthetic_population_spec.md) | 비교의 정답 데이터를 만드는 생성기: 파라미터·순서·출력·정답·검증. §8은 서비스가 돌기 시작한 뒤 이벤트에서 파라미터를 자동으로 갈아 끼우는 절차 | 초안 |

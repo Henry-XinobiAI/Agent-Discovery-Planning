@@ -110,7 +110,7 @@ topic-api가 이미 grounding해 둔 요청자의 topic만 쓴다. LLM도 topic-
 
 인기도 → content → CF는 대체가 아니라 **누적**이다. 셋을 다 feature로 받는 랭커 하나가 순서를 정하고, 신호가 없을 때는 그 feature가 0이 된다.
 
-이 구조 덕에 **사전 계산은 활성 요청자에게만** 해도 화면에 구멍이 없다(R19). 셋 중 사전 계산인 것은 CF top-K 하나고 인기도·content는 요청 시 계산이라, 오랜만에 돌아온 유저의 첫 요청은 CF feature만 0인 완전한 목록을 받는다(신규 유저와 같다). 그 요청이 활성 신호가 되어 다음 배치에 든다. 후보(소유자) 쪽은 활동 여부로 빼지 않는다 — `recency`·`popularity`가 순위로 내리고, 하드 제외는 O17.
+이 구조 덕에 사전 계산을 **읽혔거나 활동한 유저만, 그 뒤에** 갱신해도 화면에 구멍이 없다(R19). 셋 중 사전 계산인 것은 CF top-K 하나고 인기도·content는 요청 시 계산이다. 오래된 항목은 한 번 그대로 서빙하고, 그 요청 뒤 워커 스윕이 다시 만든다. 항목이 없는 신규 유저는 CF feature만 0인 완전한 목록을 받는다. 타입 ③ 최종 목록은 점수 구간 안에서 섞어 같은 사람만 보이지 않게 한다(R20 — O15의 첫 답). 후보(소유자) 쪽은 활동 여부로 빼지 않는다 — `recency`·`popularity`가 순위로 내리고, 하드 제외는 O17.
 
 ### 2-4. "왜 맞는지 / 안 맞는지"
 
@@ -212,7 +212,7 @@ CF·인기도 신호(§2-3)에도 같은 술어가 걸린다. "비슷한 사람�
 
 | 역할 | 후보 | 저장소(허용 목록 안) |
 |---|---|---|
-| 타입 ③ CF + 인기도 + 유저 이웃 | Gorse (서비스형, 자체 스케줄러·대시보드, MySQL/PostgreSQL data store + cache store — Redis cache store는 Redis Stack 전용이라 ElastiCache 불가, 검증 §4-1) 또는 `implicit` (라이브러리형, 배치로 돌려 유저별 top-K를 `precomputed_for_you`에 씀. LightFM은 Python 3.14 빌드 실패로 제외) | Gorse: MySQL 또는 PostgreSQL 둘(data·cache). `implicit`: 결과만 DynamoDB(R18) |
+| 타입 ③ CF + 인기도 + 유저 이웃 | Gorse (서비스형, 자체 스케줄러·대시보드, MySQL/PostgreSQL data store + cache store — Redis cache store는 Redis Stack 전용이라 ElastiCache 불가, 검증 §4-1) 또는 `implicit` (라이브러리형, 배치로 돌려 유저별 top-K를 `cf_candidates`에 씀. LightFM은 Python 3.14 빌드 실패로 제외) | Gorse: MySQL 또는 PostgreSQL 둘(data·cache). `implicit`: 결과만 DynamoDB(R18) |
 | 타입 ①② topic → agent | OpenSearch (topic id를 term으로 인덱싱, 커버리지는 matched term 수로 정렬 가능) 또는 아래 B안의 인덱스 | OpenSearch 또는 PostgreSQL |
 | topic·friend·agent visibility 미러 | B안과 같은 PostgreSQL 테이블 | PostgreSQL |
 
@@ -225,9 +225,9 @@ CF·인기도 신호(§2-3)에도 같은 술어가 걸린다. "비슷한 사람�
 | 역할 | 구현 | 저장소 |
 |---|---|---|
 | topic → agent 인덱스 | `(topic_id, tier, agent_id, 점수)` 역인덱스. 타입 ①은 topic별 목록을 읽어 agent별 커버 수를 세고 정렬(topic ≤ 3이므로 목록 3개 합치기). 타입 ②도 같음 | PostgreSQL (B-tree 하나). 캐시 없음 — 실측 p50 0.8 ms라 필요 없다(검증 §2) |
-| 인기도 | 대화 시작 이벤트를 받아 시간 감쇠 카운터 | PostgreSQL 테이블. `open_topic_rows`와 같은 DB여야 visibility 술어를 조인으로 붙일 수 있다(R17). sorted set은 쓰지 않는다(R18) |
+| 인기도 | 대화 시작 이벤트를 받아 시간 감쇠 카운터 | PostgreSQL 테이블. `visible_topic_rows`와 같은 DB여야 visibility 술어를 조인으로 붙일 수 있다(R17). sorted set은 쓰지 않는다(R18) |
 | content 유사 유저 | 요청자 topic 집합과 겹침(Jaccard/가중 겹침) 또는 topic 벡터 kNN | PostgreSQL (같은 인덱스). 벡터 kNN은 pgvector / OpenSearch, 필요할 때만 |
-| CF | 아이템 기반 이웃: 대화 로그에서 agent 동시 출현 → 이웃 목록. 또는 `implicit` 라이브러리로 ALS를 배치로 돌려 유저별 top-K를 DynamoDB `precomputed_for_you`에 저장. **`implicit`/LightFM 같은 recsys 라이브러리를 쓰면 그것은 A안(라이브러리형)이다** — B안의 CF는 우리가 쓴 동시 출현·이웃 계산이다(O8) | 이웃 테이블은 PostgreSQL(술어 조인), 유저별 top-K는 DynamoDB `precomputed_for_you`, 로그는 PostgreSQL `interactions` (R18) |
+| CF | 아이템 기반 이웃: 대화 로그에서 agent 동시 출현 → 이웃 목록. 또는 `implicit` 라이브러리로 ALS를 배치로 돌려 유저별 top-K를 DynamoDB `cf_candidates`에 저장. **`implicit`/LightFM 같은 recsys 라이브러리를 쓰면 그것은 A안(라이브러리형)이다** — B안의 CF는 우리가 쓴 동시 출현·이웃 계산이다(O8) | 이웃 테이블은 PostgreSQL(술어 조인), 유저별 top-K는 DynamoDB `cf_candidates`, 로그는 PostgreSQL `interactions` (R18) |
 | 재계산 | 이벤트 도착 시 해당 유저 row만 갱신(증분). CF/인기도만 주기 배치 | |
 
 **B안의 장점**: 커버리지 정렬과 friends 필터가 인덱스 구조 그 자체다. 재계산이 "바뀐 유저의 row"로 국소화된다. 컴포넌트가 우리 API와 워커 둘이다. 저장소가 플랫폼에 이미 있고 운영 절차가 있는 것(PostgreSQL, DynamoDB)이다. **B안이 어려운 점**: CF·평가·튜닝을 우리가 만들고 검증해야 한다. 오픈소스 엔진이 무료로 주는 대시보드·A/B·지표를 직접 만든다. 유저가 늘어 인덱스가 한 노드를 넘을 때의 샤딩을 우리가 설계한다. "검증된 recsys"라는 신뢰를 우리 테스트로 대신해야 한다.
@@ -247,7 +247,7 @@ CF·인기도 신호(§2-3)에도 같은 술어가 걸린다. "비슷한 사람�
 | 타입 ①②③ 각각의 요청 지연 시간 p50 / p95 (동시성 고정) | **CF 품질**: 합성 데이터에 심어 둔 잠재 구조가 있어야 recall@K가 의미 있다 |
 | 재계산 시간, 그 동안 CPU·RAM | **content 품질**: 합성 persona의 topic 분포가 실제와 닮아야 한다 |
 | 저장 용량, 월 비용(도쿄 단가) | |
-| 컴포넌트 수, 장애 시 동작(엔진 다운, `precomputed_for_you` 비어 있음, bourbon-api 불통) | |
+| 컴포넌트 수, 장애 시 동작(엔진 다운, `cf_candidates` 비어 있음, bourbon-api 불통) | |
 | 증분 갱신 지연 시간(이벤트 → 추천 반영) | |
 
 **합성 데이터 생성기가 비교의 절반**이다. 두 시스템이 같은 정답을 상대해야 하므로 생성기 스펙을 먼저 고정한다.
@@ -279,8 +279,8 @@ CF·인기도 신호(§2-3)에도 같은 술어가 걸린다. "비슷한 사람�
 | 지연 시간 | 타입별 p50/p95, 동시성 1·10·50. text → topic 단계는 둘이 같으므로 분리 측정해 뺀 값도 기록 |
 | 재계산 | 전체 재계산 1회 시간과 자원, 이벤트 1건 반영 지연 시간 |
 | 저장 | 저장소별 용량(10만·100만), 도쿄 월 단가로 환산 |
-| 품질 | recall@10, NDCG@10(타입 ③), 커버리지 위반 0건(타입 ①), 콜드스타트 유저(로그 0)에서의 결과 |
-| 운영 | 컴포넌트 수, 장애 주입 3종(엔진 / `precomputed_for_you` 비어 있음 / bourbon-api)의 응답 |
+| 품질 | recall@10, NDCG@10(타입 ③ — R20 섞기 **전** 순서로 잰다), 커버리지 위반 0건(타입 ①), 콜드스타트 유저(로그 0)에서의 결과 |
+| 운영 | 컴포넌트 수, 장애 주입 3종(엔진 / `cf_candidates` 비어 있음 / bourbon-api)의 응답 |
 | 확장 | 10만 → 100만에서 위 값의 증가율 |
 
 ### 6-4. 공정성 규칙
@@ -299,7 +299,9 @@ CF·인기도 신호(§2-3)에도 같은 술어가 걸린다. "비슷한 사람�
 
 저장소 배치(R18)는 단계와 무관하게 처음부터 같다 — 규모가 커진다고 Redis에서 DynamoDB로 옮기는 일은 없다. 1천만 단계에서 다시 볼 것은 PostgreSQL 쪽이다: `interactions`의 turn 카운터(메시지마다 UPDATE)가 쓰기 부하로 보이면 그 카운터만 떼어낸다.
 
-유저 수에 비례해 매일 도는 비용은 `precomputed_for_you` 쓰기 하나이고, R19가 그것을 활성 유저 수에 비례하도록 바꾼다. 1천만 유저 중 30일 활성이 20 %면 DynamoDB 쓰기 비용도 1/5이다. 활성 창은 파라미터이고 합성 스펙 §8-1의 활성 분포 실측으로 정한다.
+유저 수에 비례해 매일 도는 비용은 `cf_candidates` 쓰기 하나이고, R19가 그것을 **그날 읽혔거나 활동한 유저 수**에 비례하도록 바꾼다(스윕이 그중 TTL이 지났거나 새 대화가 있는 유저만 다시 만든다). 1천만 유저 중 하루에 활동하는 유저가 10 %면 DynamoDB 쓰기 비용도 1/10이다. TTL·스윕 주기는 O13, 활성 분포는 합성 스펙 §8-1로 실측한다.
+
+top-K 생성 자체의 확장 규칙 하나: 유저 한 명의 top-K는 아이템 전부(= 유저 수)와의 내적이라 전체 비용은 (그날 갱신하는 유저 수 × 유저 수)에 비례한다. 이를 배치 행렬곱으로 처리하려면 R17의 유저별 후보 제한을 **공통 부분(public row가 있는 소유자, 전원 같음)의 배치 + 유저별 friends-only 후보의 작은 추가 패스**로 나눠야 한다. 그렇지 않으면 배치가 유저별 루프로 퇴화한다. 1천만 단계에서는 `implicit`의 근사 최근접(Faiss 등) 경로가 다음 수단이다.
 
 ---
 
