@@ -15,6 +15,8 @@
 | 유저 topic이 바뀌었다는 힌트 | **있음** `bourbon.topics_updated` (topic-api 워커, persona 동기화로 변경된 topic마다 1건) | 힌트로 받고 그 유저의 공개된 집합을 **재조회한다** (§2-1) | 없음 |
 | 유저가 visibility를 바꿨다는 힌트 | **없음.** `PATCH /me/topics/{topic_id}`는 api 프로세스에서 처리되고, 그 프로세스에는 AMQP 연결이 없다 | 같은 재조회 | topic-api api 프로세스에서 발행 (§2-2). **비공개 전환이 이 경로로만 오므로 가장 중요** |
 | 공개된 집합 조회 | **있음** `GET /api/internal/svc/topic/users/{id}/topics?visibility=public&visibility=friends` (반복 파라미터, 기본 `public`) — 항목마다 `score, visibility, revision, updated_at, support, descriptions` | 재조회의 실제 호출 | 없음 |
+| 요청자 자신의 프로필 조회 | **있음** 같은 route, `visibility=public&visibility=friends&visibility=private` — `hidden`은 요청하지 않는다(R22) | 타입 ②의 섹션·타입 ③ content 입력(O2 (a)일 때) | 없음 |
+| 카탈로그 그래프(edge 목록) | **없음.** 카탈로그는 `data/catalog_dist/catalog.json`으로 이미지에 실리고 내부 route가 없다 | content 유사도의 계층 감쇠(O18)에 최단 hop 거리가 필요 | topic-api 내부 route (§2-8) |
 | agent 공개 여부 | **미정.** `Agent.enabled`가 그 역할을 할지 새 필드가 생길지 결정 전(오너) | 결정 뒤 이벤트 하나 | 결정 뒤 (§2-3) |
 | friend 관계 변화 | **있음** `bourbon.friendship_changed` | 구독 | 없음 |
 | 유저 가입 (추천 대상 agent의 등장) | **있음** `bourbon.user_registered` (`CREATED → ACTIVATED` 전이에서 발행) | 구독 → `agents` row 생성 (§2-7) | 없음 |
@@ -66,7 +68,7 @@ class TopicUpdatedPayload(BaseModel):     # topic-api worker/events.py 그대로
     topic_revision: PositiveInt
 ```
 
-**우리 처리**: 리스너는 `user_id`만 꺼내 유저 단위 debounce(수 초, 상한 1분)를 걸고 끝. task가 `GET /internal/.../users/{id}/topics?visibility=public&visibility=friends`를 호출해 그 유저의 공개된 row를 **통째로 교체**한다(없어진 것 삭제, 새것 upsert). 한 동기화가 topic 10개를 변경해 이벤트 10건이 와도 재조회는 1회다.
+**우리 처리**: 리스너는 `user_id`만 꺼내 유저 단위 debounce(수 초, 상한 1분)를 걸고 끝. task가 `GET /api/internal/svc/topic/users/{id}/topics?visibility=public&visibility=friends`를 호출해 그 유저의 공개된 row를 **통째로 교체**한다(없어진 것 삭제, 새것 upsert). 한 동기화가 topic 10개를 변경해 이벤트 10건이 와도 재조회는 1회다.
 
 **왜 스냅샷 이벤트를 요청하지 않나**: topic-api가 이미 "힌트 + 재조회"를 계약으로 정했고, 조회 route가 스냅샷 그 자체다. 우리가 필요한 스냅샷을 이벤트에 실어 달라고 하면 topic-api가 같은 조회를 발행 시점에 대신 하는 것뿐이다. 놓친 비공개 전환은 다음 힌트의 재조회가 고친다. 재조회가 하루에 한 번도 일어나지 않는 유저(비활성)는 어차피 바뀐 것이 없다.
 
@@ -124,7 +126,7 @@ class AgentDmOpenedPayload(BaseModel):
     occurred_at: AwareDatetime
 ```
 
-**어트리뷰션 키의 전달 경로**: 우리 응답 `recommendation_id` → 클라이언트 → agent DM 열기 route(`POST /rooms/dm/{user_id}/agent`에 선택 body 또는 query `recommendation_id`, `entry`) → 이 이벤트. **클라이언트 변경이 같이 필요하다.** 이 연결이 끊기면 `recommendation_id: null`, `entry: "unknown"`으로 오고 그 대화는 "추천이 만들었는지 모름"으로 영구히 남는다. 소급 불가라 가장 먼저 해결한다.
+**어트리뷰션 키의 전달 경로**: 우리 응답 `recommendation_id` → 클라이언트 → agent DM 열기 route(`POST /rooms/dm/{user_id}/agent`에 선택 body 또는 query `recommendation_id`, `entry`) → 이 이벤트. **클라이언트 변경이 같이 필요하다.** 이 연결이 끊기면 `recommendation_id: null`, `entry: "unknown"`으로 오고 그 대화는 "추천이 만들었는지 모름"으로 영구히 남는다. 소급 불가라, 요청 범위에 넣는다면(O3) 가장 먼저 해결할 것을 권한다.
 
 **우리 처리**: `interactions`에 (actor, owner, room_id, started_at, entry, recommendation_id) 기록, `popularity[owner]` 증가, 결정 로그의 `recommendation_id`와 조인.
 
@@ -158,6 +160,21 @@ topic 단위는 재조회 결과의 `score`가 그 자리다. 컴포넌트가 `s
 | `bourbon.user_deactivated` | `user_id` | 그 유저의 공개된 row·agents·사전 계산·요청자 데이터 삭제. 상호작용 로그의 actor 쪽은 익명화 |
 | `bourbon.persona_updated` | `user_id, revision, changes[…]` | 직접 쓰지 않는다. topic id가 없다. `topics_updated`가 곧 온다는 뜻일 뿐 |
 
+### 2-8. 카탈로그 그래프 내부 route — 우리가 정의, topic-api에 요청
+
+이벤트가 아니라 조회다. content 유사도(O18)가 두 topic 사이의 카탈로그 거리(최단 hop)를 알아야 하는데, 카탈로그는 topic-api 이미지 안의 JSON 아티팩트(`data/catalog_dist/catalog.json`: topic 3,003개, parent edge 2,959개, 다중 부모 노드 10개의 DAG — 최단 hop이 필요한 이유)이고 이를 내주는 내부 route가 없다.
+
+```
+GET /api/internal/svc/topic/catalog/graph
+→ { built_at, topics: [{topic_id, selectable}], edges: [{topic_id, parent_id}] }
+```
+
+- `selectable: false`(drawer 43개)는 유저가 가질 수 없는 노드라 일치 노드가 아니고 거리 계산의 통과 노드로만 쓴다.
+- 확인 항목: 아티팩트의 topic에는 `status`와 병합 체인(`MAX_MERGE_HOPS` 16)이 있다. 병합·퇴역된 topic을 응답에서 빼는지, `status`를 함께 내주는지는 route를 정의할 때 topic-api와 정한다.
+- 카탈로그는 빌드 때만 바뀌므로 워커가 하루 1회 읽어 `built_at`이 바뀌었을 때만 우리 edge 테이블을 교체한다.
+- 대안은 아티팩트 파일을 우리 이미지에도 싣는 것인데, 두 서비스의 카탈로그 버전이 어긋날 수 있어 route 쪽을 권한다.
+- **검증(§3 방식)**: topic-api `topic/catalog/artifact.py`가 `edges: list[tuple[TopicId, TopicId]]`와 `built_at`을 이미 갖고 있고 `runtime/services.py`가 시작 시 메모리에 올리므로, route는 그 객체를 직렬화하는 일이다. 발행 지점 검증에 해당하는 "그 필드가 있는가"는 충족된다.
+
 ---
 
 ## 3. 발행 가능성 검증 — 그 repo가 그 지점에서 그 필드를 갖는가
@@ -178,6 +195,7 @@ topic 단위는 재조회 결과의 `score`가 그 자리다. 컴포넌트가 `s
 | `topics_updated` 소비 | — | — | ✅ 이미 발행 중. 우리 워커가 이름·payload를 맞춰야 함 |
 | `message_created` 소비 | — | `room_type` | ✅ payload에 있다. 값은 `RoomType` enum(`user_dm, agent_dm, group`), 두 repo 주석도 같다. `sender_type`은 `user / agent / system` |
 | `agent_maturity_changed` | 성숙도 컴포넌트 | — | 컴포넌트가 없어 검증 불가. 미룸 |
+| 카탈로그 그래프 route(§2-8) | topic-api `topic/catalog/artifact.py`, `runtime/services.py`가 시작 시 메모리에 올림 | `built_at, topics, edges` | ✅ 아티팩트 객체가 셋 다 갖고 있다 — route는 직렬화만 |
 
 결론: **새로 정의하는 이벤트 셋(`user_topic_settings_updated`, `agent_dm_opened`, `personal_agent_visibility_changed`) 모두 발행 지점에 필드가 있다.** 막힌 것은 둘 — topic-api api 프로세스의 AMQP 연결, 그리고 agent DM 열기 route가 `recommendation_id`·`entry`를 받는 일(클라이언트 포함).
 
@@ -190,7 +208,8 @@ topic 단위는 재조회 결과의 `score`가 그 자리다. 컴포넌트가 `s
 3. **CLI 발행 명령**: `cli publish topics-updated / topic-settings-updated / agent-dm-opened / message-created …`로 로컬 RabbitMQ에 넣어 왕복을 시험한다. 합성 데이터 생성기(재설계 §6-2)가 같은 발행기를 써서 10만 유저의 이벤트 스트림을 만든다.
 4. **재조회 task 하나**: `topics_updated`와 `user_topic_settings_updated` 두 리스너가 같은 debounce → 같은 task로 모인다. task는 내부 route를 `visibility=public&visibility=friends`로 조회해 공개된 row를 교체한다. 지금 코드는 `public`만 조회한다(`agent_discovery/composition.py`의 요청 tier) — 한 줄 변경.
 5. **turn 카운터**: `message_created`를 `room_type` 필터로 받아 `interactions`를 보강한다.
-6. 위가 로컬에서 도는 것을 확인한 뒤 §6의 요청서를 낸다.
+6. **카탈로그 edge 테이블**: §2-8 route가 생기기 전까지는 topic-api repo의 `catalog.json`을 로컬에서 읽어 같은 모양의 edge 테이블을 채우고, O18 제안의 hop 계산을 시험한다.
+7. 위가 로컬에서 도는 것을 확인한 뒤 §6의 요청서를 낸다.
 
 ---
 
@@ -199,7 +218,7 @@ topic 단위는 재조회 결과의 `score`가 그 자리다. 컴포넌트가 `s
 1. ~~agent DM의 친구 게이트~~ **답 있음(2026-09-08)**: 친구가 아니어도 대화를 시작할 수 있게 한다. 방법은 bourbon-api가 정하고(DM 유력), 우리 이벤트는 그에 맞춰 조정한다. 추천은 "public agent는 누구에게나 열린다"를 전제한다.
 2. **agent 공개 여부의 필드**: `enabled` 재사용인지 새 필드인지. 결정 전까지 §2-3은 미러만 하고 소비하지 않는다.
 3. **`recommendation_id`의 전달 경로**: 클라이언트가 agent DM 열기 요청에 실어야 한다. 타입 ①은 bourbon-agent의 카드 → 클라이언트 → route. 이 전달 경로를 지금 요청 범위에 넣는가.
-4. **재조회 tier 범위**: `visibility=public&visibility=friends`만 조회해 저장하고, 타입 ②③에 필요한 요청자 자신의 topic 목록은 요청 시 topic-api를 조회한다(권고). 아니면 요청자 자신의 것은 tier 무관하게 미러하되 소유자 키 아래에만 둔다.
+4. ~~재조회 tier 범위~~ **답 있음(2026-09-09, R22)**: 타인 row는 `visibility=public&visibility=friends`만 조회해 저장한다. 요청자 자신의 프로필은 `public`·`friends`·`private`이고 `hidden`은 읽지 않는다. 남은 것은 어디서 읽나(O2) — 요청 시 topic-api 조회(권고) 또는 소유자 키 아래에만 미러.
 5. **topic-api 워커 0 replicas**: prod에서 persona 동기화가 안 돌면 `topics_updated`도 없다. 우리 시험은 dev에서 하되, prod 시점에는 이 전제가 풀려 있어야 한다.
 6. **재활성 이벤트가 없다.** bourbon-api에는 `user_registered`(활성화 전이)와 `user_deactivated`만 있고, 탈퇴 뒤 돌아오는 유저를 알리는 이벤트는 없다. 돌아오면 `user_registered`가 다시 나오는지, 아니면 조용히 재활성되는지 확인이 필요하다. 조용하면 우리 `agents` row가 없는 채로 topic 이벤트가 오므로, 재조회 task가 `agents` row를 **없으면 만든다**로 방어한다.
 
@@ -209,7 +228,7 @@ topic 단위는 재조회 결과의 `score`가 그 자리다. 컴포넌트가 `s
 
 | 받는 곳 | 묶음 | 선행 |
 |---|---|---|
-| topic-api | api 프로세스 AMQP 연결 + `user_topic_settings_updated` 발행(`patch_my_topic` 1곳) | §5-4는 무관. 바로 가능 |
+| topic-api | api 프로세스 AMQP 연결 + `user_topic_settings_updated` 발행(`patch_my_topic` 1곳); 카탈로그 그래프 내부 route(§2-8) | 이벤트는 바로 가능. route는 O18이 계층 감쇠를 채택할 때 |
 | bourbon-api | `agent_dm_opened` 발행(`ensure_agent_dm_room` 2분기) + route에 `recommendation_id`·`entry` 선택 파라미터; 공개 여부 결정 뒤 `personal_agent_visibility_changed` | §5-1, §5-2, §5-3 |
 | 클라이언트 | agent DM 열기 요청에 `recommendation_id`·`entry` | §5-3 |
 | bourbon-agent | 타입 ① 호출을 새 계약으로(요청자 = 실제 말한 사람. 자기 agent에게 묻는 경우 소유자와 같다. 타인의 agent 방에서 묻는 경우가 제품에 있다면 그 사람이어야 하는데, 지금 코드는 항상 agent 소유자를 보낸다), 응답의 `recommendation_id`를 카드에 실어 전달 | 계약 확정 |
