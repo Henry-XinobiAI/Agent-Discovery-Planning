@@ -133,7 +133,7 @@ LLM 확장은 비용이 있으므로 두 구현안 비교에서는 **쿼리 200�
 | 비공개 전환 | `close_rate` 이벤트 뒤 그 row가 결과에 나온 건수 | 0건 (재조회 지연 시간 안에서는 허용, 지연 시간 기록) |
 | 탈퇴 | 탈퇴 유저의 agent가 결과에 나온 건수 | 0건 |
 
-정답은 생성기가 파일로 낸다. 평가기는 두 구현안의 응답과 이 파일만 비교한다.
+정답은 생성기가 파일로 낸다. 평가기는 두 구현안의 **결정 로그 `ranked`(섞기 전 순서, R20)**와 이 파일만 비교한다 — 응답 본문은 구간 안에서 섞여 있어 정확도 지표의 입력이 아니다.
 
 ---
 
@@ -161,7 +161,7 @@ LLM 확장은 비용이 있으므로 두 구현안 비교에서는 **쿼리 200�
 ## 6. 검증 — 생성기 자체가 맞는지
 
 1. **두 적재 경로의 결과 일치**: (가) 이벤트 리플레이 뒤 저장소 상태 == (나) 직접 적재 상태. row 단위 diff 0.
-2. **불변식**: 저장소에 private/hidden row 없음, 탈퇴 유저 row 없음, `discoverable=false` 소유자의 row 없음. 직접 적재 (나)도 같은 조건으로 걸러 넣는다: `user_topics.parquet`에서 visibility ∈ {public, friends}이고 소유자의 `discoverable=true`이고 `deactivated_at`이 null인 행만 `open_topic_rows`로.
+2. **불변식**: 저장소에 private/hidden row 없음, 탈퇴 유저 row 없음, `discoverable=false` 소유자의 row 없음. 직접 적재 (나)도 같은 조건으로 걸러 넣는다: `user_topics.parquet`에서 visibility ∈ {public, friends}이고 소유자의 `discoverable=true`이고 `deactivated_at`이 null인 행만 `visible_topic_rows`로.
 3. **분포 재현**: 생성된 topic 수·degree·대화 수의 분포가 파라미터와 일치(KS 검정 또는 퍼센타일 비교).
 4. **민감도**: `opener_rate`, `affinity` 노이즈, `off_cluster_topic_rate`를 ±50% 흔들어 §4 지표가 어떻게 움직이는지 표로 남긴다. 가정이 결과를 지배하는 파라미터를 알아 두어야 베타 뒤 어느 실측을 먼저 넣을지 정할 수 있다.
 5. **재현성**: 같은 `params.json`과 시드로 두 번 생성해 파일 해시가 같다.
@@ -193,11 +193,11 @@ LLM 확장은 비용이 있으므로 두 구현안 비교에서는 **쿼리 200�
 | `revisit_rate` | `reopened=true` 시작 횟수 / 전체 시작 횟수 | 같은 테이블 |
 | `turns_per_conversation` | room당 `message_created` 수의 분포 | turn 카운터 (이벤트 정의서 §2-5) |
 | `popularity_skew` | agent별 대화 시작 횟수의 순위-빈도 기울기 | 같은 테이블을 owner로 집계 |
-| `topics_per_user`, `opener_rate`, `tier_mix_of_opened` | 유저별 공개된 row 수, 공개한 유저 비율, tier 비율 | `open_topic_rows` — 단, private/hidden은 우리 저장소에 없으므로 `topics_per_user` 전체는 topic-api 내부 read로만 잴 수 있다 |
+| `topics_per_user`, `opener_rate`, `tier_mix_of_opened` | 유저별 공개된 row 수, 공개한 유저 비율, tier 비율 | `visible_topic_rows` — 단, private/hidden은 우리 저장소에 없으므로 `topics_per_user` 전체는 topic-api 내부 read로만 잴 수 있다 |
 | `friend_degree`, `friend_homophily` | degree 분포 (homophily는 군집 라벨이 없어 실측 불가 — 유지) | `friends` 미러에서(R17) |
-| `agent_discoverable_rule` 예외율 | discoverable인데 public row 없는 agent 비율 | `agents` × `open_topic_rows` |
+| `agent_discoverable_rule` 예외율 | discoverable인데 public row 없는 agent 비율 | `agents` × `visible_topic_rows` |
 | `deactivate_rate` | 기간 내 탈퇴 / 등록 | `user_deactivated`, `user_registered` |
-| `active_window` (R19의 활성 창) | `last_active_at` 기준 7·30·90일 활성 유저 비율과 "마지막 활동 이후 경과일" 분포. 창을 어디에 두면 사전 계산 대상이 몇 %가 되는지 | `agents.last_active_at` |
+| `activity` (R19 갱신 비용의 입력) | `last_active_at` 기준 1·7·30일 활성 유저 비율(하루에 읽는 유저 비율이 스윕 쓰기 비용을 정한다)과 "마지막 활동 이후 경과일" 분포. TTL·스윕 상한(O13)을 정하는 재료 | `agents.last_active_at`, `agents.cf_candidates_computed_at` |
 
 `affinity`, `K`, `cluster_size_alpha`, `off_cluster_topic_rate`는 잠재 구조라 직접 잴 수 없다. 대신 §6-4의 민감도 표로 남기고, 실측 가능한 파라미터가 바뀐 뒤 CF 지표가 합성과 실로그에서 같은 방향으로 움직이는지로 간접 확인한다.
 

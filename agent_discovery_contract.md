@@ -73,7 +73,9 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
 
 **가정**: 요청자가 이미 대화를 시작한 agent는 for-you에서 제외한다(제품이 다르게 정하면 바꾼다). 합성 정답도 같은 가정을 쓴다.
 
-**사전 계산이 없는 요청자**(오래 활동하지 않아 배치 대상이 아니었던 유저, 또는 신규 유저 — R19): 인기도와 content 소스만으로 `limit`을 채운 **완전한 목록**을 답한다. `basis`가 `popularity` 또는 `content`가 되고, `degraded`는 비어 있다. 이 요청이 `agents.last_active_at`을 갱신해 다음 배치에 포함된다.
+**사전 계산이 없는 요청자**(항목이 아직 없는 유저 — 대화 0건, 또는 첫 대화 뒤 첫 스윕 전 — R19): 인기도와 content 소스만으로 `limit`을 채운 **완전한 목록**을 답한다. `basis`가 `popularity` 또는 `content`가 되고, `degraded`는 비어 있다. 첫 대화 이벤트 뒤 워커 스윕이 첫 항목을 만든다.
+
+**사전 계산이 오래된 요청자**(R19): 있는 항목을 그대로 쓴다. 응답 직전 재확인(§5 불변식 4)과 이미 대화한 상대 제외가 그 사이의 변화를 걸러내고, 이 요청이 `agents.last_active_at`을 갱신해 다음 스윕이 항목을 새로 만든다. `cf_candidates_stale`는 §3-4의 임계를 넘겼을 때만 붙는다.
 
 ### 2-3-1. ②③의 내부 미러
 
@@ -82,7 +84,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
 ### 2-4. 공통 규칙
 
 - `lang`은 topic 라벨의 언어 힌트다. 응답은 항상 `ko`, `en` 두 키를 주고 없으면 null이다.
-- 페이지네이션은 opaque `cursor`다. 오프셋을 노출하지 않는다(사전 계산 결과가 갈아엎어지면 오프셋은 의미가 없다).
+- 페이지네이션은 opaque `cursor`다. 오프셋을 노출하지 않는다(사전 계산 결과가 갈아엎어지면 오프셋은 의미가 없다). `recommendation_id`는 **목록 하나**(첫 페이지)에 발급되고 `cursor`가 그것을 실어 오므로 다음 페이지는 같은 id·같은 seed(R20)로 순서를 잇는다. 그 사이 사전 계산이 갱신될 수 있어(R19) 페이지 연속성은 best-effort다.
 - 요청자 본인의 agent는 어느 타입에서도 결과에 없다.
 
 ---
@@ -185,7 +187,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko
 | `friends_unavailable` | 친구 집합을 못 읽어 friends tier를 후보에서 뺐다. public만 답했다. R17·R18 배치에서는 실제로 나오지 않는 예약 값이다 — §5 불변식 3 |
 | `expansion_partial` | 타입 ①: 개념 확장 일부가 답을 못 받아 topic이 덜 뽑혔을 수 있다 |
 | `hydration_partial` | 라벨·owner_note를 다 못 채웠다 |
-| `stale_precompute` | 타입 ③: 사전 계산 결과가 **있는데** 갱신 주기를 넘겼다. 항목이 없어서 인기도·content로 답한 경우(R19)는 이 값이 아니다 — `basis`가 그것을 말한다 |
+| `cf_candidates_stale` | 타입 ③: 사전 계산 결과가 **있는데** TTL의 몇 배(O13, 예 7일) 이상 오래됐다. TTL을 넘긴 정도는 정상 경로(그대로 서빙하고 스윕이 갱신, R19)라 붙이지 않는다. 항목이 없어서 인기도·content로 답한 경우는 이 값이 아니다 — `basis`가 그것을 말한다 |
 
 "몇 개가 가려졌다"는 어떤 형태로도 응답에 없다(§5).
 
@@ -249,7 +251,7 @@ class VisibilityFilter(Protocol):
 Degradation = frozenset[str]   # §3-4의 값 집합. 비어 있으면 완전한 답
 ```
 
-규칙은 §5. 구현은 하나다. 두 안이 공유하고, 비교에서 같은 코드를 쓴다. 역할은 둘이다: 술어를 이미 적용한 hit(`tier`가 있음)은 그대로 통과시키고, `tier = None`인 hit에는 `open_topic_rows`를 소유자 키로 조회해 tier를 붙이며(friends row는 요청자가 친구일 때만) row가 없으면 버린다. 친구 집합을 읽지 못한 요청의 처리는 §5 불변식 3.
+규칙은 §5. 구현은 하나다. 두 안이 공유하고, 비교에서 같은 코드를 쓴다. 역할은 둘이다: 술어를 이미 적용한 hit(`tier`가 있음)은 그대로 통과시키고, `tier = None`인 hit에는 `visible_topic_rows`를 소유자 키로 조회해 tier를 붙이며(friends row는 요청자가 친구일 때만) row가 없으면 버린다. 친구 집합을 읽지 못한 요청의 처리는 §5 불변식 3.
 
 ### 4-4. 랭커
 
@@ -266,6 +268,8 @@ class Ranker(Protocol):
 
 타입 ①은 `score` 앞에 커버리지 정렬이 온다: `(coverage desc, score desc)`. 타입 ②③은 `score desc`. 처음엔 가중합(가중치는 설정 파일), 로그가 쌓이면 학습 모델로 교체하되 인터페이스는 같다.
 
+**타입 ③은 정렬 뒤 점수 구간 안에서만 섞는다**(R20). 구간 경계는 설정(예 상위 5·다음 15·다음 30), seed는 `recommendation_id`. `cursor`가 첫 페이지의 `recommendation_id`를 실어 오므로 다음 페이지도 같은 seed로 순서를 잇는다(§2-4, best-effort). 결정 로그는 `ranked`에 섞기 **전** 순서를, `shuffle`에 seed와 구간 경계를 남겨 서빙 순서를 재현한다. 타입 ①②는 섞지 않는다.
+
 ### 4-5. 응답 조립
 
 `RecommendedAgent`를 만들고 라벨·owner_note를 채운다(hydration). hydration은 응답 직전이고 실패하면 `hydration_partial`. **응답 직전에 공개된 row가 존재하는지 다시 확인**한다(§5 불변식 4).
@@ -276,7 +280,7 @@ class Ranker(Protocol):
 
 1. **저장소에는 공개된 row만 있다.** `(topic_id, owner, tier ∈ {public, friends})`. private·hidden은 들어오지 않고, 비공개로 되돌리면 지운다. agent가 private이면 그 소유자의 row 전부를 지운다.
 2. **friends row는 요청자가 소유자의 친구일 때만 통과한다.** 기준은 bourbon-api이고, 판정은 `bourbon.friendship_changed`로 미러한 친구 집합으로 후보 조회 쿼리 안에서 한다(R17).
-3. **친구 집합을 못 읽으면 friends tier는 빠진다(fail-closed).** 응답은 `degraded: ["friends_unavailable"]`, 상태는 200. R17·R18 배치에서는 친구 집합이 `open_topic_rows`와 같은 PostgreSQL에 있어 "row는 읽었는데 친구 집합만 못 읽는" 경우가 없고 그 장애는 503이다. 이 항은 계약에 예약된 규칙으로 남긴다 — 친구 집합을 다른 저장소로 옮기는 날 다시 살아난다.
+3. **친구 집합을 못 읽으면 friends tier는 빠진다(fail-closed).** 응답은 `degraded: ["friends_unavailable"]`, 상태는 200. R17·R18 배치에서는 친구 집합이 `visible_topic_rows`와 같은 PostgreSQL에 있어 "row는 읽었는데 친구 집합만 못 읽는" 경우가 없고 그 장애는 503이다. 이 항은 계약에 예약된 규칙으로 남긴다 — 친구 집합을 다른 저장소로 옮기는 날 다시 살아난다.
 4. **사전 계산 결과는 노출을 허가하지 않는다.** 응답 직전에 현재 공개된 row로 다시 거른다.
 5. **응답은 "가려짐"과 "없음"을 구별하지 못한다.** 가려진 개수, 표시, 순위 공백이 없다.
 6. **요청자 본인은 결과에 없다.**
@@ -287,20 +291,20 @@ class Ranker(Protocol):
 
 ## 6. 공개된 row 저장 모델 — 모양은 저장소 무관, 배치는 R18
 
-두 안이 공유하는 최소 모델. 모양은 저장소와 무관하고, 배치는 R18이다: **조인·집계가 있는 집합은 PostgreSQL, 단건 키 읽기·쓰기만 있는 집합은 DynamoDB, Redis는 deferq만.** 아래 표에서 `precomputed_for_you`만 DynamoDB이고 나머지는 전부 PostgreSQL이다. `requester_topics`는 O2가 (b) 미러일 때만 생기는 집합이고, 그때는 단건 키 집합이라 R18 규칙으로 DynamoDB다.
+두 안이 공유하는 최소 모델. 모양은 저장소와 무관하고, 배치는 R18이다: **조인·집계가 있는 집합은 PostgreSQL, 단건 키 읽기·쓰기만 있는 집합은 DynamoDB, Redis는 deferq만.** 아래 표에서 `cf_candidates`만 DynamoDB이고 나머지는 전부 PostgreSQL이다. `requester_topics`는 O2가 (b) 미러일 때만 생기는 집합이고, 그때는 단건 키 집합이라 R18 규칙으로 DynamoDB다.
 
 | 집합 | 키 | 값 | 갱신 |
 |---|---|---|---|
-| `open_topic_rows` | `(topic_id, tier, owner_user_id)` | `topic_score`(소유자 쪽 preference 강도), `topic_maturity`, `updated_at` | topic 변경 이벤트. 비공개 전환 = 삭제 |
-| `open_topic_rows` 보조 인덱스 | `owner_user_id` | → 그 소유자의 row들 | agent private 시 일괄 삭제용 |
-| `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, `updated_at`, **`last_active_at`**(R19) | `bourbon.user_registered`로 생성(추천 대상 풀), 공개 여부·성숙도 이벤트로 갱신, `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재조회가 만든다. `last_active_at`은 우리 API 요청·`agent_dm_opened`의 actor·`topics_updated` 셋 중 어느 것이든 갱신한다 |
+| `visible_topic_rows` | `(topic_id, tier, owner_user_id)` | `topic_score`(소유자 쪽 preference 강도), `topic_maturity`, `updated_at` | topic 변경 이벤트. 비공개 전환 = 삭제 |
+| `visible_topic_rows` 보조 인덱스 | `owner_user_id` | → 그 소유자의 row들 | agent private 시 일괄 삭제용 |
+| `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, `updated_at`, **`last_active_at`**(R19) | `bourbon.user_registered`로 생성(추천 대상 풀), 공개 여부·성숙도 이벤트로 갱신, `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재조회가 만든다. `last_active_at`은 우리 API 요청·`agent_dm_opened`의 actor·`topics_updated` 셋 중 어느 것이든 갱신한다. **`cf_candidates_computed_at`**(R19)은 그 유저의 top-K를 마지막으로 만든 시각 — 스윕 조건 `last_active_at > cf_candidates_computed_at`의 오른쪽 |
 | `requester_topics` (**O2 대기**) | `user_id` | 요청자 자신의 topic 목록(점수 포함). 타입 ②의 섹션과 타입 ③의 content 쿼리에 씀 | 두 안: (a) 미러하지 않고 요청 시 topic-api 내부 route로 읽는다(권고), (b) 미러하되 소유자 키 아래에만 두고 후보 조회에는 쓰지 않는다. 결정 레지스터 O2 |
-| `friends` (**R17: 미러, 필수**) | canonical pair `(user_low, user_high)`. 조회는 `user_id` → 친구 id 집합(상한 5,000) | — | `bourbon.friendship_changed`: `accepted` → 삽입, `removed` → 삭제. 요청 시 bourbon-api 조회·TTL 캐시는 쓰지 않는다. `open_topic_rows`와 같은 저장소에 두어 후보 조회 쿼리가 배열로 받거나 조인한다 |
+| `friends` (**R17: 미러, 필수**) | canonical pair `(user_low, user_high)`. 조회는 `user_id` → 친구 id 집합(상한 5,000) | — | `bourbon.friendship_changed`: `accepted` → 삽입, `removed` → 삭제. 요청 시 bourbon-api 조회·TTL 캐시는 쓰지 않는다. `visible_topic_rows`와 같은 저장소에 두어 후보 조회 쿼리가 배열로 받거나 조인한다 |
 | `popularity` | `owner_user_id` | 시간 감쇠 카운트 | 대화 시작 이벤트 |
-| `precomputed_for_you` | `user_id` | `[(owner_user_id, score, basis)]` top-K, `computed_at` | 배치가 쓴다 — **`last_active_at`이 창 안인 유저만**(R19). **DynamoDB**(PK `user_id`, R18): 서빙은 단건 GetItem, 조인은 없다(재확인은 PostgreSQL `open_topic_rows`에서). 항목이 없는 요청자는 §2-3의 콜드스타트 경로 |
+| `cf_candidates` | `user_id` | `candidates: [(owner_user_id, score)]` top-K, `computed_at`, `model_version`(어느 전역 학습으로 만들었나 — 재현·갱신 판단용) | 워커의 주기 스윕이 배치로 쓴다 — 조건은 R19. K는 100~200(R20의 pool). **DynamoDB**(PK `user_id`, R18, **TTL 없음**): 서빙은 단건 GetItem, 조인은 없다(재확인은 PostgreSQL `visible_topic_rows`에서). 오래된 항목도 그대로 서빙한다. 항목이 없는 요청자는 §2-3의 콜드스타트 경로 |
 | `interactions` | `(actor_user_id, owner_user_id, room_id)` | `started_at`, `reopened_count`, `turns`, `entry`, `recommendation_id` | `agent_dm_opened`로 생성, `message_created`(room_id 조인)로 `turns` 증가. CF 학습 입력 |
 
-타입 ①②의 조회는 `open_topic_rows[topic_id, public]` ∪ (`open_topic_rows[topic_id, friends]` ∩ friends(요청자)) 이고, 타입 ①은 topic ≤ 3개의 결과를 owner로 합쳐 커버리지를 센다. 이 합집합은 쿼리 하나의 WHERE 절이다(§4-2, R17). 타입 ③의 `popularity`·`content_similarity`·이웃 조회도 같은 술어를 `open_topic_rows`에 대한 조인(또는 EXISTS)으로 붙여 요청자에게 보이는 소유자만 읽는다. 엔진(A안)이 자기 저장소를 따로 가져도 위 집합은 그대로 있어야 한다. 불변식 1·4가 여기서 판정되기 때문이다.
+타입 ①②의 조회는 `visible_topic_rows[topic_id, public]` ∪ (`visible_topic_rows[topic_id, friends]` ∩ friends(요청자)) 이고, 타입 ①은 topic ≤ 3개의 결과를 owner로 합쳐 커버리지를 센다. 이 합집합은 쿼리 하나의 WHERE 절이다(§4-2, R17). 타입 ③의 `popularity`·`content_similarity`·이웃 조회도 같은 술어를 `visible_topic_rows`에 대한 조인(또는 EXISTS)으로 붙여 요청자에게 보이는 소유자만 읽는다. 엔진(A안)이 자기 저장소를 따로 가져도 위 집합은 그대로 있어야 한다. 불변식 1·4가 여기서 판정되기 때문이다.
 
 ---
 
@@ -309,14 +313,14 @@ class Ranker(Protocol):
 | feature | 정의 | 범위 | 출처 | 타입 |
 |---|---|---|---|---|
 | `coverage` | 뽑힌 topic 중 가진 수 | 0~3 | topic_index | ① (1차 정렬 키) |
-| `topic_score` | 소유자 쪽 preference 강도, matched topic 합 또는 최대 | 0~1 | open_topic_rows | ①② |
-| `topic_maturity` | matched topic 성숙도 최대 | 0~1 | open_topic_rows (임시값 → 컴포넌트) | ①②③ |
+| `topic_score` | 소유자 쪽 preference 강도, matched topic 합 또는 최대 | 0~1 | visible_topic_rows | ①② |
+| `topic_maturity` | matched topic 성숙도 최대 | 0~1 | visible_topic_rows (임시값 → 컴포넌트) | ①②③ |
 | `agent_maturity` | agent 성숙도 | 0~1 | agents | ①②③ |
 | `popularity` | 정의는 미정(결정 레지스터 O4). 첫 구현 플레이스홀더: 최근 N일 대화 시작 수, 시간 감쇠, 전체 최대로 정규화 | 0~1 | popularity | ③ (①②는 약한 가중) |
-| `content_similarity` | 요청자 topic 집합과 소유자 topic 집합의 가중 겹침 | 0~1 | requester_topics × open_topic_rows | ③ |
+| `content_similarity` | 요청자 topic 집합과 소유자 topic 집합의 가중 겹침 | 0~1 | requester_topics × visible_topic_rows | ③ |
 | `cf_score` | 아이템 이웃 또는 행렬 분해 점수, 소스 안에서 정규화. **학습 입력의 confidence는 "대화 시작 1회"가 아니라 `1 + α·log(1 + turns) + β·reopen_count`** — 배우는 대화(길고 다시 찾는 대화)가 한 번 시작하고 끝난 대화보다 강한 신호다(오너 2026-09-08, 결정 레지스터 R16). α·β는 설정. 가중을 켜는 시점은 O14 | 0~1 | cf_item / cf_engine (입력: `interactions` + turn 카운터) | ③ |
 | `similar_users` | 이 agent와 대화한 유사 유저 수 | 정수 | cf_item | ③ (표시용) |
-| `recency` | 소유자의 마지막 topic 갱신이 얼마나 최근인가 | 0~1 | open_topic_rows.updated_at | 모두, 작은 가중. 오래 활동하지 않은 소유자를 **후보에서 빼지 않고** 이 feature로 내린다(R19). 하드 제외는 O17 |
+| `recency` | 소유자의 마지막 topic 갱신이 얼마나 최근인가 | 0~1 | visible_topic_rows.updated_at | 모두, 작은 가중. 오래 활동하지 않은 소유자를 **후보에서 빼지 않고** 이 feature로 내린다(R19). 하드 제외는 O17 |
 | `tier_is_friends` | 근거 row가 friends tier인가 | 0/1 | 필터 결과 | 모두. 친구를 살짝 올릴지는 제품 판단 |
 
 없는 feature는 0이고 `present`에 없다. 가중치는 설정이며 비교(재설계 §6)에서는 두 안이 같은 가중치를 쓴다.
@@ -325,7 +329,7 @@ class Ranker(Protocol):
 
 ## 8. 결정 로그
 
-응답마다 한 건. 오프라인 평가와 A/B 비교의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18): PK `recommendation_id`(대화 시작 이벤트의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 기간·타입별로 읽도록 GSI `(type, served_day)`, 보존은 TTL. 집계는 SQL이 아니라 평가 배치의 코드다.
+목록마다 한 건 — 첫 페이지에 발급된 `recommendation_id`가 PK고, 다음 페이지 요청은 같은 항목에 `pages[]`로 덧붙인다(§2-4). 오프라인 평가와 A/B 비교의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18): PK `recommendation_id`(대화 시작 이벤트의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 기간·타입별로 읽도록 GSI `(type, served_day)`, 보존은 TTL. 집계는 SQL이 아니라 평가 배치의 코드다.
 
 ```json
 {
@@ -341,8 +345,10 @@ class Ranker(Protocol):
   },
   "sources": [ {"name": "topic_index", "hits": 41, "latency_ms": 6} ],
   "filter": {"in": 41, "out": 29, "friends_used": true, "degraded": []},   // 개수는 로그에만. 응답엔 없음
-  "ranked": [ {"owner_user_id": "uuid", "position": 1, "features": {…}, "score": 0.83} ],
+  "ranked": [ {"owner_user_id": "uuid", "position": 1, "features": {…}, "score": 0.83} ],   // 섞기 전(랭커) 순서. 서빙 순서는 shuffle로 재현
   "basis": "content",                             // ③
+  "cf_model_version": "fit-2026-09-08T03Z",       // ③ 어느 cf_candidates 스냅샷으로 답했나
+  "shuffle": {"seed": "rec-…", "bands": [5, 20, 50]},   // ③ R20. bands = 구간의 누적 상한(1~5, 6~20, 21~50). 구간 안 순서를 재현하는 재료
   "latency_ms": {"query": 640, "sources": 9, "filter": 3, "rank": 1, "assemble": 12, "total": 665},
   "served_at": "2026-09-08T…Z"
 }
@@ -387,4 +393,4 @@ class Ranker(Protocol):
 - `fit`의 내용(제품 미확정). 자리만 있다.
 - `tier_is_friends`에 가중치를 줄지 (결정 레지스터 O12).
 - 타입 ② 섹션 순서가 요청자 preference 점수인지 다른 기준인지. 지금은 preference.
-- `precomputed_for_you`의 갱신 주기와 `stale_precompute` 기준 (결정 레지스터 O13).
+- `cf_candidates`의 TTL·스윕 주기·사이클 상한과 `cf_candidates_stale` 임계 (결정 레지스터 O13). 모양은 R19.
