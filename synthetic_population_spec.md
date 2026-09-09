@@ -26,7 +26,7 @@
 | agent id = user id에서 uuid5 | 같은 규칙. 네임스페이스는 생성기 상수(실제 값과 달라도 무해, 결정론적이면 충분) |
 | friend: 요청·수락, 상한 5,000 | 무방향 쌍, 군집 안 확률 높게, degree 분포 긴 꼬리, 상한 적용 |
 | 대화: 타인 agent와의 방이 생성되고(시작) 메시지가 오간다(turn) | (actor, owner) 쌍의 시작 사건과 turn 수, 시각 |
-| 성숙도: topic은 `score`, agent는 컴포넌트 예정 | `topic_score`와 `topic_maturity` feature는 둘 다 `score/100`(컴포넌트가 생기기 전까지 같은 값 — 계약 §7에 그렇게 적혀 있다). `agent_maturity` = `min(1, 0.5·log1p(공개된 topic 수)/log1p(20) + 0.5·log1p(총 turn 수)/log1p(200))`, `users.parquet`의 컬럼 |
+| 성숙도: topic은 `score`, agent는 컴포넌트 예정 | `topic_score`와 `topic_maturity` feature는 둘 다 `score/100`(topic 성숙도 컴포넌트가 생기기 전까지 같은 값으로 두는 이 스펙의 가정. 계약 §7은 `topic_maturity`를 임시값 → 컴포넌트로 적는다). `agent_maturity` = `min(1, 0.5·log1p(공개된 topic 수)/log1p(20) + 0.5·log1p(총 turn 수)/log1p(200))`, `users.parquet`의 컬럼 |
 
 실제 유저 topic 샘플은 7계정 16항목(persona seeds)뿐이라 **유저당 topic 수, 공개 비율, 대화 빈도는 모두 가정**이다. §2의 기본값은 가정이고, 그 값이 결과를 얼마나 흔드는지 §6 검증 4에서 본다.
 
@@ -126,8 +126,8 @@ LLM 확장은 비용이 있으므로 두 구현안 비교에서는 **쿼리 200�
 |---|---|---|
 | ① | 요청자에게 공개된 agent를 (커버 topic 수 desc, **계약 §7 feature의 같은 가중 파일로 낸 점수** desc)로 정렬한 목록 | 커버리지 위반 0건(상위 k에서 커버 수가 역전된 쌍), recall@10. NDCG는 같은 가중 파일을 쓸 때만 |
 | ② | 섹션 topic마다 그 topic을 요청자에게 공개해 둔 agent를 같은 가중 파일의 점수 desc | 섹션별 recall@`per_section`, 순서 일치율(같은 가중 파일일 때만) |
-| ③ CF | 요청자 `u`에 대해 `affinity[cluster(u)][cluster(owner(a))] × pop[a]`가 큰 순, 공개된 것만, 이미 대화한 것 제외(계약 §2-3의 가정과 같음) | recall@10, NDCG@10 |
-| ③ content | `u`의 topic 집합과 겹침(`score` 가중)이 큰 소유자의 agent | recall@10 |
+| ③ CF | 요청자 `u`에 대해 `affinity[cluster(u)][cluster(owner(a))] × pop[a]`가 큰 순, 공개된 것만, 이미 대화한 것 제외(계약 §2-3의 가정과 같음, O19) | recall@10, NDCG@10 |
+| ③ content | `u`의 topic 집합과 겹침이 큰 소유자의 agent — 첫 구현은 `score` 가중 정확 일치, O18이 정해지면 IDF·계층 감쇠 포함(생성기는 실물 카탈로그 파일을 읽으므로 parent edge를 함께 적재하면 된다) | recall@10, 같은 군집 비율. **"content만" 단독 행**을 인기도만·CF만과 같은 표에 둔다 |
 | ③ 콜드스타트 | 대화 0건인 유저에 대해 위 ③ 정답 | 같은 지표, 별도 집계 |
 | 필터 | friends tier row가 친구 아닌 요청자에게 나온 건수 | **0건** (하나라도 있으면 실패) |
 | 비공개 전환 | `close_rate` 이벤트 뒤 그 row가 결과에 나온 건수 | 0건 (재조회 지연 시간 안에서는 허용, 지연 시간 기록) |
