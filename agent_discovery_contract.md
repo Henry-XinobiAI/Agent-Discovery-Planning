@@ -69,7 +69,7 @@ GET /discover/by-topic/{topic_id}?limit=20&cursor=…&lang=ko      // limit 기�
 GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본 20, 상한 50 (설정 레지스터)
 ```
 
-입력은 요청자 id뿐이다. persona·topic·로그는 서버가 이미 갖고 있다.
+입력은 요청자 id뿐이다. topic·로그는 서버가 이미 갖고 있고, persona(HEXACO 성향)는 자리만 있다 — 입력 경로가 열리기 전까지 그 feature는 0이다(R42·O20).
 
 **규칙(R28)**: 요청자가 이미 대화를 시작한 agent는 for-you에서 제외한다. 다만 아직 안 보여 준 후보를 모두 소진했고 다음 갱신 전이면, 미대화 후보 뒤에 다시 나올 수 있다. 그 항목이 재등장이라는 표식은 결정 로그 `ranked[].talked_before`에만 있고 응답에는 없다(클라이언트는 자기 방 목록으로 안다. 표시 기획이 생기면 필드를 연다). 합성 정답도 같은 규칙을 쓴다.
 
@@ -217,6 +217,7 @@ class UserQuery:             # 타입 ③
     requester: UUID
     limit: int
     cursor: str | None
+    requester_traits: Mapping[str, float] | None = None   # R42 예약: HEXACO facet → 추정치. 입력 경로가 없어 지금은 항상 None(O20)
 ```
 
 타입 ①의 QueryBuilder는 free text → 개념 확장 → topic-api 검색 → topic 확정(기존 코드 `agent_discovery/stages/`의 확장·확정 단계)이고, 결과가 `TopicQuery`다. 타입 ②의 QueryBuilder는 요청자의 topic 목록을 읽어 topic마다 `TopicQuery` 하나를 만든다. 타입 ③은 `UserQuery` 그대로다.
@@ -268,7 +269,7 @@ class Ranker(Protocol):
     def score(self, f: Features) -> float: ...
 ```
 
-타입 ①은 `score` 앞에 커버리지 정렬이 온다: `(coverage desc, score desc)`. 타입 ②③은 `score desc`. 처음엔 가중합(가중치는 설정 레지스터 `agent_discovery_settings.md` §2), 로그가 쌓이면 학습 모델로 교체하되 인터페이스는 같다.
+타입 ①은 `score` 앞에 커버리지 정렬이 온다: `(coverage desc, score desc)`. 타입 ②③은 `score desc`. 처음엔 가중합(가중치는 설정 레지스터 `agent_discovery_settings.md` §2), 로그가 쌓이면 학습 모델로 교체하되 인터페이스는 같다. feature 이름은 §7이 전부이고 예약 feature(`persona_similarity`, R42)도 같은 경로로 들어온다 — 입력이 없으면 값 0, `present`에 없음. 예약 feature가 실제로 켜지는 것은 설정값과 입력 경로의 일이고 인터페이스는 바뀌지 않는다.
 
 **타입 ③은 정렬 뒤 점수 구간 안에서만 섞는다**(R20). 구간 경계는 설정(예 상위 5·다음 15·다음 30), seed는 `recommendation_id`. `cursor`가 첫 페이지의 `recommendation_id`를 실어 오므로 다음 페이지도 같은 seed로 순서를 잇는다(§2-4, best-effort). 결정 로그는 `ranked`에 섞기 **전** 순서를, `shuffle`에 seed와 구간 경계를 남겨 서빙 순서를 재현한다. 타입 ①②는 섞지 않는다.
 
@@ -324,6 +325,7 @@ class Ranker(Protocol):
 | `similar_users` | 이 agent와 대화한 유사 유저 수 | 정수 | `interactions` 카운트(요청자가 대화한 소유자들과도 대화한 유저 수). ALS에서 직접 나오지 않는다 | ③ (표시용) |
 | `recency` | 소유자의 마지막 topic 갱신이 얼마나 최근인가 | 0~1 | visible_topic_rows.updated_at | 모두, 작은 가중. 오래 활동하지 않은 소유자를 **후보에서 빼지 않고** 이 feature로 내린다(R19). 하드 제외는 하지 않는다(R31) |
 | `tier_is_friends` | 근거 row가 friends tier인가 | 0/1 | 필터 결과 | 모두. 초기 가중 .05, 측정 뒤 조정(R32) |
+| `persona_similarity` | **R42 예약.** 요청자와 소유자의 HEXACO facet 벡터 유사도(confidence·관측 수 가중). topic이 겹치지 않아도 성향이 맞는 사람을 잡는다. **입력 경로가 없어 지금은 항상 0이고 `present`에 없다**(O20) | 0~1 | 요청자 성향(`UserQuery.requester_traits`) × 소유자 성향 — 둘 다 bourbon-agent가 **이벤트**로 준다(방향만, O20 — bourbon-agent에 API를 열 가능성은 없다). persona 테이블 직접 읽기·복호화 키 공유는 하지 않는다(R42) | ③. 가중 `rank.for_you.w_persona`는 0에서 시작, 올리는 규칙은 O20 |
 
 없는 feature는 0이고 `present`에 없다. 가중치는 설정이다 — 값은 `agent_discovery_settings.md`(R39).
 
@@ -395,3 +397,4 @@ class Ranker(Protocol):
 
 - `fit`의 내용(O5 — 기획 중: "나와 비슷해요 / 다른 관점도 살펴봐요"). 자리만 있다.
 - 명시 피드백 이벤트(O6 — 제품 논의 없음). 자리도 아직 없다.
+- persona(HEXACO) 입력의 경로·동의 범위·가중 규칙(O20). 자리만 있다(R42): `UserQuery.requester_traits`, feature `persona_similarity`, 설정 `rank.for_you.w_persona`.
