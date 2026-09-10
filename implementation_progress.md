@@ -33,10 +33,10 @@
   완료 조건: `test_deploy_env_wiring.py` 통과, 두 env 키 참조 0건.
   PR: #20 (머지 2026-09-10). `topic_api.timeout_ms`는 800 대신 현행 3000에서 시작하기로 하고 레지스터를 먼저 고쳤다(#62) — 동작 변화 0. `TOPIC_API_MAX_ATTEMPTS`는 남는다(시도 예산은 환경의 결정). 두 composition root가 부팅 때 레지스터를 읽는다: 워커에서 오버라이드 파일이 잘못되면 리스너 안에서 터지고 deferq는 DLQ 없이 ack하므로 재조회가 조용히 사라진다. `compose/settings.overrides.json`이 로컬 디바운스 3 s이자 ConfigMap 마운트 파일의 워크드 예제. conftest autouse 픽스처 하나가 값·경로 캐시와 env를 되돌린다. 889 tests. 리뷰어 지적 9건 전부 반영.
 
-- [ ] **4. 1-3c 계약 스키마·도메인 인터페이스** 🟢
+- [x] **4. 1-3c 계약 스키마·도메인 인터페이스** 🟢
   `api/structs/`에 세 타입의 요청·응답 모델(envelope `contract_version, recommendation_id, resolved_topics[], agents[], empty, degraded[]`, `lang` ko·en·ja, 422/503), `agent_discovery/domain/`에 `TopicQuery`·`UserQuery`(`requester_traits` 예약)·`SourceHit`·`CandidateSource`·`VisibilityFilter`·`Ranker`·`Assembler` Protocol. route 없음.
   완료 조건: 계약 §2·§3의 예시 JSON이 모델로 파싱·직렬화된다.
-  PR: —
+  PR: #21 (머지 2026-09-10). 도메인 어휘(`Tier`·`FeatureName`·`Entry`·`Degradation`·`SourceHit`·`Features`·`RankedOwner`·`MatchedTopic`·`Signals`)와 §4의 네 Protocol(`CandidateSource[Q: Query]`·`VisibilityFilter`·`Ranker`·`Assembler`), `api/structs/discovery.py`에 요청 넷·응답 셋. 불변식 7을 타입이 지키게 했다 — 이용자가 쓴 글(`owner_note`, `HolderNote.text`)은 기본 repr에서 빠진다. 불변식 5는 응답 어디에도 "몇 개를 걸렀다"가 없다는 것으로, 필드 이름이 아니라 모델 필드 집합을 훑는 테스트로 지킨다. 레지스터가 정하는 상한(`limit` 등)은 검증 시점에 레지스터에서 읽고, 계약이 정하는 하한만 필드 제약으로 둔다. 945 tests. 리뷰어 지적 24건 전부 반영. 계약 §11에 열린 항목 하나를 남겼다 — `GET /discover/by-topic/{topic_id}`의 응답 envelope이 §3-2에 없어 타입 ②의 envelope(섹션 하나)으로 읽었다.
 
 - [ ] **5. 1-4a 이벤트 미러·CLI publish** 🟢
   `worker/events.py`를 실제 이벤트로 교체 — `topics_updated`, 임시 이름 `user_topic_settings_updated`(R48), `personal_agent_visibility_changed`, `room_created`(R46), `message_created`, `friendship_changed`, `user_registered`, `user_deactivated`(payload는 이벤트 정의서 §2). `touched` 필터 삭제(항상 재조회). `cli publish <event>` 이벤트별 서브커맨드. `tests/worker/test_user_topics.py`의 필터 테스트 4개 삭제, `test_app.py` import 한 줄.
