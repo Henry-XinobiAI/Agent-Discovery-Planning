@@ -456,7 +456,7 @@ DynamoDB 쓰기는 유저 수가 아니라 그날 읽혔거나 활동한 유저 
 score = w_pop·popularity + w_content·content_similarity(정규화) + w_cf·cf_score + w_mat·agent_maturity + …
 ```
 
-`w_cf`는 **처음에 0**이다. R35의 자동 게이트대로 배치가 실로그 leave-one-out에서 ALS가 인기도를 이길 때만 0에서 올린다. 아래는 예시 가중(pop .4 / content .4 / cf .2)으로 `w_cf`가 켜진 뒤의 값이다. content는 §5-2의 최대값(A의 1.35, 이미 대화한 상대를 제외하기 전 값)으로 정규화했다. 제외 전 최대값으로 나누는 이유는 정규화가 "누구와 이미 대화했나"에 따라 흔들리지 않게 하려는 것이다(B의 content를 1.0으로 두면 B가 E를 앞선다).
+`w_cf`는 **처음에 0**이다. R35의 자동 게이트대로 배치가 실로그 leave-one-out에서 ALS가 인기도를 이길 때만 0에서 올린다. 아래는 예시 가중(pop .4 / content .4 / cf .2)으로 `w_cf`가 켜진 뒤의 값이다. content는 §5-2의 최대값(A의 1.35, 이미 대화한 상대를 제외하기 전 값)으로 정규화했다. 제외 전 최대값으로 나누는 이유는 정규화가 "누구와 이미 대화했나"에 따라 흔들리지 않게 하려는 것이다(B의 content를 1.0으로 두면 B가 E를 앞선다). 식의 `…`에는 `persona_similarity`(R42 예약)도 들어가지만 입력 경로가 없어 이 예시에서는 0이다(O20).
 
 | owner | popularity | content(정규화) | cf | score | 주로 만든 신호 |
 |---|---|---|---|---|---|
@@ -551,6 +551,7 @@ interactions + turn 카운터 + visible_topic_rows + agents + friends
 |---|---|
 | §3-5 `fit` 표시의 축("나와 비슷해요 / 다른 관점도 살펴봐요", 기획 중) | O5 |
 | §5-5 구간 섞기(R20) 이상의 탐색 항을 넣을지 | O15 |
+| §5-5 가중 합의 예약 항 `persona_similarity`(R42, 지금 0) — 입력 경로·동의 범위·가중 규칙 | O20 |
 
 2026-09-09에 닫힌 것: `requester_topics`는 요청 시 조회(R27), `popularity` 정의(R29), 섹션 크기(R30), TTL·스윕·전역 학습 주기·stale 임계(R36), `w_cf` 게이트(R35), 보정 값(R37), 비활성 소유자 하드 제외 없음(R31), content 정의(R25)와 카탈로그 소스(R26), 이미 대화한 상대 제외와 소진 뒤 재등장(R28), `recommendation_id` 전달(R24), A안/B안 비교 종료(R33·R34). 이 문서의 예시값 중 결정으로 정해진 값은 `agent_discovery_settings.md`에 있다.
 

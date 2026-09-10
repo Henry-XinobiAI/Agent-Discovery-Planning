@@ -24,6 +24,7 @@
 | 타인 agent와 대화 시작 | **없음.** 대화는 `AGENT_DM` room(`A:B'`)이고 `ensure_agent_dm_room`이 find-or-create 하지만 이벤트는 없다 | 우리가 정의 (§2-4) | bourbon-api + 클라이언트 + bourbon-agent(어트리뷰션 키, R24) |
 | 대화 진행(turn) | **있음** `bourbon.message_created` (`room_id, sender_id, sender_type, room_type=agent_dm`) | 대화 시작 이벤트의 `room_id`와 조인 | 없음 — **새 turn 이벤트가 필요 없다** |
 | 성숙도 | topic 단위는 `score`(topic-api 임시). agent 단위는 컴포넌트 예정 | `score`를 feature로 | 컴포넌트가 생기면 (§2-6) |
+| 요청자·소유자의 HEXACO 성향 벡터 | **없음.** bourbon-agent의 추출 노트(`PERSONA_EXTRACTION#note`)에 암호화되어 있고, 이벤트 필드가 없다(bourbon-agent에 API를 열 가능성은 없으므로 route는 선택지가 아니다, R42). topic-api는 persona 테이블을 복호화 키를 공유해 직접 읽지만 우리는 그렇게 하지 않는다(R42) | 코드에 자리만(R42): feature `persona_similarity`는 0 | bourbon-agent — **이벤트**로(확정 아님). 어느 이벤트·어느 필드·어느 시점인지는 O20 뒤에 요청 |
 
 ### rev 1 정정 — 설명과 코드가 다르다고 적었던 세 곳
 
@@ -158,7 +159,7 @@ topic 단위는 재조회 결과의 `score`가 그 자리다. 컴포넌트가 `s
 | `bourbon.friendship_changed` | `user_low, user_high, action, occurred_at` | `friends` 미러 갱신: `accepted` → `(user_low, user_high)` 삽입, `removed` → 삭제. 요청 시 조회 캐시는 두지 않는다(R17) |
 | `bourbon.user_registered` | `user_id, email` | **추천 대상 agent의 등록.** `agents`에 `(owner_user_id, agent_id, discoverable=false, registered_at)` row를 만든다. agent id는 bourbon-api가 `uuid5(AGENT_NAMESPACE, f"personal_agent:{user_id}")`로 결정론적으로 만들므로 읽어 올 필요 없이 같은 규칙으로 계산한다(네임스페이스 상수를 공유하거나, 첫 `agent_dm_opened`·공개 여부 이벤트에서 받은 `agent_id`로 채운다). **`email`은 저장도 로그도 하지 않는다** — payload에서 읽지 않는다. 이 row가 있어야 공개된 topic이 하나도 없는 agent도 "존재하는 대상"으로 세어지고, 콜드스타트 신규 agent 부스트와 타입 ③의 모집단 크기가 정의된다 |
 | `bourbon.user_deactivated` | `user_id` | 그 유저의 공개된 row·agents·사전 계산·요청자 데이터 삭제. 상호작용 로그의 actor 쪽은 익명화 |
-| `bourbon.persona_updated` | `user_id, revision, changes[…]` | 직접 쓰지 않는다. topic id가 없다. `topics_updated`가 곧 온다는 뜻일 뿐 |
+| `bourbon.persona_updated` | `user_id, revision, extracted_at, consumed_messages{room_id → from/to message_id}, changes[{layer: bio\|traits\|preferences, visibility: sharable\|private, topics{added, removed, changed} — preferences만}]` | 직접 쓰지 않는다. topic id가 없고 `changes[].topics`는 preferences 마크다운의 **헤딩 텍스트**다. `topics_updated`가 곧 온다는 뜻일 뿐. bourbon-agent가 **발행하는 유일한 이벤트**다(2026-09-10 코드 기준, `bourbon_agent/events.py`). persona 중 topic으로 오지 않는 층(HEXACO 추정치·자유 성향·traits 산문·bio)은 이 이벤트에도 실리지 않는다 — HEXACO 입력 경로는 O20(R42) |
 
 ### 2-8. 카탈로그 그래프 내부 route — 보류(R26). 필요해지면 topic-api에 요청
 
@@ -233,5 +234,5 @@ GET /api/internal/svc/topic/catalog/graph
 | topic-api | api 프로세스 AMQP 연결 + `user_topic_settings_updated` 발행(`patch_my_topic` 1곳) | 바로 가능. 카탈로그 route는 보류(R26) |
 | bourbon-api | `agent_dm_opened` 발행(`ensure_agent_dm_room` 2분기) + route에 `recommendation_id`·`entry` 선택 파라미터(R24); `personal_agent_visibility_changed`(새 필드 `discoverable`, R23) | R23·R24 |
 | 클라이언트 | 대화 시작 요청에 `recommendation_id`·`entry`. 타입 ②③은 우리 응답에서, 타입 ①은 bourbon-agent 카드의 meta에서 받는다 | R24 |
-| bourbon-agent | 타입 ① 호출을 새 계약으로(요청자 = 실제 말한 사람. 자기 agent에게 묻는 경우 소유자와 같다. 타인의 agent 방에서 묻는 경우가 제품에 있다면 그 사람이어야 하는데, 지금 코드는 항상 agent 소유자를 보낸다), 응답의 `recommendation_id`를 카드 meta에 실어 전달(R24) | 계약 확정 · R24 |
+| bourbon-agent | 타입 ① 호출을 새 계약으로(요청자 = 실제 말한 사람. 자기 agent에게 묻는 경우 소유자와 같다. 타인의 agent 방에서 묻는 경우가 제품에 있다면 그 사람이어야 하는데, 지금 코드는 항상 agent 소유자를 보낸다), 응답의 `recommendation_id`를 카드 meta에 실어 전달(R24). **HEXACO 성향 벡터를 싣는 이벤트 필드는 이 묶음에 넣지 않는다** — 이벤트로 받는다는 방향만 있고(R42, bourbon-agent에 API는 열지 않는다) 무엇을 내보낼지·동의 범위가 O20에서 정해진 뒤 별도 요청 | 계약 확정 · R24 · (HEXACO는 O20 뒤) |
 | 성숙도 컴포넌트 | `agent_maturity_changed` | 컴포넌트 존재 |

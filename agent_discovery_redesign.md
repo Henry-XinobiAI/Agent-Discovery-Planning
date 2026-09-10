@@ -34,14 +34,14 @@ user ──대화──▶ personal agent (bourbon-agent)
 ```
 
 - **personal agent의 id는 user id에서 결정론적으로 계산**된다. 따라서 "agent를 추천한다"와 "그 agent의 소유자 유저를 고른다"는 같은 일이고, 추천 대상 집합의 크기는 유저 수와 같다.
-- **persona / preference 추출**은 bourbon-agent가 한다. 추출되면 `bourbon.persona_updated`를 던지고 topic-api 워커가 받아 topic에 grounding한다(연결은 진행 중). topic-api는 변경된 topic마다 `bourbon.topics_updated`를 이미 발행한다.
+- **persona / preference 추출**은 bourbon-agent가 한다. 추출되면 `bourbon.persona_updated`를 던지고 topic-api 워커가 받아 topic에 grounding한다(연결은 진행 중). topic-api는 변경된 topic마다 `bourbon.topics_updated`를 이미 발행한다. persona는 sharable·private 두 slot × `bio`·`traits`·`preferences` 세 층이고, **topic-api가 grounding하는 것은 `preferences` 층 하나다**(2026-09-10 코드 확인, §1-2). HEXACO 25 facet 추정치·자유 성향·traits 산문·bio는 topic으로 오지 않는다 — 이 중 HEXACO의 활용 방향과 코드 자리는 R42, 실제 도입은 O20.
 - **topic별 visibility**는 topic-api가 유저에게 직접 노출해 관리한다. 값은 네 가지다: `public`, `friends`, `private`, `hidden`. `hidden`은 삭제 대신 숨기기로, 본인 외 어느 목록에도 나오지 않는다. 타인이 이 유저의 agent와 대화할 때, agent는 두 사람의 관계와 topic의 visibility로 기억과 preference의 접근을 제어한다.
 - **friend 관계**는 요청과 수락으로 성립한다. bourbon-api가 관리하고, 성립·해제 시 `bourbon.friendship_changed` 이벤트를 **이미 발행한다** (`accepted` / `removed`, 두 user id를 정렬한 canonical pair). 친구 목록 조회 route도 있고, 한 유저의 친구 상한은 5,000이다.
 - **default는 private다.** 새로 생긴 topic도, agent 자체도 private로 시작하고, 유저가 명시적으로 `public`이나 `friends`로 바꾼다. **다시 private로 돌아갈 수도 있다.** 그러므로 추천 대상은 "유저가 공개한 것"뿐이고, 비공개로 되돌리면 즉시 빠져야 한다(§3-2).
 - **agent 공개 여부**(추천에 나올 수 있는가)는 bourbon-api의 새 필드 `discoverable`(기본 false, R23)이다. agent가 동작하는가(`enabled`)와 다른 축이다 — 쓰되 목록에는 안 올리는 선택이 있다. topic의 공개 여부에서 유도하지 말고 **받은 값을 그대로 저장**한다(R06: default private, 되돌릴 수 있다).
 - **성숙도**는 topic 단위와 agent 단위 둘이 있다. 둘 다 전용 컴포넌트가 아직 없다. topic 성숙도는 topic-api가 임시로 단순 계산해 넣고 있고, agent 성숙도는 곧 들어올 예정이다. 추천에서는 **랭커 feature 하나**로 두고, 값의 출처가 바뀌어도 자리는 유지되게 설계한다.
 
-### 1-2. 코드에서 확인한 사실 (2026-09-08)
+### 1-2. 코드에서 확인한 사실 (2026-09-08, 2026-09-10 추가)
 
 | 사실 | 어디서 |
 |---|---|
@@ -53,6 +53,9 @@ user ──대화──▶ personal agent (bourbon-agent)
 | free text를 topic으로 바꾸는 검색 route가 내부 API에 있다 (`/search/topics`) | topic-api `api/routers/internal/search/router.py` |
 | 우리 코드에 free text → 개념 확장(LLM) → topic-api 검색 → topic 확정 단계가 이미 있다 | 이 repo `agent_discovery/stages/grounding.py` 등 |
 | topic-api는 deferq 워커로 `bourbon.persona_updated`를 소비해 persona를 topic에 동기화하고, 변경된 topic마다 `bourbon.topics_updated`를 발행한다. 유저의 visibility 편집(api 프로세스)은 아무것도 발행하지 않는다 | topic-api `worker/listener.py`, `worker/events.py` |
+| bourbon-agent가 **발행하는 이벤트는 `bourbon.persona_updated` 하나**다. payload의 `changes[].topics`는 preferences 마크다운의 헤딩 텍스트이고 topic id는 없다. 추출은 소유자가 말한 모든 방을 5분 정지(상한 30분) 뒤 LLM 1회로 처리하며 bio·traits(HEXACO)·preferences를 한 번에 낸다. preferences만 두 번째 LLM 호출로 "평가가 담긴 문장"만 남긴다 | bourbon-agent `bourbon_agent/events.py`, `persona_extractor/pipeline.py`, `persona_extractor/detail_filter.py` (2026-09-10) |
+| topic-api 워커는 bourbon-agent의 persona 테이블 sharable slot을 **복호화 키를 공유해 직접 읽고** `preferences` 층만 문서로 만든다. `bio`·`traits`는 의도적으로 제외한다(traits 절을 신호로 읽자 잘못된 interest topic이 생긴 사례가 코드 주석에 있다) | topic-api `topic/agent_persona/persona.py`, `topic/storage/agent_persona.py` (2026-09-10) |
+| HEXACO 추정치(25 facet, 1.0~5.0, confidence, 관측 수)는 persona slot이 아니라 **추출 노트**(`PERSONA_EXTRACTION#note`)에 있고 visibility 구분이 없다. persona slot의 `traits`는 산문이다. persona 텍스트는 대화 언어와 무관하게 영어다 | bourbon-agent `bourbon_agent/user_persona/extraction_note.py`, `persona_extractor/prompt/system.py` (2026-09-10) |
 | 타인 agent와의 대화는 `AGENT_DM` room(`A:B'`, 방향성). main에서는 두 사람이 친구여야 열 수 있고, 임시 브랜치가 그 게이트를 내린다. **오너(2026-09-08): 친구가 아니어도 열 수 있게 할 것이며 방법은 bourbon-api의 몫.** 추천은 public agent가 누구에게나 열린다고 전제한다 | bourbon-api `rooms/models.py` `RoomType`, `rooms/service.py` `ensure_agent_dm_room` |
 
 ### 1-3. 호출 API
@@ -72,7 +75,7 @@ topic-api의 두 prefix 패턴을 그대로 따른다.
 
 | | ① 명시 요청 | ② 탐색 서브탭 | ③ 탐색 메인 |
 |---|---|---|---|
-| 입력 | free text topic + 대화 context | 요청자의 grounding된 topic 집합 | 요청자의 persona + topic + (쌓이면) 상호작용 로그 |
+| 입력 | free text topic + 대화 context | 요청자의 grounding된 topic 집합 | 요청자의 topic + (쌓이면) 상호작용 로그 + (O20 뒤) HEXACO 성향(R42, 지금은 자리만) |
 | 요청 시 외부 호출 | LLM(개념 확장) + topic-api 검색 | 요청자 topic 목록 조회 1회 (topic-api 내부 route, R27) | 같은 조회 1회 (R27) |
 | 핵심 계산 | text → 1~3개 topic → **topic 커버리지 순** agent | topic → agent (content 매칭) | 유사 유저 → 그들이 좋아한 agent (CF) + 내가 좋아할 agent (content) |
 | 예상 지연 시간 | LLM이 대부분을 차지, 수백 ms~수 초 | 수십 ms | 수십 ms (사전 계산 결과 읽기) |
@@ -110,11 +113,13 @@ topic-api가 이미 grounding해 둔 요청자의 topic만 쓴다. LLM도 topic-
 
 인기도 → content → CF는 대체가 아니라 **누적**이다. 셋을 다 feature로 받는 랭커 하나가 순서를 정하고, 신호가 없을 때는 그 feature가 0이 된다.
 
+네 번째 feature 자리가 예약되어 있다(R42): **`persona_similarity`** — 요청자와 소유자의 HEXACO 성향 벡터 유사도. topic이 겹치지 않아도 성향이 맞는 사람을 잡는 신호로, content(topic 겹침)와 CF(행동)가 답하지 못하는 것이다. bourbon-agent의 persona 테이블을 직접 읽지 않고(복호화 키 공유 없음) bourbon-agent가 **이벤트**로 주는 것을 받는다 — 방향만이고 확정은 아니지만, bourbon-agent에 API(내부 route)를 열 가능성은 없다(오너 2026-09-10). 경로·동의 범위·가중 규칙·검증은 O20이고, 그때까지 feature는 0이라 목록은 바뀌지 않는다.
+
 이 구조 덕에 사전 계산을 **읽혔거나 활동한 유저만, 그 뒤에** 갱신해도 화면에 구멍이 없다(R19). 셋 중 사전 계산인 것은 CF top-K 하나고 인기도·content는 요청 시 계산이다. 오래된 항목은 한 번 그대로 서빙하고, 그 요청 뒤 워커 스윕이 다시 만든다. 항목이 없는 신규 유저는 CF feature만 0인 완전한 목록을 받는다. 타입 ③ 최종 목록은 점수 구간 안에서 섞어 같은 사람만 보이지 않게 한다(R20 — O15의 첫 답). 후보(소유자) 쪽은 활동 여부로 빼지 않는다 — `recency`·`popularity`가 순위로 내리고, 하드 제외는 하지 않는다(R31).
 
 ### 2-4. "왜 맞는지 / 안 맞는지"
 
-탐색 탭에서 "이 agent가 나와 어디가 맞고 어디가 안 맞는지"를 보여주는 것은 미확정이지만 필요할 수 있다. 랭커가 feature 벡터로 점수를 내면 그 feature가 그대로 설명 재료가 된다(겹치는 topic, 겹치지 않는 topic, 성숙도 차이, "비슷한 사람 N명이 대화함"). 처음부터 점수를 **feature별로 분해 가능하게** 두면 나중에 비용 없이 붙인다.
+탐색 탭에서 "이 agent가 나와 어디가 맞고 어디가 안 맞는지"를 보여주는 것은 미확정이지만 필요할 수 있다. 랭커가 feature 벡터로 점수를 내면 그 feature가 그대로 설명 재료가 된다(겹치는 topic, 겹치지 않는 topic, 성숙도 차이, "비슷한 사람 N명이 대화함"). 처음부터 점수를 **feature별로 분해 가능하게** 두면 나중에 비용 없이 붙인다. HEXACO가 들어오면(O20) "다른 관점도 살펴봐요"의 재료도 여기서 나온다 — 겹치지 않는 topic은 무관함이지 다른 관점이 아니라서, 성향 축이 있어야 부정 표시(R41) 없이 그 축을 설명할 수 있다.
 
 ### 2-5. 확장
 
@@ -329,12 +334,13 @@ top-K 생성 자체의 확장 규칙 하나: 유저 한 명의 top-K는 아이�
 6. ~~타입 ③ CF의 첫 구현을 아이템 기반 이웃으로 하나, ALS로 하나~~ `implicit` ALS로 확정, 비교 없음 (R33·R34).
 7. ~~friends(R)를 요청 시 조회하나 미러하나~~ 미러로 결정, 판정은 후보 조회 쿼리 안에서 (R17, O10 닫힘).
 8. ~~A안의 엔진을 Gorse(서비스형)로 하나 `implicit`(라이브러리형)으로 하나~~ `implicit` (R33).
+9. **persona(HEXACO) 도입**: 방향·복호화 키 비공유·코드 자리(`requester_traits`, `persona_similarity`, `w_persona` 0)는 R42(2026-09-10). 경로·동의 범위·가중 규칙·검증은 O20.
 
 ---
 
 ## 9. 다음 할 일
 
-1. 오너 답 받기 — 2026-09-08에 넷(타입 ② 모양, 상한, friends, 호출 API) 완료. 2026-09-09에 O1·O2·O3·O4·O7·O8·O9·O11·O12·O13·O14·O16·O17·O18·O19 답 완료(R23~R41). 남은 것은 O5·O6·O15.
+1. 오너 답 받기 — 2026-09-08에 넷(타입 ② 모양, 상한, friends, 호출 API) 완료. 2026-09-09에 O1·O2·O3·O4·O7·O8·O9·O11·O12·O13·O14·O16·O17·O18·O19 답 완료(R23~R41). 2026-09-10에 persona(HEXACO) 방향 R42, 도입은 O20으로 신설. 남은 것은 O5·O6·O15·O20.
 2. 공통 계약 정의: 요청·응답 스키마(세 타입), 후보 소스 인터페이스, 랭커 feature 목록, 결정 로그 스키마. → 초안 `agent_discovery_contract.md` (2026-09-08).
 3. §4-2 이벤트 정의서 작성 → 초안 `agent_discovery_events.md` (2026-09-08). 오너 확인 6건 뒤 repo별 요청서로 자름.
 4. 합성 데이터 생성기 구현 (§6-2), 10만 유저 생성. → 스펙 `synthetic_population_spec.md` (2026-09-08).
