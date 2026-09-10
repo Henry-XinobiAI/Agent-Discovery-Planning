@@ -18,15 +18,15 @@
 
 ## 남은 것 (순서대로)
 
-- [ ] **1. 기획 저장소 — 레지스터 §9 두 행** 🟢
+- [x] **1. 기획 저장소 — 레지스터 §9 두 행** 🟢
   `agent_discovery_settings.md` §9에 `refresh.max_attempts`(5), `refresh.attempt_timeout_seconds`(10)을 추가한다. 워커 재시도 예산이 `INGEST_*` 대신 이 두 행에서 나오므로 코드(1-3a)보다 먼저 들어가야 한다(R39: 설정의 집은 하나). 완료 조건: 두 행이 표에 있고 §11 코드 매핑 주석이 맞다.
-  PR: —
+  PR: #61 (머지 2026-09-10). §11에 "워커 예산 = `max_attempts` × `attempt_timeout_seconds` + 대기 합, 여기서 파드 종료 유예까지 나온다"를 명시. 지금 값으로 65/70/75/90 s — 현행과 같다.
 
-- [ ] **2. 1-3a 설정 클래스** 🟡
+- [x] **2. 1-3a 설정 클래스** 🟡
   `agent_discovery/settings.py` — 레지스터 그룹을 그대로 비추는 중첩 pydantic 모델(`Settings().rank.for_you.w_persona`), 필드 docstring = 표의 "뜻 / 올리면·내리면", `SETTINGS_OVERRIDES_PATH`(ConfigMap 파일) 딥머지, `settings_hash()` → `"v1@<hash>"`. `scripts/sync_planning_docs.py`로 레지스터 표 복사본을 `docs/`에 커밋하고, 표를 파싱해 이름·기본값·설명이 클래스와 같은지 비교하는 테스트. 아직 어디에도 연결하지 않는다.
   작은 모델 가능 범위: 표 파싱 테스트와 해시 설계를 큰 모델이 먼저 만들면, 나머지 그룹·필드 옮기기.
   완료 조건: 레지스터↔클래스 일치 테스트 통과, 해시가 값 변경에만 반응.
-  PR: —
+  PR: #19 (머지 2026-09-10). 22 그룹 67 필드, frozen·`extra="forbid"`, 부분 오버라이드는 pydantic 기본값이 채우므로 딥머지 코드 없음. `settings_hash()` = `v1@<12 hex>`(값만). 레지스터 68행 ↔ 클래스 67 리프, 차이는 `dynamodb.table_name` 하나(환경 소유, 예외 목록도 검사). 설명문은 비교하지 않는다 — 레지스터는 한국어, 코드 docstring은 영어(`CLAUDE.md`)라 다르게 읽히면 레지스터가 맞다. 886 tests. 리뷰어 지적 11건 전부 반영.
 
 - [ ] **3. 1-3b 설정 연결·env 제거** 🟢
   composition과 `worker/scheduling.py`가 새 `Settings`를 읽는다. 레지스터 행으로 대체된 `TOPIC_API_TIMEOUT_SECONDS`·`WORKER_REFRESH_*`를 config·ConfigMap·README·`.env.example`·테스트에서 제거한다. 주의: `topic_api.timeout_ms`는 레지스터 800 ms, 지금 env 기본 3 s — 1-9 실측 전에는 3000으로 시작하는 쪽이 안전(계획 파일 판단 1).
