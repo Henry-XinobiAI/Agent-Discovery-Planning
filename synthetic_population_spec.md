@@ -104,7 +104,7 @@
 | tier 공개·비공개 전환 | visibility 변경 신호(임시 이름 `bourbon.user_topic_settings_updated`, R48) | 공개한 topic 전부 + `close_rate` |
 | agent 공개 여부 | `bourbon.personal_agent_visibility_changed` | 규칙이 바뀌는 시점마다 |
 | 친구 수락 | `bourbon.friendship_changed(accepted)` | 전 쌍 |
-| 대화 시작 | `bourbon.room_created`(`room_type=agent_dm`, R46) | 전 대화 |
+| 대화 시작 | 그 방의 첫 `bourbon.message_created`(`room_type=agent_dm`, R51) | 추천으로 시작된 대화만(R52) |
 | turn | `bourbon.message_created` | 전 turn |
 | 탈퇴 | `bourbon.user_deactivated` | `deactivate_rate` |
 

@@ -89,7 +89,7 @@ D의 row는 없다(전부 private). F의 row도 없다(agent가 private이면 �
 
 **`friends`** — `bourbon.friendship_changed`로 미러한다(R17). 저장은 canonical pair `(user_low, user_high)`, 조회는 요청자의 친구 집합 `R → {B, F}`(상한 5,000). `visible_topic_rows`와 같은 PostgreSQL에 두어 후보 조회 쿼리가 이 집합을 배열로 받거나 조인한다. 요청 시 bourbon-api 조회는 하지 않는다.
 
-**`interactions`** — CF와 인기도의 원천. `bourbon.room_created`(`room_type = agent_dm`, R46)가 row를 만들고, `attributions`(R47 — 클라이언트가 카드에서 우리 route에 보고한 것)가 `entry`·`recommendation_id`를 채우고, `bourbon.message_created`(`room_type = agent_dm`, 유저 메시지)가 `room_turns[room_id]`를 올린다 — 순서 문제를 피하려고 카운터는 방 키로 따로 두고 읽을 때 조인한다(R49). 아래 표의 `turns` 열은 그 조인 결과다.
+**`interactions`** — CF와 인기도의 원천. **그 방의 첫 `bourbon.message_created`** 가 row를 만들고(R51 — 소유자는 추천 시점에 계산해 둔 room id로 찾는다), `attributions`(R47 — 클라이언트가 카드에서 우리 route에 보고한 것)가 `entry`·`recommendation_id`를 채우고, `bourbon.message_created`(`room_type = agent_dm`, 유저 메시지)가 `room_turns[room_id]`를 올린다 — 순서 문제를 피하려고 카운터는 방 키로 따로 두고 읽을 때 조인한다(R49). 아래 표의 `turns` 열은 그 조인 결과다.
 
 | actor_user_id | owner_user_id | room_id | started_at | turns | entry | recommendation_id |
 |---|---|---|---|---|---|---|
@@ -131,7 +131,7 @@ topic-api ──visibility 변경 신호 (요청 예정, 형태는 topic-api 선
 
 bourbon-api ──personal_agent_visibility_changed {discoverable:false}──▶ 그 소유자 row 전부 삭제, agents.discoverable=false
 클라이언트 ──POST /attributions {recommendation_id, owner_user_id, entry}──▶ attributions insert (R47)
-bourbon-api ──room_created {room_id, room_type=agent_dm, creator_id, agents[…]}──▶ interactions insert (attributions와 (actor, owner)로 조인), popularity 증가
+bourbon-api ──message_created {room_id, sender_id, room_type=agent_dm}──▶ room_turns +1, 첫 turn이면 ROOM#{room_id} 조회 ──▶ interactions insert (attributions와 (actor, owner)로 조인), popularity 증가
 bourbon-api ──message_created {room_id, room_type=agent_dm, sender_type=user}──▶ interactions.turns += 1
 bourbon-api ──friendship_changed {user_low, user_high, action}──▶ friends 미러 갱신 (accepted 삽입 / removed 삭제)
 bourbon-api ──user_registered {user_id}──▶ agents row 생성 (email은 읽지 않음)

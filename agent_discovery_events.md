@@ -224,7 +224,7 @@ GET /api/internal/svc/topic/catalog/graph
 | | | `topic_id` | ✅ 경로 |
 | | | `topic_revision` | ✅ `write_settings`(UPDATED_NEW)가 돌려주고 응답 `TopicWriteReceipt.revision`에 이미 실린다 |
 | | | AMQP 연결 | ❌ api 프로세스에 없음 — **전제 작업** |
-| `room_created` | bourbon-api `rooms/service.py` `ensure_agent_dm_room` create 분기, room 생성 트랜잭션 커밋 뒤(같은 자리의 `user_dm`·group 생성에서도 같은 이벤트) | `room_id, room_type, creator_id` | ✅ `room.id, room.type, actor_id` |
+| ~~`room_created`~~ (철회, R51) | bourbon-api `rooms/service.py` `ensure_agent_dm_room` create 분기, room 생성 트랜잭션 커밋 뒤(같은 자리의 `user_dm`·group 생성에서도 같은 이벤트) | `room_id, room_type, creator_id` | ✅ `room.id, room.type, actor_id` |
 | | | `member_user_ids` | ✅ 같은 트랜잭션의 `RoomMember` row |
 | | | `agents[{agent_id, owner_user_id}]` | ✅ `_seat(agent_id=…)` 둘(`actor_agent_id`, `target_agent_id`). 소유자는 `_ensure_personal_agent`가 받은 `user_id` |
 | | | AMQP | ✅ bourbon-api는 `friends/events.py`가 같은 모양으로 발행 중 |
@@ -234,7 +234,7 @@ GET /api/internal/svc/topic/catalog/graph
 | `agent_maturity_changed` | 성숙도 컴포넌트 | — | 컴포넌트가 없어 검증 불가. 미룸 |
 | 카탈로그 그래프 route(§2-8, R26으로 보류) | topic-api `topic/catalog/artifact.py`, `runtime/services.py`가 시작 시 메모리에 올림 | `built_at, topics, edges` | ✅ 아티팩트 객체가 셋 다 갖고 있다 — route는 직렬화만. 지금은 같은 파일을 빌드 때 복사한다 |
 
-결론: **visibility 변경 신호와 `room_created`는 발행 지점에 필드가 다 있고, `personal_agent_visibility_changed`는 새 필드 `discoverable`이 전제다.** 막힌 것은 둘 — topic-api api 프로세스의 AMQP 연결, bourbon-api의 `discoverable` 필드(R23). 어트리뷰션은 다른 서비스를 거치지 않는다(R47).
+결론: **visibility 변경 신호와 `room_created`는 발행 지점에 필드가 다 있었고**(그래도 `room_created`는 R51로 철회했다 — 필드가 있느냐가 아니라 요청할 필요가 있느냐가 바뀌었다), **`personal_agent_visibility_changed`는 새 필드 `discoverable`이 전제다.** 막힌 것은 둘 — topic-api api 프로세스의 AMQP 연결, bourbon-api의 `discoverable` 필드(R23). 어트리뷰션은 다른 서비스를 거치지 않는다(R47).
 
 ---
 
@@ -268,7 +268,7 @@ GET /api/internal/svc/topic/catalog/graph
 | 받는 곳 | 묶음 | 선행 |
 |---|---|---|
 | topic-api | api 프로세스 AMQP 연결 + visibility 변경 신호 발행(`patch_my_topic` 1곳, 형태는 topic-api 선택 — R48) | 바로 가능. 카탈로그 route는 보류(R26) |
-| bourbon-api | 일반 이벤트 `room_created` 발행(방 생성 커밋 뒤, R46); `personal_agent_visibility_changed`(새 필드 `discoverable`, R23) | R23·R46 |
+| bourbon-api | `personal_agent_visibility_changed`(새 필드 `discoverable`, R23), 그리고 **친구 게이트 해제 시점** — 그 전에는 비친구에게 추천이 나가도 방이 열리지 않는다. 방 생성 이벤트는 철회(R51) | R23 |
 | 클라이언트 | 카드에서 대화를 시작할 때 우리 route `POST /attributions`에 `recommendation_id`·`owner_user_id`·`entry` 보고(R47). 타입 ②③은 우리 응답에서, 타입 ①은 bourbon-agent 카드의 meta에서 받는다 | R47 |
 | bourbon-agent | 타입 ① 호출을 새 계약으로(요청자 = 실제 말한 사람. 자기 agent에게 묻는 경우 소유자와 같다. 타인의 agent 방에서 묻는 경우가 제품에 있다면 그 사람이어야 하는데, 지금 코드는 항상 agent 소유자를 보낸다), 응답의 `recommendation_id`를 카드 meta에 실어 전달(R24·R47 — 클라이언트가 meta에서 읽어 우리 route에 보고한다). **HEXACO 성향 벡터를 싣는 이벤트 필드는 이 묶음에 넣지 않는다** — 이벤트로 받는다는 방향만 있고(R42, bourbon-agent에 API는 열지 않는다) 무엇을 내보낼지·동의 범위가 O20에서 정해진 뒤 별도 요청 | 계약 확정 · R47 · (HEXACO는 O20 뒤) |
 | 성숙도 컴포넌트 | `agent_maturity_changed` | 컴포넌트 존재 |

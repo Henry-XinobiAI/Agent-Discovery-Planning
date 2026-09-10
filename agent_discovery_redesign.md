@@ -187,7 +187,7 @@ CF·인기도 신호(§2-3)에도 같은 조건이 걸린다. "비슷한 사람�
 | user topic 변경(공개·점수) | 있음 — `bourbon.topics_updated`를 힌트로 재조회 → 이벤트 정의서 §2-1 |
 | user topic 비공개 전환(visibility 편집) | topic-api에 필요만 요청, 형태는 topic-api 선택(R48) → 정의서 §2-2 |
 | agent 공개 여부 | 우리가 정의 — 새 필드 `discoverable`(R23) → 정의서 §2-3 |
-| 대화 시작 | bourbon-api의 일반 이벤트 `bourbon.room_created`(R46) → 정의서 §2-4. 귀속 키는 클라이언트가 우리 route에 직접 보고(R47, 계약 §2-5) |
+| 대화 시작 | **그 방의 첫 `bourbon.message_created`**(R51 — `room_created` 요청은 철회했다) → 정의서 §2-4. 소유자는 추천을 낼 때 계산해 둔 room id로 찾고, 귀속 키는 클라이언트가 우리 route에 직접 보고한 것이 우선한다(R47·R53) |
 | 대화 진행(turn) | 있음 — `bourbon.message_created` 조인 → 정의서 §2-5 |
 | agent 성숙도 | 컴포넌트 생기면 → 정의서 §2-6 |
 | 재방문 | 위에서 유도 — 같은 (actor, owner)의 두 번째 이후 시작. 강한 긍정 신호 |
