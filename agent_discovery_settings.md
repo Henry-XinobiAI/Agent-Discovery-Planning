@@ -115,8 +115,10 @@
 
 | 이름 | 기본값 | 뜻 | 올리면 / 내리면 | 출처 |
 |---|---|---|---|---|
-| `refresh.debounce_seconds` | 10 | `topics_updated`·`user_topic_settings_updated`를 유저 단위로 모아 재조회 1회로 만드는 대기 시간 | 올리면 topic-api 재조회 횟수가 줄고 반영이 늦어진다 | 이벤트 정의서 §2-1("수 초"), 값은 분석 |
+| `refresh.debounce_seconds` | 10 | `topics_updated`·visibility 변경 신호(R48)를 유저 단위로 모아 재조회 1회로 만드는 대기 시간 | 올리면 topic-api 재조회 횟수가 줄고 반영이 늦어진다 | 이벤트 정의서 §2-1("수 초"), 값은 분석 |
 | `refresh.debounce_max_wait_seconds` | 60 | 이벤트가 계속 와도 이 시간 안에는 한 번 재조회한다(trailing debounce의 상한) | 없으면 계속 미뤄질 수 있다. 내리면 재조회가 잦아진다 | 이벤트 정의서 §2-1 |
+| `attribution.window_hours` | 24 | 클라이언트의 어트리뷰션 보고(계약 §2-5)와 `room_created`를 같은 `(actor, owner)` 쌍으로 잇는 최대 간격 | 늘리면 오래된 카드에서 시작한 대화도 추천으로 잡히고, 줄이면 늦게 연 대화가 `direct`가 된다 | R47, 값은 분석 |
+| `room_turns.orphan_ttl_days` | 7 | `interactions` 행이 없는 `room_turns`(우리 서비스 이전에 열린 방, 놓친 시작)를 정리하기까지의 기간 | 짧으면 `room_created`가 늦게 오는 방의 turn을 잃고, 길면 고아 행이 쌓인다 | R49, 값은 분석 |
 | `topic_api.timeout_ms` | 800 | 재조회·요청자 프로필(R27)·hydration 호출의 타임아웃 | 내리면 `hydration_partial`이 늘고 p95가 짧아진다 | 분석 |
 | `dynamodb.table_name` | `bourbon-agent-discovery-tokyo-{env}` | 서비스 소유 테이블 하나(R44). key space는 계약 §6-1 | — | R44 |
 | `dynamodb.log_shards` | 8 | 결정 로그 GSI 파티션 키와 `event_log` 파티션 키의 shard 수(`hash(id) % N`) | 올리면 하루치 쓰기가 더 넓게 퍼지고 읽기가 N개 Query를 병합한다. 늘려도 옛 항목은 이동하지 않는다(옛 shard < 새 N). 내리지 않는다 — 내리면 읽기가 옛 shard를 훑지 않는다 | R44, 값은 분석 |

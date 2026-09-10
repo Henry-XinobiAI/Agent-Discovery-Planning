@@ -77,7 +77,7 @@ R이 지금까지 대화를 시작한 상대: **A**(12 turn, 다시 방을 연 �
 
 D의 row는 없다(전부 private). F의 row도 없다(agent가 private이면 소유자 row 전부 삭제). 이 두 "없음"이 불변식 1이다. R 자신의 `camping`(public)·`hand_drip`(friends) row도 실제로는 있다(다른 사람이 R을 찾을 때 쓰인다) — 위 표는 R의 요청에 관여하는 row만 적었고, R의 요청에서 본인은 제외다.
 
-**`agents`** — 추천 대상 풀. `bourbon.user_registered`가 만들고(`discoverable=false`로 시작), 공개 여부·성숙도 이벤트가 갱신한다. `last_active_at`(R19)은 그 유저가 우리 API를 호출했을 때, `agent_dm_opened`의 actor였을 때, `topics_updated`가 왔을 때 갱신된다. `cf_candidates_computed_at`(R19)은 그 유저의 top-K를 마지막으로 만든 시각이다. R은 `cf_candidates_computed_at`이 9/05(H와의 대화 뒤 스윕)이고, 오늘 for-you 요청으로 `last_active_at`이 갱신됐으니 TTL 조건으로 다음 스윕의 갱신 대상이다.
+**`agents`** — 추천 대상 풀. `bourbon.user_registered`가 만들고(`discoverable=false`로 시작), 공개 여부·성숙도 이벤트가 갱신한다. `last_active_at`(R19)은 그 유저가 우리 API를 호출했을 때, `room_created`의 creator였을 때, `topics_updated`가 왔을 때 갱신된다. `cf_candidates_computed_at`(R19)은 그 유저의 top-K를 마지막으로 만든 시각이다. R은 `cf_candidates_computed_at`이 9/05(H와의 대화 뒤 스윕)이고, 오늘 for-you 요청으로 `last_active_at`이 갱신됐으니 TTL 조건으로 다음 스윕의 갱신 대상이다.
 
 | owner_user_id | agent_id | discoverable | agent_maturity | last_active_at | cf_candidates_computed_at |
 |---|---|---|---|---|---|
@@ -89,13 +89,13 @@ D의 row는 없다(전부 private). F의 row도 없다(agent가 private이면 �
 
 **`friends`** — `bourbon.friendship_changed`로 미러한다(R17). 저장은 canonical pair `(user_low, user_high)`, 조회는 요청자의 친구 집합 `R → {B, F}`(상한 5,000). `visible_topic_rows`와 같은 PostgreSQL에 두어 후보 조회 쿼리가 이 집합을 배열로 받거나 조인한다. 요청 시 bourbon-api 조회는 하지 않는다.
 
-**`interactions`** — CF와 인기도의 원천. `bourbon.agent_dm_opened`가 row를 만들고 `bourbon.message_created`(room_id로 조인, `room_type = agent_dm`)가 `turns`를 올린다.
+**`interactions`** — CF와 인기도의 원천. `bourbon.room_created`(`room_type = agent_dm`, R46)가 row를 만들고, `attributions`(R47 — 클라이언트가 카드에서 우리 route에 보고한 것)가 `entry`·`recommendation_id`를 채우고, `bourbon.message_created`(`room_type = agent_dm`, 유저 메시지)가 `room_turns[room_id]`를 올린다 — 순서 문제를 피하려고 카운터는 방 키로 따로 두고 읽을 때 조인한다(R49). 아래 표의 `turns` 열은 그 조인 결과다.
 
-| actor_user_id | owner_user_id | room_id | started_at | reopened_count | turns | entry | recommendation_id |
-|---|---|---|---|---|---|---|---|
-| R | A | room-1 | 9/01 | 1 | 12 | discover_by_topic | rec-… |
-| R | H | room-2 | 9/05 | 0 | 2 | direct | null |
-| (다른 유저들) | … | | | | | | |
+| actor_user_id | owner_user_id | room_id | started_at | turns | entry | recommendation_id |
+|---|---|---|---|---|---|---|
+| R | A | room-1 | 9/01 | 12 | discover_by_topic | rec-… |
+| R | H | room-2 | 9/05 | 2 | direct | null |
+| (다른 유저들) | … | | | | | |
 
 **`popularity`** — 소유자별 시간 감쇠 카운트. 정의는 R29(최근 30일 대화 시작, 반감기 7일 감쇠, confidence 가중, 신규 agent 부스트)이고 아래 숫자는 예시다. PostgreSQL 테이블 하나다(R17·R18) — `visible_topic_rows`와 같은 DB여야 visibility 조건을 조인으로 붙일 수 있다.
 
@@ -121,7 +121,7 @@ PK user_id=R → {computed_at, model_version, candidates: [{owner_user_id: G, sc
 
 ```
 topic-api ──bourbon.topics_updated {user_id, topic_id, …}──▶ 워커
-topic-api ──bourbon.user_topic_settings_updated (요청 예정)──▶ 워커
+topic-api ──visibility 변경 신호 (요청 예정, 형태는 topic-api 선택 — R48)──▶ 워커
               │ user_id 단위 debounce (수 초, 상한 1분)
               ▼
      GET /api/internal/svc/topic/users/{id}/topics?visibility=public&visibility=friends
@@ -130,13 +130,14 @@ topic-api ──bourbon.user_topic_settings_updated (요청 예정)──▶ 워
      그 유저의 visible_topic_rows를 통째로 교체 (없어진 row 삭제, 새 row upsert)
 
 bourbon-api ──personal_agent_visibility_changed {discoverable:false}──▶ 그 소유자 row 전부 삭제, agents.discoverable=false
-bourbon-api ──agent_dm_opened {actor, owner, room_id, reopened, entry, recommendation_id?}──▶ interactions insert, popularity 증가
+클라이언트 ──POST /attributions {recommendation_id, owner_user_id, entry}──▶ attributions insert (R47)
+bourbon-api ──room_created {room_id, room_type=agent_dm, creator_id, agents[…]}──▶ interactions insert (attributions와 (actor, owner)로 조인), popularity 증가
 bourbon-api ──message_created {room_id, room_type=agent_dm, sender_type=user}──▶ interactions.turns += 1
 bourbon-api ──friendship_changed {user_low, user_high, action}──▶ friends 미러 갱신 (accepted 삽입 / removed 삭제)
 bourbon-api ──user_registered {user_id}──▶ agents row 생성 (email은 읽지 않음)
 ```
 
-예: B가 `hand_drip`를 friends → private로 되돌리면, topic-api api 프로세스가 `user_topic_settings_updated`를 내고(요청 예정), 워커가 B의 공개된 집합을 재조회해 `(hand_drip, friends, B)` row를 **지운다**. 갱신이 아니라 삭제다. 이벤트를 놓쳤다면 B의 다음 힌트에서 재조회가 고친다.
+예: B가 `hand_drip`를 friends → private로 되돌리면, topic-api api 프로세스가 visibility 변경 신호를 내고(요청 예정, R48), 워커가 B의 공개된 집합을 재조회해 `(hand_drip, friends, B)` row를 **지운다**. 갱신이 아니라 삭제다. 이벤트를 놓쳤다면 B의 다음 힌트에서 재조회가 고친다.
 
 ### 2-3. A안만 갖는 저장소 (기록 — OpenSearch·Gorse는 R33·R34로 쓰지 않는다)
 
@@ -267,7 +268,7 @@ B: 0.5·0.75 + 0.2·0.9 + 0.2·0.8 + 0.1·0.04 = 0.719
  "served_at": "2026-09-08T…Z"}
 ```
 
-R이 이 응답에서 B의 agent와 대화를 시작하면 `agent_dm_opened`가 `entry=recommend_explicit, recommendation_id=rec-7f…`로 돌아와 `interactions`에 쌓인다(id 전달 경로는 R24 — 타입 ①은 bourbon-agent 카드의 meta를 거친다).
+R이 이 응답에서 B의 agent와 대화를 시작하면 클라이언트가 `POST /attributions`에 `entry=recommend_explicit, recommendation_id=rec-7f…`를 보고하고(R47 — 타입 ①은 bourbon-agent 카드의 meta에서 읽는다), 이어 bourbon-api의 `room_created`가 오면 둘을 (R, B) 쌍으로 이어 `interactions`에 쌓인다.
 
 ---
 
@@ -365,9 +366,9 @@ GROUP BY owner_user_id ORDER BY sim DESC LIMIT 20;
 CF의 입력은 어느 안이든 `interactions`이고, 학습 신호는 "대화를 시작했다" 1회가 아니라 confidence다(R16):
 
 ```
-confidence = 1 + α·log(1 + turns) + β·reopened_count        (α, β는 설정. 예시 α=1, β=1)
-R–A: 1 + log(13) + 1 = 4.56      ← 길고 다시 찾은 대화 = 강한 신호
-R–H: 1 + log(3)  + 0 = 2.10
+confidence = 1 + α·log(1 + turns)        (α는 설정. 예시 α=1. 재방문 항은 R46으로 제외 — 이벤트로 받지 않는다)
+R–A: 1 + log(13) = 3.56      ← 긴 대화 = 강한 신호
+R–H: 1 + log(3)  = 2.10
 ```
 
 `interactions`를 (유저 × agent) 희소 행렬로 본 것이 학습 데이터다. 10만 유저면 행렬은 10만 × 10만, 채워진 칸은 대화 쌍 수(스펙 λ=3이면 약 23만).

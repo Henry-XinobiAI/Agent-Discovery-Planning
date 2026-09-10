@@ -90,7 +90,7 @@
 
 1. agent 인기 가중치 `pop[a]`를 power-law로 뽑는다(`discoverable=false`인 agent는 0).
 2. 유저 `u`의 대화 수를 포아송으로 뽑고, 상대 agent를 확률 ∝ `affinity[cluster(u)][cluster(owner(a))] × pop[a] × open(a)`로 뽑는다. `open(a)` = 그 agent가 `u`에게 공개돼 있나(public이거나 friends이고 친구). 자기 자신 제외.
-3. 대화마다 상대를 뽑기 전에 `revisit_rate` 확률로 "이미 대화한 쌍 중 하나의 방을 다시 연다"(`reopened=true`, 같은 `room_id`)를 택하고, 아니면 2의 확률로 새 상대를 뽑는다. `started_at`, `turns`, `entry`(처음엔 전부 `"direct"` — 우리 추천이 없던 세상), `recommendation_id=null`.
+3. 대화마다 상대를 뽑기 전에 `revisit_rate` 확률로 "이미 대화한 쌍 중 하나의 방을 다시 연다"(같은 `room_id`를 다시 쓴다 — 이벤트로는 `message_created`만 나온다, R46)를 택하고, 아니면 2의 확률로 새 상대를 뽑는다. `started_at`, `turns`, `entry`(처음엔 전부 `"direct"` — 우리 추천이 없던 세상), `recommendation_id=null`.
 4. turn을 `message_created` 이벤트로 펼친다(`room_id` = uuid5(actor, agent), `sender_type="user"`, `room_type="agent_dm"`).
 
 ### 3-5. 변화 이벤트 스트림
@@ -101,10 +101,10 @@
 |---|---|---|
 | 가입 | `bourbon.user_registered` | 전 유저 |
 | topic 동기화 | `bourbon.topics_updated` × 움직인 topic | 전 유저, topic마다 |
-| tier 공개·비공개 전환 | `bourbon.user_topic_settings_updated` | 공개한 topic 전부 + `close_rate` |
+| tier 공개·비공개 전환 | visibility 변경 신호(임시 이름 `bourbon.user_topic_settings_updated`, R48) | 공개한 topic 전부 + `close_rate` |
 | agent 공개 여부 | `bourbon.personal_agent_visibility_changed` | 규칙이 바뀌는 시점마다 |
 | 친구 수락 | `bourbon.friendship_changed(accepted)` | 전 쌍 |
-| 대화 시작 | `bourbon.agent_dm_opened` | 전 대화 |
+| 대화 시작 | `bourbon.room_created`(`room_type=agent_dm`, R46) | 전 대화 |
 | turn | `bourbon.message_created` | 전 turn |
 | 탈퇴 | `bourbon.user_deactivated` | `deactivate_rate` |
 
@@ -149,7 +149,7 @@ LLM 확장은 비용이 있으므로 검증에서는 **쿼리 200개만** 실제
 | `user_topics.parquet` | U × 평균 topic 수 ≈ 100만 | `user_id, topic_id, score, visibility, revision, updated_at` |
 | `friends.parquet` | U × E[degree]/2 ≈ 125만(중앙값 기준)~190만(로그정규 평균 기준) | `user_low, user_high, accepted_at` |
 | `conversations.parquet` | U × λ ≈ 30만 | `room_id, actor_user_id, owner_user_id, agent_id, started_at, turns, reopened` |
-| `events.jsonl` | ≈ 450만~500만 건: registered 10만 + topics_updated ≈100만 + settings_updated ≈40만(공개한 topic + 비공개 전환) + visibility ≈6만 + friendship ≈125만~190만 + agent_dm_opened ≈30만 + message_created ≈120만(turn 평균 4) + deactivated 1천 | 시간순. 이벤트 이름과 payload는 `agent_discovery_events.md` 그대로 |
+| `events.jsonl` | ≈ 450만~500만 건: registered 10만 + topics_updated ≈100만 + visibility 변경 신호 ≈40만(공개한 topic + 비공개 전환) + agent 공개 여부 ≈6만 + friendship ≈125만~190만 + room_created ≈30만 + message_created ≈120만(turn 평균 4) + deactivated 1천 | 시간순. 이벤트 이름과 payload는 `agent_discovery_events.md` 그대로 |
 | `queries.parquet` | 2,000 | `query_id, requester, lang, text, topic_ids` |
 | `truth_*.parquet` | 타입별 | §4 |
 | `topic_api_stub/` | — | 재조회 목 서버가 읽는 유저별 현재 row 스냅샷 |
@@ -190,8 +190,8 @@ LLM 확장은 비용이 있으므로 검증에서는 **쿼리 200개만** 실제
 
 | §2 파라미터 | 재는 값 | 소스 (이미 우리 저장소에 있는 것) |
 |---|---|---|
-| `conversation_rate` λ | 유저별 최근 90일 대화 시작 횟수의 평균과 분포. Poisson이 맞는지는 평균/분산 비로 확인하고, 과분산이면 음이항으로 바꾼다 | `interactions` (계약 §6, `(actor_user_id, owner_user_id, room_id)`, `agent_dm_opened`로 채움) |
-| `revisit_rate` | `reopened=true` 시작 횟수 / 전체 시작 횟수 | 같은 테이블 |
+| `conversation_rate` λ | 유저별 최근 90일 대화 시작 횟수의 평균과 분포. Poisson이 맞는지는 평균/분산 비로 확인하고, 과분산이면 음이항으로 바꾼다 | `interactions` (계약 §6, `(actor_user_id, owner_user_id, room_id)`, `room_created`로 채움) |
+| `revisit_rate` | 재방문은 이벤트로 받지 않는다(R46). 잴 때는 `message_created`가 마지막 turn 뒤 하루 이상 지나 같은 방에 다시 온 횟수 / 전체 대화 수 | turn 카운터의 갱신 시각 |
 | `turns_per_conversation` | room당 `message_created` 수의 분포 | turn 카운터 (이벤트 정의서 §2-5) |
 | `popularity_skew` | agent별 대화 시작 횟수의 순위-빈도 기울기 | 같은 테이블을 owner로 집계 |
 | `topics_per_user`, `opener_rate`, `tier_mix_of_opened` | 유저별 공개된 row 수, 공개한 유저 비율, tier 비율 | `visible_topic_rows` — 단, private/hidden은 우리 저장소에 없으므로 `topics_per_user` 전체는 topic-api 내부 read로만 잴 수 있다 |

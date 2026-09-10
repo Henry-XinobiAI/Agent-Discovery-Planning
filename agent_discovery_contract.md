@@ -87,6 +87,18 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 - 페이지네이션은 opaque `cursor`다. 오프셋을 노출하지 않는다(사전 계산 결과가 갈아엎어지면 오프셋은 의미가 없다). `recommendation_id`는 **목록 하나**(첫 페이지)에 발급되고 `cursor`가 그것을 실어 오므로 다음 페이지는 같은 id·같은 seed(R20)로 순서를 잇는다. 그 사이 사전 계산이 갱신될 수 있어(R19) 페이지 연속성은 best-effort다.
 - 요청자 본인의 agent는 어느 타입에서도 결과에 없다.
 
+### 2-5. 어트리뷰션 보고 `POST /attributions` (R47)
+
+클라이언트가 추천 카드에서 대화를 시작할 때 우리에게 직접 알린다. 다른 서비스의 route나 이벤트에 우리 필드를 얹지 않는다(플랫폼 이벤트 기준, 이벤트 정의서 §0).
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `recommendation_id` | UUID | 그 카드가 속한 응답 envelope의 값. 타입 ①은 bourbon-agent가 카드 meta에 실어 준 값 |
+| `owner_user_id` | UUID | 대화를 시작하는 상대 agent의 소유자(카드의 값) |
+| `entry` | `recommend_explicit` \| `discover_by_topic` \| `discover_for_you` | 어느 화면에서 |
+
+요청자는 edge-auth의 `x-user-id`. 응답 204. 추천을 거치지 않은 대화 시작(`direct`)은 보고하지 않는다. 우리는 `attributions`(§6)에 적고, 대화 시작 이벤트 `room_created`(§9-1)가 같은 `(actor, owner)` 쌍으로 오면 `attribution.window_hours` 안의 최근 보고 하나를 `interactions.entry`·`recommendation_id`에 채운다. 보고가 없으면 `entry = direct`. 보고는 best-effort다 — 측정용 값이라 빠져도 추천은 영향이 없다.
+
 ---
 
 ## 3. 응답
@@ -300,12 +312,14 @@ class Ranker(Protocol):
 |---|---|---|---|
 | `visible_topic_rows` | `(topic_id, tier, owner_user_id)` | `topic_score`(소유자 쪽 preference 강도), `topic_maturity`, `updated_at` | topic 변경 이벤트. 비공개 전환 = 삭제 |
 | `visible_topic_rows` 보조 인덱스 | `owner_user_id` | → 그 소유자의 row들 | agent private 시 일괄 삭제용 |
-| `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, `updated_at`, **`last_active_at`**, **`cf_candidates_computed_at`**(R19) | `bourbon.user_registered`로 생성(추천 대상 풀), 공개 여부·성숙도 이벤트로 갱신, `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재조회가 만든다. `last_active_at`은 우리 API 요청·`agent_dm_opened`의 actor·`topics_updated` 셋 중 어느 것이든 갱신한다. **`cf_candidates_computed_at`**(R19)은 그 유저의 top-K를 마지막으로 만든 시각 — 스윕 조건 `last_active_at > cf_candidates_computed_at`의 오른쪽 |
+| `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, `updated_at`, **`last_active_at`**, **`cf_candidates_computed_at`**(R19) | `bourbon.user_registered`로 생성(추천 대상 풀), 공개 여부·성숙도 이벤트로 갱신, `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재조회가 만든다. `last_active_at`은 우리 API 요청·`room_created`의 creator·`topics_updated` 셋 중 어느 것이든 갱신한다. **`cf_candidates_computed_at`**(R19)은 그 유저의 top-K를 마지막으로 만든 시각 — 스윕 조건 `last_active_at > cf_candidates_computed_at`의 오른쪽 |
 | `requester_topics` (**R27: 저장하지 않음**) | `user_id` | 요청자 자신의 topic 목록(점수 포함) — 본인의 `public`·`friends`·`private`, `hidden` 제외(R22). 타입 ②의 섹션과 타입 ③의 content 쿼리에 씀 | 요청 시 topic-api 내부 route(`visibility=public&visibility=friends&visibility=private`)로 읽는다(R27). 소유자 키 아래에만 두는 미러는 지연 시간이 문제될 때의 대안 |
 | `friends` (**R17: 미러, 필수**) | canonical pair `(user_low, user_high)`. 조회는 `user_id` → 친구 id 집합(상한 5,000) | — | `bourbon.friendship_changed`: `accepted` → 삽입, `removed` → 삭제. 요청 시 bourbon-api 조회·TTL 캐시는 쓰지 않는다. `visible_topic_rows`와 같은 저장소에 두어 후보 조회 쿼리가 배열로 받거나 조인한다 |
 | `popularity` | `owner_user_id` | 시간 감쇠 카운트 | 대화 시작 이벤트 |
 | `cf_candidates` | `user_id` | `candidates: [(owner_user_id, score)]` top-K, `computed_at`, `model_version`(어느 전역 학습으로 만들었나 — 재현·갱신 판단용) | 워커의 주기 스윕이 배치로 쓴다 — 조건은 R19. K는 설정 레지스터 `cf.pool_k`(R20의 pool). **DynamoDB**(R18·R44 — `USER#{user_id}` / `CF_CANDIDATES`, §6-1, **TTL 없음**): 서빙은 단건 GetItem, 조인은 없다(재확인은 PostgreSQL `visible_topic_rows`에서). 오래된 항목도 그대로 서빙한다. 항목이 없는 요청자는 §2-3의 콜드스타트 경로 |
-| `interactions` | `(actor_user_id, owner_user_id, room_id)` | `started_at`, `reopened_count`, `turns`, `entry`, `recommendation_id` | `agent_dm_opened`로 생성, `message_created`(room_id 조인)로 `turns` 증가. CF 학습 입력 |
+| `interactions` | `(actor_user_id, owner_user_id, room_id)` | `started_at`, `entry`, `recommendation_id` (`turns`는 `room_turns`에서 조인) | `room_created`(`room_type = agent_dm`, R46)로 생성, `entry`·`recommendation_id`는 `attributions` 조인(R47). CF 학습 입력. 자기 agent 방·user DM·group은 행 없음. 탈퇴: owner 행 삭제, actor 행은 actor 익명화(R49) |
+| `room_turns` (R49) | `room_id` | `turns`, `last_turn_at` | `message_created`(`room_type == agent_dm`, `sender_type == user`)마다 +1. `room_created`와 순서가 보장되지 않아 방 키로 독립시킨다 — 어느 쪽이 먼저 와도 버릴 것이 없다. `interactions` 행이 없는 방은 읽기 조인에서 빠지고 `room_turns.orphan_ttl_days` 뒤 정리 |
+| `attributions` (R47) | `(requester_user_id, owner_user_id, reported_at)` | `recommendation_id`, `entry` | 클라이언트의 §2-5 보고로 생성. `room_created`가 오면 `attribution.window_hours` 안의 최근 것 하나를 `interactions`에 옮긴다. 보존은 `decision_log.ttl_days`와 같게 |
 
 ### 6-1. DynamoDB key space — 테이블 하나 (R44)
 
@@ -347,12 +361,12 @@ class Ranker(Protocol):
 
 ## 8. 결정 로그
 
-목록마다 한 건 — 첫 페이지에 발급된 `recommendation_id`가 PK고, 다음 페이지 요청은 같은 항목에 `pages[]`로 덧붙인다(§2-4). 오프라인 평가의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18·R44, key space는 §6-1): `REC#{recommendation_id}` / `LOG`(대화 시작 이벤트의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 날짜·타입별로 읽도록 GSI `served-day-index`(`served_day_key = {type}#{YYYY-MM-DD}#{shard}`, shard 병합), 보존은 TTL(`decision_log.ttl_days`). 집계는 SQL이 아니라 평가 배치의 코드다.
+목록마다 한 건 — 첫 페이지에 발급된 `recommendation_id`가 PK고, 다음 페이지 요청은 같은 항목에 `pages[]`로 덧붙인다(§2-4). 오프라인 평가의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18·R44, key space는 §6-1): `REC#{recommendation_id}` / `LOG`(어트리뷰션 보고 §2-5의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 날짜·타입별로 읽도록 GSI `served-day-index`(`served_day_key = {type}#{YYYY-MM-DD}#{shard}`, shard 병합), 보존은 TTL(`decision_log.ttl_days`). 집계는 SQL이 아니라 평가 배치의 코드다.
 
 ```json
 {
   "recommendation_id": "uuid",
-  "type": "recommend_explicit" | "discover_by_topic" | "discover_for_you",   // agent_dm_opened.entry와 같은 값 집합
+  "type": "recommend_explicit" | "discover_by_topic" | "discover_for_you",   // attributions.entry(§2-5)와 같은 값 집합
   "requester_user_id": "uuid",
   "implementation": "v1@<settings_hash>",         // 어느 코드·설정 스냅샷이 답했나 (R34 이전에는 A/B 표식이었다)
   "query": {                                      // 타입별. 원문 없음
@@ -385,11 +399,11 @@ class Ranker(Protocol):
 |---|---|---|---|
 | `bourbon.friendship_changed` | **있음** (bourbon-api) | `user_low, user_high, action, occurred_at` | `friends` 미러 갱신: `accepted` 삽입, `removed` 삭제 (R17) |
 | `bourbon.topics_updated` | **있음** (topic-api 워커, persona 동기화가 움직인 topic마다) | `user_id, topic_id, persona_revision, topic_revision` | 힌트. 유저 단위 debounce 뒤 내부 route `GET /users/{id}/topics?visibility=public&visibility=friends`(반복 파라미터)를 읽어 공개된 row를 통째로 교체. 상세 `agent_discovery_events.md` §2-1 |
-| `bourbon.user_topic_settings_updated` | 우리가 정의, topic-api api 프로세스에 요청 (그 프로세스에 AMQP 연결 필요) | `user_id, topic_id, topic_revision, touched` | 같은 debounce → 같은 재조회. **비공개 전환은 이 경로로만 오므로 핵심**. 정의서 §2-2 |
+| visibility 변경 신호 (R48) | topic-api에 "필요"만 요청 — 형태는 topic-api가 정한다(기존 `topics_updated` 확장 또는 새 타입). 그 프로세스에 AMQP 연결 필요. 우리 미러의 임시 이름은 `bourbon.user_topic_settings_updated` | `user_id`(가능하면 `topic_id`) | 같은 debounce → 같은 재조회. **비공개 전환은 이 경로로만 오므로 핵심**. 정의서 §2-2 |
 | `bourbon.personal_agent_visibility_changed` | 우리가 정의, bourbon-api에 요청 (새 필드 `discoverable`, 기본 false — R23) | `owner_user_id, agent_id, discoverable, occurred_at` | `false` → 그 소유자 row 전부 삭제 |
 | `bourbon.agent_maturity_changed` | 정의해 요청 (성숙도 컴포넌트, 예정) | `owner_user_id, maturity, maturity_version, occurred_at` | `agents` 갱신 |
-| `bourbon.agent_dm_opened` | 우리가 정의, bourbon-api에 요청 (타인 agent와의 대화는 `AGENT_DM` room `A:B'`. `ensure_agent_dm_room`의 create·re-enter) | `room_id, actor_user_id, owner_user_id, agent_id, reopened, entry, recommendation_id?, occurred_at` | `interactions` 기록, `popularity` 증가. `recommendation_id`는 R24의 경로(타입 ①은 bourbon-agent 카드 meta → 클라이언트, ②③은 우리 응답 → 클라이언트)로 대화 시작 요청에 실려 온다 |
-| `bourbon.message_created` | **있음** (bourbon-api) | `room_id, message_id, sender_id, sender_type, type, room_type` | `room_type == agent_dm`인 유저 메시지를 `room_id`로 `agent_dm_opened` 기록과 조인해 turn을 셈. 새 turn 이벤트 불필요 |
+| `bourbon.room_created` | bourbon-api에 **일반 이벤트**로 요청 (R46. 타인 agent와의 대화는 `AGENT_DM` room `A:B'`, `ensure_agent_dm_room`의 create) | `room_id, room_type, creator_id, member_user_ids, agents[{agent_id, owner_user_id}], occurred_at` | `room_type == agent_dm`만. actor = creator, 소유자 = creator가 소유하지 않은 착석 agent의 소유자. `interactions` 기록, `popularity` 증가. `entry`·`recommendation_id`는 `attributions`(§2-5) 조인 |
+| `bourbon.message_created` | **있음** (bourbon-api) | `room_id, message_id, sender_id, sender_type, type, room_type` | `room_type == agent_dm`인 유저 메시지마다 `room_turns[room_id]` +1(R49 — `room_created`와 순서 무관). 읽을 때 `interactions`와 `room_id`로 조인. 새 turn 이벤트 불필요 |
 | `bourbon.user_registered` | **있음** (bourbon-api, 활성화 전이) | `user_id, email` | `agents` row 생성(`discoverable=false`). `email`은 읽지 않는다. 탈퇴 뒤 재가입도 같은 경로 — 신규로 본다(R38) |
 | `bourbon.user_deactivated` | **있음** (bourbon-api) | `user_id` | 그 유저의 모든 데이터 삭제. `interactions`의 actor 쪽만 익명화 |
 
