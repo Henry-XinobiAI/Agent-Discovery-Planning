@@ -42,7 +42,7 @@ topic-api와 같은 방식이다. 라우터는 하나씩이고, 앱이 두 prefi
   "topic_text": "캠핑하면서 핸드드립커피",   // free text, 1~200자
   "context": "…",                    // 대화 맥락, ≤ 2000자, 선택
   "max_results": 3,                  // 1~20, 기본 3
-  "room_id": "uuid",                 // 로그 상관용. 이 서비스는 room을 읽지 않음
+  "room_id": "uuid",                 // 로그 추적용. 이 서비스는 room을 읽지 않음
   "lang": "ko"                       // ko | en | ja (R40). 응답의 다국어 필드를 이 언어의 문자열 하나로. 기본 en, 그 밖의 값은 422
 }
 ```
@@ -239,9 +239,9 @@ class CandidateSource(Protocol):
     async def candidates(self, query: TopicQuery | UserQuery) -> Sequence[SourceHit]: ...
 ```
 
-- **공개된 row 저장소를 읽는 소스는 visibility 술어를 쿼리 안에 넣는다**(R17): `tier = 'public' OR (tier = 'friends' AND owner_user_id = ANY(friends(요청자)))`. `topic_index`, `content_similarity`, PostgreSQL `popularity`가 여기 든다(이웃 테이블을 만들면 그것도). 결과는 tier가 이미 붙어 있고 필터에서 빠지는 것이 없으므로 **`limit`만큼만(응답 직전 재확인에서 빠질 몫만 여유를 두고) 읽는다.** 친구 집합은 미러(§6 `friends`)에서 배열로 넘기거나 조인한다.
-- **요청자별 사전 계산**(라이브러리형 `cf_engine`의 배치가 만드는 `cf_candidates`)은 배치 시점의 요청자 친구 집합으로 같은 술어를 적용해 top-K를 뽑는다. 그래도 스냅샷이므로 응답 직전 재확인(§5 불변식 4)은 남는다. `cf_item`(agent×agent 이웃 테이블, R34로 지금은 만들지 않음)은 요청자별 사전 계산이 아니고, 첫 항처럼 요청 시 술어를 쿼리에 넣는다.
-- **tier를 모르는 소스만 넉넉히 반환한다**(예: 3배): 외부 엔진(Gorse)이 준 agent 목록처럼 술어를 넣을 수 없는 곳. 뒤의 필터가 공개된 row 저장소에서 tier를 조회해 붙이고, row가 없으면 버리고, 부족하면 파이프라인이 한 번 더 요청한다. 이 재요청 비용은 그 소스의 비용으로 검증(재설계 §6)에 기록한다. 엔진 결과는 후보를 좁힐 뿐 노출을 허가하지 못한다.
+- **공개된 row 저장소를 읽는 소스는 visibility 조건을 쿼리 안에 넣는다**(R17): `tier = 'public' OR (tier = 'friends' AND owner_user_id = ANY(friends(요청자)))`. `topic_index`, `content_similarity`, PostgreSQL `popularity`가 여기 든다(이웃 테이블을 만들면 그것도). 결과는 tier가 이미 붙어 있고 필터에서 빠지는 것이 없으므로 **`limit`만큼만(응답 직전 재확인에서 빠질 몫만 여유를 두고) 읽는다.** 친구 집합은 미러(§6 `friends`)에서 배열로 넘기거나 조인한다.
+- **요청자별 사전 계산**(라이브러리형 `cf_engine`의 배치가 만드는 `cf_candidates`)은 배치 시점의 요청자 친구 집합으로 같은 조건을 적용해 top-K를 뽑는다. 그래도 스냅샷이므로 응답 직전 재확인(§5 불변식 4)은 남는다. `cf_item`(agent×agent 이웃 테이블, R34로 지금은 만들지 않음)은 요청자별 사전 계산이 아니고, 첫 항처럼 요청 시 조건을 쿼리에 넣는다.
+- **tier를 모르는 소스만 넉넉히 반환한다**(예: 3배): 외부 엔진(Gorse)이 준 agent 목록처럼 조건을 넣을 수 없는 곳. 뒤의 필터가 공개된 row 저장소에서 tier를 조회해 붙이고, row가 없으면 버리고, 부족하면 파이프라인이 한 번 더 요청한다. 이 재요청 비용은 그 소스의 비용으로 검증(재설계 §6)에 기록한다. 엔진 결과는 후보를 좁힐 뿐 노출을 허가하지 못한다.
 - 한 타입이 소스 여러 개를 쓸 수 있다. 타입 ③은 `popularity + content_similarity + cf_*`.
 - 구현은 하나다(R34): `topic_index`(PostgreSQL), `popularity`, `content_similarity`, `cf_engine`(`implicit` ALS 배치 → `cf_candidates`, R33). `cf_item`(동시 출현 이웃)과 Gorse 소스는 만들지 않는다 — 인터페이스는 그대로라 뒤에 추가할 수 있다.
 
@@ -254,7 +254,7 @@ class VisibilityFilter(Protocol):
 Degradation = frozenset[str]   # §3-4의 값 집합. 비어 있으면 완전한 답
 ```
 
-규칙은 §5. 구현은 하나다. 역할은 둘이다: 술어를 이미 적용한 hit(`tier`가 있음)은 그대로 통과시키고, `tier = None`인 hit에는 `visible_topic_rows`를 소유자 키로 조회해 tier를 붙이며(friends row는 요청자가 친구일 때만) row가 없으면 버린다. 친구 집합을 읽지 못한 요청의 처리는 §5 불변식 3.
+규칙은 §5. 구현은 하나다. 역할은 둘이다: 조건을 이미 적용한 hit(`tier`가 있음)은 그대로 통과시키고, `tier = None`인 hit에는 `visible_topic_rows`를 소유자 키로 조회해 tier를 붙이며(friends row는 요청자가 친구일 때만) row가 없으면 버린다. 친구 집합을 읽지 못한 요청의 처리는 §5 불변식 3.
 
 ### 4-4. 랭커
 
@@ -269,7 +269,7 @@ class Ranker(Protocol):
     def score(self, f: Features) -> float: ...
 ```
 
-타입 ①은 `score` 앞에 커버리지 정렬이 온다: `(coverage desc, score desc)`. 타입 ②③은 `score desc`. 처음엔 가중합(가중치는 설정 레지스터 `agent_discovery_settings.md` §2), 로그가 쌓이면 학습 모델로 교체하되 인터페이스는 같다. feature 이름은 §7이 전부이고 예약 feature(`persona_similarity`, R42)도 같은 경로로 들어온다 — 입력이 없으면 값 0, `present`에 없음. 예약 feature가 실제로 켜지는 것은 설정값과 입력 경로의 일이고 인터페이스는 바뀌지 않는다.
+타입 ①은 `score` 앞에 커버리지 정렬이 온다: `(coverage desc, score desc)`. 타입 ②③은 `score desc`. 처음엔 가중합(가중치는 설정 레지스터 `agent_discovery_settings.md` §2), 로그가 쌓이면 학습 모델로 교체하되 인터페이스는 같다. feature 이름은 §7이 전부이고 예약 feature(`persona_similarity`, R42)도 같은 경로로 들어온다 — 입력이 없으면 값 0, `present`에 없음. 예약 feature가 실제로 켜지는 것은 설정값과 입력 경로가 갖춰졌을 때의 일이고 인터페이스는 바뀌지 않는다.
 
 **타입 ③은 정렬 뒤 점수 구간 안에서만 섞는다**(R20). 구간 경계는 설정(예 상위 5·다음 15·다음 30), seed는 `recommendation_id`. `cursor`가 첫 페이지의 `recommendation_id`를 실어 오므로 다음 페이지도 같은 seed로 순서를 잇는다(§2-4, best-effort). 결정 로그는 `ranked`에 섞기 **전** 순서를, `shuffle`에 seed와 구간 경계를 남겨 서빙 순서를 재현한다. 타입 ①②는 섞지 않는다.
 
@@ -304,10 +304,24 @@ class Ranker(Protocol):
 | `requester_topics` (**R27: 저장하지 않음**) | `user_id` | 요청자 자신의 topic 목록(점수 포함) — 본인의 `public`·`friends`·`private`, `hidden` 제외(R22). 타입 ②의 섹션과 타입 ③의 content 쿼리에 씀 | 요청 시 topic-api 내부 route(`visibility=public&visibility=friends&visibility=private`)로 읽는다(R27). 소유자 키 아래에만 두는 미러는 지연 시간이 문제될 때의 대안 |
 | `friends` (**R17: 미러, 필수**) | canonical pair `(user_low, user_high)`. 조회는 `user_id` → 친구 id 집합(상한 5,000) | — | `bourbon.friendship_changed`: `accepted` → 삽입, `removed` → 삭제. 요청 시 bourbon-api 조회·TTL 캐시는 쓰지 않는다. `visible_topic_rows`와 같은 저장소에 두어 후보 조회 쿼리가 배열로 받거나 조인한다 |
 | `popularity` | `owner_user_id` | 시간 감쇠 카운트 | 대화 시작 이벤트 |
-| `cf_candidates` | `user_id` | `candidates: [(owner_user_id, score)]` top-K, `computed_at`, `model_version`(어느 전역 학습으로 만들었나 — 재현·갱신 판단용) | 워커의 주기 스윕이 배치로 쓴다 — 조건은 R19. K는 설정 레지스터 `cf.pool_k`(R20의 pool). **DynamoDB**(PK `user_id`, R18, **TTL 없음**): 서빙은 단건 GetItem, 조인은 없다(재확인은 PostgreSQL `visible_topic_rows`에서). 오래된 항목도 그대로 서빙한다. 항목이 없는 요청자는 §2-3의 콜드스타트 경로 |
+| `cf_candidates` | `user_id` | `candidates: [(owner_user_id, score)]` top-K, `computed_at`, `model_version`(어느 전역 학습으로 만들었나 — 재현·갱신 판단용) | 워커의 주기 스윕이 배치로 쓴다 — 조건은 R19. K는 설정 레지스터 `cf.pool_k`(R20의 pool). **DynamoDB**(R18·R44 — `USER#{user_id}` / `CF_CANDIDATES`, §6-1, **TTL 없음**): 서빙은 단건 GetItem, 조인은 없다(재확인은 PostgreSQL `visible_topic_rows`에서). 오래된 항목도 그대로 서빙한다. 항목이 없는 요청자는 §2-3의 콜드스타트 경로 |
 | `interactions` | `(actor_user_id, owner_user_id, room_id)` | `started_at`, `reopened_count`, `turns`, `entry`, `recommendation_id` | `agent_dm_opened`로 생성, `message_created`(room_id 조인)로 `turns` 증가. CF 학습 입력 |
 
-타입 ①②의 조회는 `visible_topic_rows[topic_id, public]` ∪ (`visible_topic_rows[topic_id, friends]` ∩ friends(요청자)) 이고, 타입 ①은 topic ≤ 3개의 결과를 owner로 합쳐 커버리지를 센다. 이 합집합은 쿼리 하나의 WHERE 절이다(§4-2, R17). 타입 ③의 `popularity`·`content_similarity`·이웃 조회도 같은 술어를 `visible_topic_rows`에 대한 조인(또는 EXISTS)으로 붙여 요청자에게 보이는 소유자만 읽는다. 다른 소스가 자기 저장소를 따로 가져도 위 집합은 그대로 있어야 한다. 불변식 1·4가 여기서 판정되기 때문이다.
+### 6-1. DynamoDB key space — 테이블 하나 (R44)
+
+인프라 방침대로 서비스 소유 테이블 하나(`bourbon-agent-discovery-tokyo-{env}`, `PK`·`SK` 문자열, `PAY_PER_REQUEST`, TTL 속성 `expires_at`)에 엔티티를 prefix로 나눈다. 두 번째 테이블은 성능·비용 근거가 생길 때만(`requests/infra.md` §2).
+
+| 항목 | PK | SK | 읽기 | TTL |
+|---|---|---|---|---|
+| `cf_candidates` | `USER#{user_id}` | `CF_CANDIDATES` | 단건 GetItem. `candidates[(owner_user_id, score)]`, `computed_at`, `model_version` | 없음(R18) |
+| 결정 로그(§8) | `REC#{recommendation_id}` | `LOG` | 단건 GetItem(어트리뷰션 조인, 디버깅). 페이지는 같은 항목의 `pages[]`에 append | `decision_log.ttl_days` |
+| 결정 로그 평가용 GSI `served-day-index` | `served_day_key = {type}#{YYYY-MM-DD}#{shard}` | `served_at` | 하루·타입 단위 Query를 shard 수만큼 병합. `KEYS_ONLY` — 본문은 PK로 다시 읽는다 | — |
+| `event_log` | `EVT#{YYYY-MM-DD}#{shard}` | `{occurred_at}#{event_id}` | 하루 단위 Query 병합(이벤트 리플레이·보정, 합성 스펙 §8-2). 이벤트 이름·`occurred_at`·payload JSON. 유저의 글·`email`은 payload에 없다 | `event_log.ttl_days` |
+| 게이트 상태 | `CONFIG` | `CF_GATE` | 단건. 런타임에 움직이는 유일한 설정값 `w_cf`와 마지막 평가(R35) | 없음 |
+
+`shard = hash(id) % N`, N은 설정 `dynamodb.log_shards`. **shard는 지금 키 포맷에 들어간다** — topic-api가 받은 피드백대로, 하루치 쓰기가 한 파티션에 몰려 GSI가 스로틀되면 베이스 테이블 쓰기까지 막히기 때문이다. N을 늘려도 옛 항목의 shard 값은 새 범위 안에 있으므로 마이그레이션이 필요 없다. 주 읽기 패턴(날짜별 전체)가 Scan이 아니라 Query인 것도 같은 피드백에서 왔다.
+
+타입 ①②의 조회는 `visible_topic_rows[topic_id, public]` ∪ (`visible_topic_rows[topic_id, friends]` ∩ friends(요청자)) 이고, 타입 ①은 topic ≤ 3개의 결과를 owner로 합쳐 커버리지를 센다. 이 합집합은 쿼리 하나의 WHERE 절이다(§4-2, R17). 타입 ③의 `popularity`·`content_similarity`·이웃 조회도 같은 조건을 `visible_topic_rows`에 대한 조인(또는 EXISTS)으로 붙여 요청자에게 보이는 소유자만 읽는다. 다른 소스가 자기 저장소를 따로 가져도 위 집합은 그대로 있어야 한다. 불변식 1·4가 여기서 판정되기 때문이다.
 
 ---
 
@@ -325,7 +339,7 @@ class Ranker(Protocol):
 | `similar_users` | 이 agent와 대화한 유사 유저 수 | 정수 | `interactions` 카운트(요청자가 대화한 소유자들과도 대화한 유저 수). ALS에서 직접 나오지 않는다 | ③ (표시용) |
 | `recency` | 소유자의 마지막 topic 갱신이 얼마나 최근인가 | 0~1 | visible_topic_rows.updated_at | 모두, 작은 가중. 오래 활동하지 않은 소유자를 **후보에서 빼지 않고** 이 feature로 내린다(R19). 하드 제외는 하지 않는다(R31) |
 | `tier_is_friends` | 근거 row가 friends tier인가 | 0/1 | 필터 결과 | 모두. 초기 가중 .05, 측정 뒤 조정(R32) |
-| `persona_similarity` | **R42 예약.** 요청자와 소유자의 HEXACO facet 벡터 유사도(confidence·관측 수 가중). topic이 겹치지 않아도 성향이 맞는 사람을 잡는다. **입력 경로가 없어 지금은 항상 0이고 `present`에 없다**(O20) | 0~1 | 요청자 성향(`UserQuery.requester_traits`) × 소유자 성향 — 둘 다 bourbon-agent가 **이벤트**로 준다(방향만, O20 — bourbon-agent에 API를 열 가능성은 없다). persona 테이블 직접 읽기·복호화 키 공유는 하지 않는다(R42) | ③. 가중 `rank.for_you.w_persona`는 0에서 시작, 올리는 규칙은 O20 |
+| `persona_similarity` | **R42 예약.** 요청자와 소유자의 HEXACO facet 벡터 유사도(confidence·관측 수 가중). topic이 겹치지 않아도 성향이 맞는 사람을 찾아낸다. **입력 경로가 없어 지금은 항상 0이고 `present`에 없다**(O20) | 0~1 | 요청자 성향(`UserQuery.requester_traits`) × 소유자 성향 — 둘 다 bourbon-agent가 **이벤트**로 준다(방향만, O20 — bourbon-agent에 API를 열 가능성은 없다). persona 테이블 직접 읽기·복호화 키 공유는 하지 않는다(R42) | ③. 가중 `rank.for_you.w_persona`는 0에서 시작, 올리는 규칙은 O20 |
 
 없는 feature는 0이고 `present`에 없다. 가중치는 설정이다 — 값은 `agent_discovery_settings.md`(R39).
 
@@ -333,7 +347,7 @@ class Ranker(Protocol):
 
 ## 8. 결정 로그
 
-목록마다 한 건 — 첫 페이지에 발급된 `recommendation_id`가 PK고, 다음 페이지 요청은 같은 항목에 `pages[]`로 덧붙인다(§2-4). 오프라인 평가의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18): PK `recommendation_id`(대화 시작 이벤트의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 기간·타입별로 읽도록 GSI `(type, served_day)`, 보존은 TTL. 집계는 SQL이 아니라 평가 배치의 코드다.
+목록마다 한 건 — 첫 페이지에 발급된 `recommendation_id`가 PK고, 다음 페이지 요청은 같은 항목에 `pages[]`로 덧붙인다(§2-4). 오프라인 평가의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18·R44, key space는 §6-1): `REC#{recommendation_id}` / `LOG`(대화 시작 이벤트의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 날짜·타입별로 읽도록 GSI `served-day-index`(`served_day_key = {type}#{YYYY-MM-DD}#{shard}`, shard 병합), 보존은 TTL(`decision_log.ttl_days`). 집계는 SQL이 아니라 평가 배치의 코드다.
 
 ```json
 {
@@ -348,7 +362,7 @@ class Ranker(Protocol):
     "cursor": "…"                                 // ②③
   },
   "sources": [ {"name": "topic_index", "hits": 20, "latency_ms": 6} ],
-  "filter": {"in": 20, "out": 0, "friends_used": true, "degraded": []},   // 개수는 로그에만. 응답엔 없음. 술어가 쿼리에 있어 out은 보통 0(R17) — 응답 직전 재확인에서 빠진 수만 여기 선다
+  "filter": {"in": 20, "out": 0, "friends_used": true, "degraded": []},   // 개수는 로그에만. 응답엔 없음. 조건이 쿼리에 있어 out은 보통 0(R17) — 응답 직전 재확인에서 빠진 수만 여기 선다
   "ranked": [ {"owner_user_id": "uuid", "position": 1, "features": {…}, "score": 0.83, "talked_before": false} ],   // 섞기 전(랭커) 순서. 서빙 순서는 shuffle로 재현. talked_before는 R28의 재등장 표식(응답에는 없음)
   "basis": "content",                             // ③
   "cf_model_version": "fit-2026-09-08T03Z",       // ③ 어느 cf_candidates 스냅샷으로 답했나

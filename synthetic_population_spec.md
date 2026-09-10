@@ -200,7 +200,7 @@ LLM 확장은 비용이 있으므로 검증에서는 **쿼리 200개만** 실제
 | `deactivate_rate` | 기간 내 탈퇴 / 등록 | `user_deactivated`, `user_registered` |
 | `activity` (R19 갱신 비용의 입력) | `last_active_at` 기준 1·7·30일 활성 유저 비율(하루에 읽는 유저 비율이 스윕 쓰기 비용을 정한다)과 "마지막 활동 이후 경과일" 분포. TTL·스윕 상한(R36, 설정 레지스터)을 조정하는 재료 | `agents.last_active_at`, `agents.cf_candidates_computed_at` |
 
-`affinity`, `K`, `cluster_size_alpha`, `off_cluster_topic_rate`는 잠재 구조라 직접 잴 수 없다. 대신 §6 검증 4의 민감도 표로 남기고, 실측 가능한 파라미터가 바뀐 뒤 CF 지표가 합성과 실로그에서 같은 방향으로 움직이는지로 간접 확인한다.
+`affinity`, `K`, `cluster_size_alpha`, `off_cluster_topic_rate`는 잠재 구조라 직접 잴 수 없다. 대신 §6 검증 4의 민감도 표로 남기고, 실측 가능한 파라미터가 바뀐 뒤 CF 지표가 합성과 실제 로그에서 같은 방향으로 움직이는지로 간접 확인한다.
 
 ### 8-2. 두 방식 — 이벤트를 다시 읽기 vs 통계를 미리 쌓기
 

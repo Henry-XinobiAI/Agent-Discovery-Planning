@@ -72,7 +72,7 @@
 | 이름 | 기본값 | 뜻 | 올리면 / 내리면 | 출처 |
 |---|---|---|---|---|
 | `gate.interval_hours` | 24 | 게이트 평가 주기(전역 학습과 같은 주기) | 내리면 `w_cf`가 더 자주 움직여 목록이 흔들린다 | R35(주기적), 값은 분석 |
-| `gate.holdout_ratio` | 0.1 | 실로그 leave-one-out 평가에 쓰는 유저 비율 | 올리면 판정이 안정되고 평가 시간이 는다 | 분석 |
+| `gate.holdout_ratio` | 0.1 | 실제 로그 leave-one-out 평가에 쓰는 유저 비율 | 올리면 판정이 안정되고 평가 시간이 는다 | 분석 |
 | `gate.min_hr_ratio` | 1.0 | ALS의 HR@10 / 인기도의 HR@10이 이 값 이상이어야 켠다 | 올리면 CF가 더 확실히 이길 때만 켜진다(λ=10 실측이 동률 근처라 1.0이 경계) | R35, 검증 §3 |
 | `gate.min_cluster_gain` | 1.5 | ALS의 같은 군집 비율 / 인기도의 같은 군집 비율 하한 | 올리면 "개인화가 실제로 있나"를 더 엄격히 본다(λ=10 실측 2배) | R35, 검증 §3 |
 | `gate.step` | 0.05 | 조건을 만족할 때 `w_cf`를 올리는 폭. 만족하지 못하면 같은 폭으로 내린다(0 아래로는 안 간다) | 올리면 빨리 켜지고 빨리 꺼진다 | 분석 |
@@ -118,6 +118,8 @@
 | `refresh.debounce_seconds` | 10 | `topics_updated`·`user_topic_settings_updated`를 유저 단위로 모아 재조회 1회로 만드는 대기 시간 | 올리면 topic-api 재조회 횟수가 줄고 반영이 늦어진다 | 이벤트 정의서 §2-1("수 초"), 값은 분석 |
 | `refresh.debounce_max_wait_seconds` | 60 | 이벤트가 계속 와도 이 시간 안에는 한 번 재조회한다(trailing debounce의 상한) | 없으면 계속 미뤄질 수 있다. 내리면 재조회가 잦아진다 | 이벤트 정의서 §2-1 |
 | `topic_api.timeout_ms` | 800 | 재조회·요청자 프로필(R27)·hydration 호출의 타임아웃 | 내리면 `hydration_partial`이 늘고 p95가 짧아진다 | 분석 |
+| `dynamodb.table_name` | `bourbon-agent-discovery-tokyo-{env}` | 서비스 소유 테이블 하나(R44). key space는 계약 §6-1 | — | R44 |
+| `dynamodb.log_shards` | 8 | 결정 로그 GSI 파티션 키와 `event_log` 파티션 키의 shard 수(`hash(id) % N`) | 올리면 하루치 쓰기가 더 넓게 퍼지고 읽기가 N개 Query를 병합한다. 늘려도 옛 항목은 이동하지 않는다(옛 shard < 새 N). 내리지 않는다 — 내리면 읽기가 옛 shard를 훑지 않는다 | R44, 값은 분석 |
 
 ## 10. 실측 보정 (R37) 과 보존
 

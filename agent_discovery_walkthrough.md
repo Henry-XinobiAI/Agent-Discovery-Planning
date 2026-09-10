@@ -49,8 +49,8 @@ R이 지금까지 대화를 시작한 상대: **A**(12 turn, 다시 방을 연 �
 | 단계 | 하는 일 | A안과 B안 |
 |---|---|---|
 | QueryBuilder | 요청을 `TopicQuery`(타입 ①②) 또는 `UserQuery`(타입 ③)로 바꾼다 | 같다 |
-| CandidateSource | 쿼리를 받아 `SourceHit(owner_user_id, tier, topic_id, source, score, evidence)` 목록을 낸다. PostgreSQL을 읽는 소스는 visibility 술어(`public ∨ friends∧친구`)를 쿼리 안에 넣어 `limit`만큼만 읽고, 술어를 넣을 수 없는 소스(외부 엔진)만 넉넉히(예: 3배) 낸다(R17) | **다르다.** 어떤 저장소를 읽고 어떤 라이브러리·엔진이 뒤에 있는지가 여기서 갈린다 |
-| VisibilityFilter | 술어를 이미 적용한 hit(tier 있음)은 통과. tier가 없는 hit에는 공개된 row 저장소에서 tier를 붙이고, friends row는 요청자가 친구일 때만 통과시키고, row가 없으면 버린다 | 같다. 코드 하나를 두 안이 공유 |
+| CandidateSource | 쿼리를 받아 `SourceHit(owner_user_id, tier, topic_id, source, score, evidence)` 목록을 낸다. PostgreSQL을 읽는 소스는 visibility 조건(`public ∨ friends∧친구`)를 쿼리 안에 넣어 `limit`만큼만 읽고, 조건을 넣을 수 없는 소스(외부 엔진)만 넉넉히(예: 3배) 낸다(R17) | **다르다.** 어떤 저장소를 읽고 어떤 라이브러리·엔진이 뒤에 있는지가 여기서 갈린다 |
+| VisibilityFilter | 조건을 이미 적용한 hit(tier 있음)은 통과. tier가 없는 hit에는 공개된 row 저장소에서 tier를 붙이고, friends row는 요청자가 친구일 때만 통과시키고, row가 없으면 버린다 | 같다. 코드 하나를 두 안이 공유 |
 | Ranker | feature 벡터 → 점수. 타입 ①은 `(coverage desc, score desc)`, ②③은 `score desc`. 타입 ③은 그 뒤 점수 구간 안에서만 섞는다(R20, seed = `recommendation_id`) | 같다. 가중치는 설정 레지스터 하나(R39) |
 | Assembler | 라벨·owner_note를 채우고(hydration), **응답 직전에 공개된 row가 아직 있는지 다시 확인**하고, 결정 로그 한 건을 쓴다 | 같다 |
 
@@ -97,7 +97,7 @@ D의 row는 없다(전부 private). F의 row도 없다(agent가 private이면 �
 | R | H | room-2 | 9/05 | 0 | 2 | direct | null |
 | (다른 유저들) | … | | | | | | |
 
-**`popularity`** — 소유자별 시간 감쇠 카운트. 정의는 R29(최근 30일 대화 시작, 반감기 7일 감쇠, confidence 가중, 신규 agent 부스트)이고 아래 숫자는 예시다. PostgreSQL 테이블 하나다(R17·R18) — `visible_topic_rows`와 같은 DB여야 visibility 술어를 조인으로 붙일 수 있다.
+**`popularity`** — 소유자별 시간 감쇠 카운트. 정의는 R29(최근 30일 대화 시작, 반감기 7일 감쇠, confidence 가중, 신규 agent 부스트)이고 아래 숫자는 예시다. PostgreSQL 테이블 하나다(R17·R18) — `visible_topic_rows`와 같은 DB여야 visibility 조건을 조인으로 붙일 수 있다.
 
 | owner | 감쇠 카운트 | 정규화(전체 최대로 나눔) |
 |---|---|---|
@@ -107,13 +107,13 @@ D의 row는 없다(전부 private). F의 row도 없다(agent가 private이면 �
 | B | 15 | .04 |
 | H | 3 | .01 |
 
-**`cf_candidates`** — 타입 ③의 유저별 top-K 스냅샷. 배치가 쓰고 서빙이 읽는다. **DynamoDB**, PK `user_id`(R18): 조인이 없는 단건 읽기·쓰기라 여기가 맞다. TTL은 두지 않는다 — 두면 돌아온 유저가 콜드스타트 경로로 밀린다. **전원을 매일 다시 만들지 않는다**(R19): 워커의 주기 스윕이 읽혔거나 활동한 유저 중 오래됐거나 새 대화가 있는 유저만 모아 배치로 다시 만든다(조건과 SQL은 §5-3). K는 100~200으로 넉넉히 둔다(R20의 pool). 유저당 K=200이면 항목이 12~13 KB(uuid 소유자 id 기준, 약 13 WRU)라 전원을 매일 다시 쓰면 10만 유저에 월 $50 안팎인데, R19로는 그날 읽혔거나 활동한 유저 몫만 쓴다. `computed_at`이 TTL의 몇 배(R36: 7일)를 넘겼을 때만 `cf_candidates_stale`.
+**`cf_candidates`** — 타입 ③의 유저별 top-K 스냅샷. 배치가 쓰고 서빙이 읽는다. **DynamoDB**, `USER#{user_id}` / `CF_CANDIDATES`(R18, key space는 R44·계약 §6-1): 조인이 없는 단건 읽기·쓰기라 여기가 맞다. TTL은 두지 않는다 — 두면 돌아온 유저가 콜드스타트 경로로 밀린다. **전원을 매일 다시 만들지 않는다**(R19): 워커의 주기 스윕이 읽혔거나 활동한 유저 중 오래됐거나 새 대화가 있는 유저만 모아 배치로 다시 만든다(조건과 SQL은 §5-3). K는 100~200으로 넉넉히 둔다(R20의 pool). 유저당 K=200이면 항목이 12~13 KB(uuid 소유자 id 기준, 약 13 WRU)라 전원을 매일 다시 쓰면 10만 유저에 월 $50 안팎인데, R19로는 그날 읽혔거나 활동한 유저 몫만 쓴다. `computed_at`이 TTL의 몇 배(R36: 7일)를 넘겼을 때만 `cf_candidates_stale`.
 
 ```
 PK user_id=R → {computed_at, model_version, candidates: [{owner_user_id: G, score: .81}, {owner_user_id: B, score: .44}, …]}
 ```
 
-**결정 로그와 `event_log`** — 둘 다 DynamoDB(R18). 결정 로그는 PK `recommendation_id`, 평가 배치가 기간·타입으로 읽는 GSI `(type, served_day)`, TTL. `event_log`는 워커가 받은 이벤트 원본을 TTL 180일로. 어느 쪽도 서빙이 읽지 않고 조인이 없다.
+**결정 로그와 `event_log`** — 둘 다 DynamoDB(R18). 결정 로그는 `REC#{recommendation_id}` / `LOG`, 평가 배치가 날짜·타입으로 읽는 GSI `served-day-index`(파티션 키에 shard), TTL. `event_log`는 워커가 받은 이벤트 원본을 `EVT#{날짜}#{shard}` 아래 TTL 180일로(key space는 R44·계약 §6-1). 어느 쪽도 서빙이 읽지 않고 조인이 없다.
 
 **`requester_topics`** — R 자신의 topic 목록(§0의 첫 표). 저장하지 않고 요청 시 topic-api 내부 route로 읽는다(R27). 타입 ②의 섹션과 타입 ③의 content 쿼리 입력이다.
 
@@ -195,7 +195,7 @@ WHERE topic_id = ANY('{camping,hand_drip}') AND owner_user_id <> 'R'
   AND (tier = 'public' OR (tier = 'friends' AND owner_user_id = ANY('{B,F}')))
 GROUP BY owner_user_id
 ORDER BY coverage DESC, s DESC
-LIMIT 4;            -- 술어가 WHERE에 있어 필터에서 빠지는 것이 없다. 여유 1은 응답 직전 재확인에서 빠질 몫
+LIMIT 4;            -- 조건이 WHERE에 있어 필터에서 빠지는 것이 없다. 여유 1은 응답 직전 재확인에서 빠질 몫
 ```
 
 | owner | coverage | s | matched | 왜 이렇게 나오나 |
@@ -317,14 +317,14 @@ R의 topic 목록을 요청 시 topic-api 내부 route로 읽는다(R27). prefer
 ```
 UserQuery(R) ─▶ popularity ─┐
              ─▶ content_similarity ─┼─▶ 합쳐서 VisibilityFilter ─▶ Ranker(가중 합) ─▶ Assembler
-             ─▶ cf_item | cf_engine ─┘         (술어를 못 넣은 hit에만 tier 붙이기)
+             ─▶ cf_item | cf_engine ─┘         (조건을 못 넣은 hit에만 tier 붙이기)
 ```
 
 인기도 → content → CF는 대체가 아니라 **누적**이다(재설계 §2-3). 신호가 없는 feature는 0이 되고 랭커 하나가 순서를 정한다. 응답의 `basis`는 그 응답을 주로 만든 신호를 말한다.
 
 ### 5-1. 소스 1 `popularity` — 로그가 거의 없을 때부터 답이 나온다 (A/B 같음)
 
-§2-1의 `popularity`(PostgreSQL 테이블, 정의는 R29)를 점수순으로 읽는다: E(1.00), G(.63), A(.22), B(.04), H(.01). 타입 ①②와 같은 술어를 EXISTS로 붙여 **R에게 보이는 소유자만** 읽는다(R17). 필터에서 빠지는 것이 없으니 `limit`만큼만 읽는다.
+§2-1의 `popularity`(PostgreSQL 테이블, 정의는 R29)를 점수순으로 읽는다: E(1.00), G(.63), A(.22), B(.04), H(.01). 타입 ①②와 같은 조건을 EXISTS로 붙여 **R에게 보이는 소유자만** 읽는다(R17). 필터에서 빠지는 것이 없으니 `limit`만큼만 읽는다.
 
 ```sql
 SELECT p.owner_user_id, p.score
@@ -336,7 +336,7 @@ WHERE p.owner_user_id <> 'R'
 ORDER BY p.score DESC LIMIT 20;
 ```
 
-F(agent private, row 없음)와 C(friends row만, 친구 아님)는 여기서 이미 나오지 않는다. hit에는 `tier`가 붙어 나간다. Redis sorted set에 두지 않는 이유가 이것이다(R18): sorted set은 tier를 모르고 술어를 붙일 수 없어 넉넉히 읽고 뒤에서 걸러야 한다.
+F(agent private, row 없음)와 C(friends row만, 친구 아님)는 여기서 이미 나오지 않는다. hit에는 `tier`가 붙어 나간다. Redis sorted set에 두지 않는 이유가 이것이다(R18): sorted set은 tier를 모르고 조건을 붙일 수 없어 넉넉히 읽고 뒤에서 걸러야 한다.
 
 ### 5-2. 소스 2 `content_similarity` — 내 topic과 겹치는 소유자 (A/B 같음)
 
@@ -356,7 +356,7 @@ GROUP BY owner_user_id ORDER BY sim DESC LIMIT 20;
 | E | .3·.8 = 0.24 | hiking만 |
 | G | — | 겹침 없음(JOIN이라 행이 나오지 않는다. 랭커에서 content 0) |
 
-이 소스는 tier를 안다(row에서 나왔다). 술어가 WHERE에 있어 C·D·F는 나오지 않고, 필터에서 빠지는 것도 없다.
+이 소스는 tier를 안다(row에서 나왔다). 조건이 WHERE에 있어 C·D·F는 나오지 않고, 필터에서 빠지는 것도 없다.
 
 위 SQL은 topic id 정확 일치의 가중 합이다. R25의 정의로는 둘이 바뀐다: `camping`처럼 흔한 topic의 겹침은 IDF로 낮아지고, `hand_drip`의 부모 `coffee`만 가진 소유자도 0.6 배로 잡힌다(카탈로그 계층 감쇠 — topic-api 검색 설정에서 빌린 상수, 거리는 양방향 최단 hop. 카탈로그 edge는 topic-api의 `catalog.json`을 빌드 때 복사해 채운다, R26). R25는 임베딩 kNN을 넣지 않고, "R이 대화한 agent들의 topic을 R의 프로필에 더하는" 경로도 넣지 않는다 — R이 H의 agent 방에서 한 말은 bourbon-agent가 R의 persona로 추출해 topic-api → `topics_updated` → §2-2 적재 경로로 R의 topic에 이미 들어오고, agent의 발화를 R의 취향으로 세는 것은 추출기가 금지한 추론이다. 행동 신호는 §5-3 CF의 몫이다.
 
@@ -419,24 +419,24 @@ DynamoDB 쓰기는 유저 수가 아니라 그날 읽혔거나 활동한 유저 
 [서빙] GET /api/recommend/R?n=60 ──▶ Gorse가 documents에서 R의 목록을 읽어 반환 ──▶ 우리 SourceHit(tier=None, source="cf_engine")
 ```
 
-동작하려면 기본값 둘을 바꿔야 한다(검증 §4-3): `[recommend.ranker] recommenders=["collaborative"]`(기본 ranker는 오프라인 캐시를 읽지 않는다), 그리고 MySQL cache store의 multi-valued 인덱스가 `categories=[]`인 행을 숨기므로 item에 category를 하나 주거나 PostgreSQL cache store를 쓴다. 고친 뒤 서빙 HR@10 0.0006(`implicit` ALS의 1/9). 요청자별 visibility 술어를 Gorse 안에 넣을 방법이 없으므로, 이것이 결과를 넉넉히 받아 우리가 거르고 부족하면 더 받아야 하는 **유일한 소스**다(R17의 예외 경로). 이 경로의 실측 판단은 `library_verification.md` §0·§4에 있고, R33으로 제외됐다.
+동작하려면 기본값 둘을 바꿔야 한다(검증 §4-3): `[recommend.ranker] recommenders=["collaborative"]`(기본 ranker는 오프라인 캐시를 읽지 않는다), 그리고 MySQL cache store의 multi-valued 인덱스가 `categories=[]`인 행을 숨기므로 item에 category를 하나 주거나 PostgreSQL cache store를 쓴다. 고친 뒤 서빙 HR@10 0.0006(`implicit` ALS의 1/9). 요청자별 visibility 조건을 Gorse 안에 넣을 방법이 없으므로, 이것이 결과를 넉넉히 받아 우리가 거르고 부족하면 더 받아야 하는 **유일한 소스**다(R17의 예외 경로). 이 경로의 실측 판단은 `library_verification.md` §0·§4에 있고, R33으로 제외됐다.
 
 #### B안 — 동시 출현 이웃을 우리가 계산
 
 ```
 [배치] interactions ──▶ agent × agent 동시 출현 카운트 co[X][Y] = 두 agent 모두와 대화한 유저 수
    (정규화 없음. 코사인 정규화는 인기도를 지워 무작위 수준이 된다 — 검증 §3)
-   ──▶ neighbors[X] = co[X][·] 상위 N   → PostgreSQL 테이블 (agent, neighbor, co_count) — 술어 조인을 위해 visible_topic_rows와 같은 DB
+   ──▶ neighbors[X] = co[X][·] 상위 N   → PostgreSQL 테이블 (agent, neighbor, co_count) — 조건 조인을 위해 visible_topic_rows와 같은 DB
 [서빙] R이 대화한 {A, H}의 이웃 목록을 합산: score(G) = co[A][G] + co[H][G] = 31 + 18 = 49, tie-break는 popularity
-   (이웃 테이블이 PostgreSQL이면 §5-1의 EXISTS 술어를 같은 쿼리에 붙여 R에게 보이는 이웃만 읽는다)
+   (이웃 테이블이 PostgreSQL이면 §5-1의 EXISTS 조건을 같은 쿼리에 붙여 R에게 보이는 이웃만 읽는다)
    ──▶ SourceHit(owner_user_id=G, tier="public", source="cf_item", score=49, evidence={co_count: 49, similar_users: 49})
 ```
 
 `similar_users`가 그대로 나온다(49명). 실측: 인기도 tie-break를 붙이면 λ=10에서 ALS 16f와 같은 프로필, 빼면 HR이 25 % 떨어진다. λ=3에서는 ALS의 절반. 라이브러리 의존이 없다는 것이 유일한 장점이었고, R34로 만들지 않는다.
 
-### 5-4. VisibilityFilter — 술어를 못 넣은 hit에만 tier를 붙인다
+### 5-4. VisibilityFilter — 조건을 못 넣은 hit에만 tier를 붙인다
 
-술어를 쿼리에 넣은 소스(PostgreSQL의 인기도·content·이웃)에서 온 hit은 tier가 있고 F·C는 처음부터 오지 않는다. 필터가 일하는 것은 tier가 `None`인 hit — Gorse가 준 목록, 그리고 배치 시점 술어로 뽑았지만 tier를 싣지 않은 `cf_candidates` 항목 — 이고, `visible_topic_rows`를 소유자 키로 조회해 tier를 붙인다. 아래 표는 §5-1~§5-3에서 온 hit 전부의 최종 판정이다 — 술어를 이미 거친 hit은 통과만 한다.
+조건을 쿼리에 넣은 소스(PostgreSQL의 인기도·content·이웃)에서 온 hit은 tier가 있고 F·C는 처음부터 오지 않는다. 필터가 일하는 것은 tier가 `None`인 hit — Gorse가 준 목록, 그리고 배치 시점 조건으로 뽑았지만 tier를 싣지 않은 `cf_candidates` 항목 — 이고, `visible_topic_rows`를 소유자 키로 조회해 tier를 붙인다. 아래 표는 §5-1~§5-3에서 온 hit 전부의 최종 판정이다 — 조건을 이미 거친 hit은 통과만 한다.
 
 | hit | row 조회 결과 | 판정 |
 |---|---|---|
@@ -456,7 +456,7 @@ DynamoDB 쓰기는 유저 수가 아니라 그날 읽혔거나 활동한 유저 
 score = w_pop·popularity + w_content·content_similarity(정규화) + w_cf·cf_score + w_mat·agent_maturity + …
 ```
 
-`w_cf`는 **처음에 0**이다. R35의 자동 게이트대로 배치가 실로그 leave-one-out에서 ALS가 인기도를 이길 때만 0에서 올린다. 아래는 예시 가중(pop .4 / content .4 / cf .2)으로 `w_cf`가 켜진 뒤의 값이다. content는 §5-2의 최대값(A의 1.35, 이미 대화한 상대를 제외하기 전 값)으로 정규화했다. 제외 전 최대값으로 나누는 이유는 정규화가 "누구와 이미 대화했나"에 따라 흔들리지 않게 하려는 것이다(B의 content를 1.0으로 두면 B가 E를 앞선다). 식의 `…`에는 `persona_similarity`(R42 예약)도 들어가지만 입력 경로가 없어 이 예시에서는 0이다(O20).
+`w_cf`는 **처음에 0**이다. R35의 자동 게이트대로 배치가 실제 로그 leave-one-out에서 ALS가 인기도를 이길 때만 0에서 올린다. 아래는 예시 가중(pop .4 / content .4 / cf .2)으로 `w_cf`가 켜진 뒤의 값이다. content는 §5-2의 최대값(A의 1.35, 이미 대화한 상대를 제외하기 전 값)으로 정규화했다. 제외 전 최대값으로 나누는 이유는 정규화가 "누구와 이미 대화했나"에 따라 흔들리지 않게 하려는 것이다(B의 content를 1.0으로 두면 B가 E를 앞선다). 식의 `…`에는 `persona_similarity`(R42 예약)도 들어가지만 입력 경로가 없어 이 예시에서는 0이다(O20).
 
 | owner | popularity | content(정규화) | cf | score | 주로 만든 신호 |
 |---|---|---|---|---|---|
@@ -514,8 +514,8 @@ score = w_pop·popularity + w_content·content_similarity(정규화) + w_cf·cf_
 
 | 저장소 | 들어 있는 것 | A안 | B안 | 비고 |
 |---|---|---|---|---|
-| **PostgreSQL** | `visible_topic_rows`, `friends` 미러(R17), `agents`, `interactions`(turn 카운터 포함), `popularity`, `population_stats`(스펙 §8), B안 이웃 테이블 | ● | ● | 조인·집계가 있는 집합 전부(R18). 노출 판정의 유일한 기준은 `visible_topic_rows`. `friends`·`popularity`·이웃을 같은 DB에 두어 술어를 쿼리에 넣는다 |
-| **DynamoDB** | `cf_candidates`(PK `user_id`), 결정 로그(PK `recommendation_id`, GSI `type, served_day`, TTL), `event_log`(TTL 180일) | ● | ● | 단건 키 읽기·쓰기만 있고 조인이 없는 집합(R18). 사용량 과금이라 10만~100만에서 Redis 전용 노드보다 한 자릿수 배 저렴. GetItem p50 3~5 ms |
+| **PostgreSQL** | `visible_topic_rows`, `friends` 미러(R17), `agents`, `interactions`(turn 카운터 포함), `popularity`, `population_stats`(스펙 §8), B안 이웃 테이블 | ● | ● | 조인·집계가 있는 집합 전부(R18). 노출 판정의 유일한 기준은 `visible_topic_rows`. `friends`·`popularity`·이웃을 같은 DB에 두어 조건을 쿼리에 넣는다 |
+| **DynamoDB** | 테이블 하나(R44, 계약 §6-1): `cf_candidates`(`USER#…/CF_CANDIDATES`), 결정 로그(`REC#…/LOG`, GSI `served-day-index`, TTL), `event_log`(`EVT#날짜#shard`, TTL 180일), 게이트 상태(`CONFIG/CF_GATE`) | ● | ● | 단건 키 읽기·쓰기만 있고 조인이 없는 집합(R18). 사용량 과금이라 10만~100만에서 Redis 전용 노드보다 한 자릿수 배 저렴. GetItem p50 3~5 ms |
 | **Redis** (공유 ElastiCache) | deferq(워커 debounce)만 | ● | ● | 우리 데이터는 두지 않는다(R18). Gorse cache store로는 못 쓴다(Redis Stack 전용) |
 | **OpenSearch** | 쓰지 않는다(R34). §2-3의 nested 인덱스는 기록 | — | — | PostgreSQL이 같은 정답을 3배 빠르게 낸다. 남는 용도는 R25가 임베딩을 다시 볼 때의 topic 벡터 kNN(지금은 넣지 않음) |
 | **MySQL** (Gorse 전용) | 쓰지 않는다(R33). §2-3의 data·cache store는 기록 | — | — | 10만 유저에 cache 약 1,400만 행, 상시 재계산 |
@@ -535,7 +535,7 @@ interactions + turn 카운터 + visible_topic_rows + agents + friends
    ──▶ params_measured.json (합성 생성기 params.json과 같은 스키마, 측정 안 된 값은 source: "default")
    ──▶ 합성 검증을 실측 파라미터로 다시 돈다
 
-같은 배치 ──▶ 실로그 leave-one-out: ALS 16f vs 인기도 (HR@10, 같은 군집 비율)
+같은 배치 ──▶ 실제 로그 leave-one-out: ALS 16f vs 인기도 (HR@10, 같은 군집 비율)
    ──▶ ALS가 이기면 랭커 설정의 w_cf를 0에서 올린다 (R35 자동 게이트)
 ```
 
