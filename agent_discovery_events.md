@@ -159,7 +159,7 @@ topic 단위는 재조회 결과의 `score`가 그 자리다. 컴포넌트가 `s
 | `bourbon.friendship_changed` | `user_low, user_high, action, occurred_at` | `friends` 미러 갱신: `accepted` → `(user_low, user_high)` 삽입, `removed` → 삭제. 요청 시 조회 캐시는 두지 않는다(R17) |
 | `bourbon.user_registered` | `user_id, email` | **추천 대상 agent의 등록.** `agents`에 `(owner_user_id, agent_id, discoverable=false, registered_at)` row를 만든다. agent id는 bourbon-api가 `uuid5(AGENT_NAMESPACE, f"personal_agent:{user_id}")`로 결정론적으로 만들므로 읽어 올 필요 없이 같은 규칙으로 계산한다(네임스페이스 상수를 공유하거나, 첫 `agent_dm_opened`·공개 여부 이벤트에서 받은 `agent_id`로 채운다). **`email`은 저장도 로그도 하지 않는다** — payload에서 읽지 않는다. 이 row가 있어야 공개된 topic이 하나도 없는 agent도 "존재하는 대상"으로 세어지고, 콜드스타트 신규 agent 부스트와 타입 ③의 모집단 크기가 정의된다 |
 | `bourbon.user_deactivated` | `user_id` | 그 유저의 공개된 row·agents·사전 계산·요청자 데이터 삭제. 상호작용 로그의 actor 쪽은 익명화 |
-| `bourbon.persona_updated` | `user_id, revision, extracted_at, consumed_messages{room_id → from/to message_id}, changes[{layer: bio\|traits\|preferences, visibility: sharable\|private, topics{added, removed, changed} — preferences만}]` | 직접 쓰지 않는다. topic id가 없고 `changes[].topics`는 preferences 마크다운의 **헤딩 텍스트**다. `topics_updated`가 곧 온다는 뜻일 뿐. bourbon-agent가 **발행하는 유일한 이벤트**다(2026-09-10 코드 기준, `bourbon_agent/events.py`). persona 중 topic으로 오지 않는 층(HEXACO 추정치·자유 성향·traits 산문·bio)은 이 이벤트에도 실리지 않는다 — HEXACO 입력 경로는 O20(R42) |
+| `bourbon.persona_updated` | `user_id, revision, extracted_at, consumed_messages{room_id → from/to message_id}, changes[{layer: bio\|traits\|preferences, visibility: sharable\|private, topics{added, removed, changed} — preferences만}]` | 직접 사용하지 않는다. topic id가 없고 `changes[].topics`는 preferences 마크다운의 **헤딩 텍스트**다. `topics_updated`가 곧 온다는 뜻일 뿐. bourbon-agent가 **발행하는 유일한 이벤트**다(2026-09-10 코드 기준, `bourbon_agent/events.py`). persona 중 topic으로 오지 않는 레이어(HEXACO 추정치·자유 성향·traits 서술형 텍스트·bio)은 이 이벤트에도 실리지 않는다 — HEXACO 입력 경로는 O20(R42) |
 
 ### 2-8. 카탈로그 그래프 내부 route — 보류(R26). 필요해지면 topic-api에 요청
 
@@ -208,10 +208,10 @@ GET /api/internal/svc/topic/catalog/graph
 
 1. **미러 정정**: `worker/events.py`의 `bourbon.user_topic_updated`(`touched`)를 실제 이름 `bourbon.topics_updated`(`user_id, topic_id, persona_revision, topic_revision`)로 바꾼다. 필터 조건 "`touched`에 visibility가 있을 때만"은 사라진다 — `topics_updated`는 persona 동기화로 변경된 topic이라 **항상** 재조회 대상이다.
 2. **새 이벤트 셋을 우리 `worker/events.py`에 선언**한다(§2-2, §2-3, §2-4의 모양). 발신 repo가 아직 안 내도 큐는 만들어지고 비어 있을 뿐이다.
-3. **CLI 발행 명령**: `cli publish topics-updated / topic-settings-updated / agent-dm-opened / message-created …`로 로컬 RabbitMQ에 넣어 왕복을 시험한다. 합성 데이터 생성기(재설계 §6-2)가 같은 발행기를 써서 10만 유저의 이벤트 스트림을 만든다.
+3. **CLI 발행 명령**: `cli publish topics-updated / topic-settings-updated / agent-dm-opened / message-created …`로 로컬 RabbitMQ에 넣어 왕복을 테스트한다. 합성 데이터 생성기(재설계 §6-2)가 같은 발행기를 써서 10만 유저의 이벤트 스트림을 만든다.
 4. **재조회 task 하나**: `topics_updated`와 `user_topic_settings_updated` 두 리스너가 같은 debounce → 같은 task로 모인다. task는 내부 route를 `visibility=public&visibility=friends`로 조회해 공개된 row를 교체한다. 지금 코드는 `public`만 조회한다(`agent_discovery/composition.py`의 요청 tier) — 한 줄 변경.
 5. **turn 카운터**: `message_created`를 `room_type` 필터로 받아 `interactions`를 보강한다.
-6. **카탈로그 edge 테이블**: R26대로 topic-api repo의 `catalog.json`을 빌드 때 복사해 edge 테이블을 채우고, R25의 hop 계산을 시험한다. `built_at`을 결정 로그에 남긴다.
+6. **카탈로그 edge 테이블**: R26대로 topic-api repo의 `catalog.json`을 빌드 때 복사해 edge 테이블을 채우고, R25의 hop 계산을 테스트한다. `built_at`을 결정 로그에 남긴다.
 7. 위가 로컬에서 도는 것을 확인한 뒤 §6의 요청서를 낸다.
 
 ---
@@ -222,14 +222,14 @@ GET /api/internal/svc/topic/catalog/graph
 2. ~~agent 공개 여부의 필드~~ **답 있음(2026-09-09, R23)**: 새 필드 `discoverable`, 기본 false. §2-3.
 3. ~~`recommendation_id`의 전달 경로~~ **답 있음(2026-09-09, R24)**: 지금 요청 범위에 넣는다. 경로는 §2-4.
 4. ~~재조회 tier 범위~~ **답 있음(2026-09-09, R22)**: 타인 row는 `visibility=public&visibility=friends`만 조회해 저장한다. 요청자 자신의 프로필은 `public`·`friends`·`private`이고 `hidden`은 읽지 않는다. 어디서 읽나는 R27 — 요청 시 topic-api 조회. 소유자 키 아래에만 두는 미러는 지연 시간이 문제될 때의 대안.
-5. **topic-api 워커 0 replicas**: prod에서 persona 동기화가 안 돌면 `topics_updated`도 없다. 우리 시험은 dev에서 하되, prod 시점에는 이 전제가 풀려 있어야 한다.
+5. **topic-api 워커 0 replicas**: prod에서 persona 동기화가 안 돌면 `topics_updated`도 없다. 우리 테스트는 dev에서 하되, prod 시점에는 이 전제가 풀려 있어야 한다.
 6. ~~재활성 이벤트가 없다~~ **답 있음(2026-09-09, R38)**: 탈퇴 뒤 재가입은 신규 가입으로 본다. 재활성 기획이 생기면 수정. bourbon-api에는 `user_registered`(활성화 전이)와 `user_deactivated`만 있고, 탈퇴 뒤 돌아오는 유저를 알리는 이벤트는 없다. 조용히 재활성되는 경로가 있으면 우리 `agents` row가 없는 채로 topic 이벤트가 오므로, 재조회 task가 `agents` row를 **없으면 만든다**로 방어한다.
 
 ---
 
 ## 6. 요청서로 자를 때의 단위
 
-붙일 수 있는 문장으로 푼 요청서는 `requests/`에 있다(R43): `infra.md`, `bourbon-api.md`, `client.md`, `bourbon-agent.md`, `bourbon-topic-api.md`. 보내는 순서와 시점은 `requests/README.md`.
+그대로 붙여 넣을 수 있는 문장으로 푼 요청서는 `requests/`에 있다(R43): `infra.md`, `bourbon-api.md`, `client.md`, `bourbon-agent.md`, `bourbon-topic-api.md`. 보내는 순서와 시점은 `requests/README.md`.
 
 | 받는 곳 | 묶음 | 선행 |
 |---|---|---|
