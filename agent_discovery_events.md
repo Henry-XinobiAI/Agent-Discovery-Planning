@@ -229,6 +229,8 @@ GET /api/internal/svc/topic/catalog/graph
 
 ## 6. 요청서로 자를 때의 단위
 
+붙일 수 있는 문장으로 푼 요청서는 `requests/`에 있다(R43): `infra.md`, `bourbon-api.md`, `client.md`, `bourbon-agent.md`, `bourbon-topic-api.md`. 보내는 순서와 시점은 `requests/README.md`.
+
 | 받는 곳 | 묶음 | 선행 |
 |---|---|---|
 | topic-api | api 프로세스 AMQP 연결 + `user_topic_settings_updated` 발행(`patch_my_topic` 1곳) | 바로 가능. 카탈로그 route는 보류(R26) |

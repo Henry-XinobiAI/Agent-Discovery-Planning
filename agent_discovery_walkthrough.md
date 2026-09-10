@@ -107,13 +107,13 @@ D의 row는 없다(전부 private). F의 row도 없다(agent가 private이면 �
 | B | 15 | .04 |
 | H | 3 | .01 |
 
-**`cf_candidates`** — 타입 ③의 유저별 top-K 스냅샷. 배치가 쓰고 서빙이 읽는다. **DynamoDB**, PK `user_id`(R18): 조인이 없는 단건 읽기·쓰기라 여기가 맞다. TTL은 두지 않는다 — 두면 돌아온 유저가 콜드스타트 경로로 밀린다. **전원을 매일 다시 만들지 않는다**(R19): 워커의 주기 스윕이 읽혔거나 활동한 유저 중 오래됐거나 새 대화가 있는 유저만 모아 배치로 다시 만든다(조건과 SQL은 §5-3). K는 100~200으로 넉넉히 둔다(R20의 pool). 유저당 K=200이면 항목이 12~13 KB(uuid 소유자 id 기준, 약 13 WRU)라 전원을 매일 다시 쓰면 10만 유저에 월 $50 안팎인데, R19로는 그날 읽혔거나 활동한 유저 몫만 쓴다. `computed_at`이 TTL의 몇 배(R36: 7일)를 넘겼을 때만 `cf_candidates_stale`.
+**`cf_candidates`** — 타입 ③의 유저별 top-K 스냅샷. 배치가 쓰고 서빙이 읽는다. **DynamoDB**, `USER#{user_id}` / `CF_CANDIDATES`(R18, key space는 R44·계약 §6-1): 조인이 없는 단건 읽기·쓰기라 여기가 맞다. TTL은 두지 않는다 — 두면 돌아온 유저가 콜드스타트 경로로 밀린다. **전원을 매일 다시 만들지 않는다**(R19): 워커의 주기 스윕이 읽혔거나 활동한 유저 중 오래됐거나 새 대화가 있는 유저만 모아 배치로 다시 만든다(조건과 SQL은 §5-3). K는 100~200으로 넉넉히 둔다(R20의 pool). 유저당 K=200이면 항목이 12~13 KB(uuid 소유자 id 기준, 약 13 WRU)라 전원을 매일 다시 쓰면 10만 유저에 월 $50 안팎인데, R19로는 그날 읽혔거나 활동한 유저 몫만 쓴다. `computed_at`이 TTL의 몇 배(R36: 7일)를 넘겼을 때만 `cf_candidates_stale`.
 
 ```
 PK user_id=R → {computed_at, model_version, candidates: [{owner_user_id: G, score: .81}, {owner_user_id: B, score: .44}, …]}
 ```
 
-**결정 로그와 `event_log`** — 둘 다 DynamoDB(R18). 결정 로그는 PK `recommendation_id`, 평가 배치가 기간·타입으로 읽는 GSI `(type, served_day)`, TTL. `event_log`는 워커가 받은 이벤트 원본을 TTL 180일로. 어느 쪽도 서빙이 읽지 않고 조인이 없다.
+**결정 로그와 `event_log`** — 둘 다 DynamoDB(R18). 결정 로그는 `REC#{recommendation_id}` / `LOG`, 평가 배치가 날짜·타입으로 읽는 GSI `served-day-index`(파티션 키에 shard), TTL. `event_log`는 워커가 받은 이벤트 원본을 `EVT#{날짜}#{shard}` 아래 TTL 180일로(key space는 R44·계약 §6-1). 어느 쪽도 서빙이 읽지 않고 조인이 없다.
 
 **`requester_topics`** — R 자신의 topic 목록(§0의 첫 표). 저장하지 않고 요청 시 topic-api 내부 route로 읽는다(R27). 타입 ②의 섹션과 타입 ③의 content 쿼리 입력이다.
 
@@ -515,7 +515,7 @@ score = w_pop·popularity + w_content·content_similarity(정규화) + w_cf·cf_
 | 저장소 | 들어 있는 것 | A안 | B안 | 비고 |
 |---|---|---|---|---|
 | **PostgreSQL** | `visible_topic_rows`, `friends` 미러(R17), `agents`, `interactions`(turn 카운터 포함), `popularity`, `population_stats`(스펙 §8), B안 이웃 테이블 | ● | ● | 조인·집계가 있는 집합 전부(R18). 노출 판정의 유일한 기준은 `visible_topic_rows`. `friends`·`popularity`·이웃을 같은 DB에 두어 술어를 쿼리에 넣는다 |
-| **DynamoDB** | `cf_candidates`(PK `user_id`), 결정 로그(PK `recommendation_id`, GSI `type, served_day`, TTL), `event_log`(TTL 180일) | ● | ● | 단건 키 읽기·쓰기만 있고 조인이 없는 집합(R18). 사용량 과금이라 10만~100만에서 Redis 전용 노드보다 한 자릿수 배 저렴. GetItem p50 3~5 ms |
+| **DynamoDB** | 테이블 하나(R44, 계약 §6-1): `cf_candidates`(`USER#…/CF_CANDIDATES`), 결정 로그(`REC#…/LOG`, GSI `served-day-index`, TTL), `event_log`(`EVT#날짜#shard`, TTL 180일), 게이트 상태(`CONFIG/CF_GATE`) | ● | ● | 단건 키 읽기·쓰기만 있고 조인이 없는 집합(R18). 사용량 과금이라 10만~100만에서 Redis 전용 노드보다 한 자릿수 배 저렴. GetItem p50 3~5 ms |
 | **Redis** (공유 ElastiCache) | deferq(워커 debounce)만 | ● | ● | 우리 데이터는 두지 않는다(R18). Gorse cache store로는 못 쓴다(Redis Stack 전용) |
 | **OpenSearch** | 쓰지 않는다(R34). §2-3의 nested 인덱스는 기록 | — | — | PostgreSQL이 같은 정답을 3배 빠르게 낸다. 남는 용도는 R25가 임베딩을 다시 볼 때의 topic 벡터 kNN(지금은 넣지 않음) |
 | **MySQL** (Gorse 전용) | 쓰지 않는다(R33). §2-3의 data·cache store는 기록 | — | — | 10만 유저에 cache 약 1,400만 행, 상시 재계산 |

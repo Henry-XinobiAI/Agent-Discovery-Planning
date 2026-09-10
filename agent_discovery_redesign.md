@@ -344,7 +344,7 @@ top-K 생성 자체의 확장 규칙 하나: 유저 한 명의 top-K는 아이�
 2. 공통 계약 정의: 요청·응답 스키마(세 타입), 후보 소스 인터페이스, 랭커 feature 목록, 결정 로그 스키마. → 초안 `agent_discovery_contract.md` (2026-09-08).
 3. §4-2 이벤트 정의서 작성 → 초안 `agent_discovery_events.md` (2026-09-08). 오너 확인 6건 뒤 repo별 요청서로 자름.
 4. 합성 데이터 생성기 구현 (§6-2), 10만 유저 생성. → 스펙 `synthetic_population_spec.md` (2026-09-08).
-5. 구현(R34): PostgreSQL 인덱스 + 인기도 + content 유사도 + `implicit` ALS 배치·스윕, 설정 레지스터(`agent_discovery_settings.md`)와 같은 이름의 설정 클래스.
+5. 구현(R34): PostgreSQL 인덱스 + 인기도 + content 유사도 + `implicit` ALS 배치·스윕, 설정 레지스터(`agent_discovery_settings.md`)와 같은 이름의 설정 클래스. 단계와 완료 조건은 `implementation_plan.md`(2026-09-10, R43) — 로컬 Docker에서 먼저, 적재 스크립트와 시험 CLI 포함. 요청서는 `requests/`.
 6. §6-3 측정(소스별 ablation), 검증 문서, 설정 초기값 확정.
 
 ---

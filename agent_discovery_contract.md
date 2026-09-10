@@ -304,8 +304,22 @@ class Ranker(Protocol):
 | `requester_topics` (**R27: 저장하지 않음**) | `user_id` | 요청자 자신의 topic 목록(점수 포함) — 본인의 `public`·`friends`·`private`, `hidden` 제외(R22). 타입 ②의 섹션과 타입 ③의 content 쿼리에 씀 | 요청 시 topic-api 내부 route(`visibility=public&visibility=friends&visibility=private`)로 읽는다(R27). 소유자 키 아래에만 두는 미러는 지연 시간이 문제될 때의 대안 |
 | `friends` (**R17: 미러, 필수**) | canonical pair `(user_low, user_high)`. 조회는 `user_id` → 친구 id 집합(상한 5,000) | — | `bourbon.friendship_changed`: `accepted` → 삽입, `removed` → 삭제. 요청 시 bourbon-api 조회·TTL 캐시는 쓰지 않는다. `visible_topic_rows`와 같은 저장소에 두어 후보 조회 쿼리가 배열로 받거나 조인한다 |
 | `popularity` | `owner_user_id` | 시간 감쇠 카운트 | 대화 시작 이벤트 |
-| `cf_candidates` | `user_id` | `candidates: [(owner_user_id, score)]` top-K, `computed_at`, `model_version`(어느 전역 학습으로 만들었나 — 재현·갱신 판단용) | 워커의 주기 스윕이 배치로 쓴다 — 조건은 R19. K는 설정 레지스터 `cf.pool_k`(R20의 pool). **DynamoDB**(PK `user_id`, R18, **TTL 없음**): 서빙은 단건 GetItem, 조인은 없다(재확인은 PostgreSQL `visible_topic_rows`에서). 오래된 항목도 그대로 서빙한다. 항목이 없는 요청자는 §2-3의 콜드스타트 경로 |
+| `cf_candidates` | `user_id` | `candidates: [(owner_user_id, score)]` top-K, `computed_at`, `model_version`(어느 전역 학습으로 만들었나 — 재현·갱신 판단용) | 워커의 주기 스윕이 배치로 쓴다 — 조건은 R19. K는 설정 레지스터 `cf.pool_k`(R20의 pool). **DynamoDB**(R18·R44 — `USER#{user_id}` / `CF_CANDIDATES`, §6-1, **TTL 없음**): 서빙은 단건 GetItem, 조인은 없다(재확인은 PostgreSQL `visible_topic_rows`에서). 오래된 항목도 그대로 서빙한다. 항목이 없는 요청자는 §2-3의 콜드스타트 경로 |
 | `interactions` | `(actor_user_id, owner_user_id, room_id)` | `started_at`, `reopened_count`, `turns`, `entry`, `recommendation_id` | `agent_dm_opened`로 생성, `message_created`(room_id 조인)로 `turns` 증가. CF 학습 입력 |
+
+### 6-1. DynamoDB key space — 테이블 하나 (R44)
+
+인프라 방침대로 서비스 소유 테이블 하나(`bourbon-agent-discovery-tokyo-{env}`, `PK`·`SK` 문자열, `PAY_PER_REQUEST`, TTL 속성 `expires_at`)에 엔티티를 prefix로 나눈다. 두 번째 테이블은 성능·비용 근거가 생길 때만(`requests/infra.md` §2).
+
+| 항목 | PK | SK | 읽기 | TTL |
+|---|---|---|---|---|
+| `cf_candidates` | `USER#{user_id}` | `CF_CANDIDATES` | 단건 GetItem. `candidates[(owner_user_id, score)]`, `computed_at`, `model_version` | 없음(R18) |
+| 결정 로그(§8) | `REC#{recommendation_id}` | `LOG` | 단건 GetItem(어트리뷰션 조인, 디버깅). 페이지는 같은 항목의 `pages[]`에 append | `decision_log.ttl_days` |
+| 결정 로그 평가용 GSI `served-day-index` | `served_day_key = {type}#{YYYY-MM-DD}#{shard}` | `served_at` | 하루·타입 단위 Query를 shard 수만큼 병합. `KEYS_ONLY` — 본문은 PK로 다시 읽는다 | — |
+| `event_log` | `EVT#{YYYY-MM-DD}#{shard}` | `{occurred_at}#{event_id}` | 하루 단위 Query 병합(이벤트 리플레이·보정, 합성 스펙 §8-2). 이벤트 이름·`occurred_at`·payload JSON. 유저의 글·`email`은 payload에 없다 | `event_log.ttl_days` |
+| 게이트 상태 | `CONFIG` | `CF_GATE` | 단건. 런타임에 움직이는 유일한 설정값 `w_cf`와 마지막 평가(R35) | 없음 |
+
+`shard = hash(id) % N`, N은 설정 `dynamodb.log_shards`. **shard는 지금 키 포맷에 들어간다** — topic-api가 받은 피드백대로, 하루치 쓰기가 한 파티션에 몰려 GSI가 스로틀되면 베이스 테이블 쓰기까지 막히기 때문이다. N을 늘려도 옛 항목의 shard 값은 새 범위 안에 있으므로 이동이 없다. 지배적 읽기(날짜별 전량)가 Scan이 아니라 Query인 것도 같은 피드백에서 왔다.
 
 타입 ①②의 조회는 `visible_topic_rows[topic_id, public]` ∪ (`visible_topic_rows[topic_id, friends]` ∩ friends(요청자)) 이고, 타입 ①은 topic ≤ 3개의 결과를 owner로 합쳐 커버리지를 센다. 이 합집합은 쿼리 하나의 WHERE 절이다(§4-2, R17). 타입 ③의 `popularity`·`content_similarity`·이웃 조회도 같은 술어를 `visible_topic_rows`에 대한 조인(또는 EXISTS)으로 붙여 요청자에게 보이는 소유자만 읽는다. 다른 소스가 자기 저장소를 따로 가져도 위 집합은 그대로 있어야 한다. 불변식 1·4가 여기서 판정되기 때문이다.
 
@@ -333,7 +347,7 @@ class Ranker(Protocol):
 
 ## 8. 결정 로그
 
-목록마다 한 건 — 첫 페이지에 발급된 `recommendation_id`가 PK고, 다음 페이지 요청은 같은 항목에 `pages[]`로 덧붙인다(§2-4). 오프라인 평가의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18): PK `recommendation_id`(대화 시작 이벤트의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 기간·타입별로 읽도록 GSI `(type, served_day)`, 보존은 TTL. 집계는 SQL이 아니라 평가 배치의 코드다.
+목록마다 한 건 — 첫 페이지에 발급된 `recommendation_id`가 PK고, 다음 페이지 요청은 같은 항목에 `pages[]`로 덧붙인다(§2-4). 오프라인 평가의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18·R44, key space는 §6-1): `REC#{recommendation_id}` / `LOG`(대화 시작 이벤트의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 날짜·타입별로 읽도록 GSI `served-day-index`(`served_day_key = {type}#{YYYY-MM-DD}#{shard}`, shard 병합), 보존은 TTL(`decision_log.ttl_days`). 집계는 SQL이 아니라 평가 배치의 코드다.
 
 ```json
 {
