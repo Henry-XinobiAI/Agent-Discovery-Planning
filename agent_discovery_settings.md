@@ -117,6 +117,8 @@
 |---|---|---|---|---|
 | `refresh.debounce_seconds` | 10 | `topics_updated`·visibility 변경 신호(R48)를 유저 단위로 모아 재조회 1회로 만드는 대기 시간 | 올리면 topic-api 재조회 횟수가 줄고 반영이 늦어진다 | 이벤트 정의서 §2-1("수 초"), 값은 분석 |
 | `refresh.debounce_max_wait_seconds` | 60 | 이벤트가 계속 와도 이 시간 안에는 한 번 재조회한다(trailing debounce의 상한) | 없으면 계속 미뤄질 수 있다. 내리면 재조회가 잦아진다 | 이벤트 정의서 §2-1 |
+| `refresh.max_attempts` | 5 | 재조회 task 한 건을 몇 번까지 다시 시도하나. 시도 사이는 1·2·4·8초로 늘어나는 대기 | 올리면 topic-api가 잠깐 죽어도 이벤트를 덜 잃지만, 워커의 task 예산과 파드 종료 유예(§11)가 같이 늘어난다 | 분석(현행 `INGEST_MAX_ATTEMPTS`) |
+| `refresh.attempt_timeout_seconds` | 10 | 한 번의 시도(topic-api 재조회 1회 + PostgreSQL 트랜잭션 1회) 전체에 주는 시간 | 내리면 느린 응답을 일찍 포기해 다음 시도로 넘어가고, 올리면 한 번의 시도가 예산을 더 먹는다. topic-api 자체 재시도(`topic_api.timeout_ms` × 시도 수)보다 커야 한다 | 분석(현행 `INGEST_TIMEOUT_SECONDS`) |
 | `attribution.window_hours` | 24 | 클라이언트의 어트리뷰션 보고(계약 §2-5)와 `room_created`를 같은 `(actor, owner)` 쌍으로 잇는 최대 간격 | 늘리면 오래된 카드에서 시작한 대화도 추천으로 잡히고, 줄이면 늦게 연 대화가 `direct`가 된다 | R47, 값은 분석 |
 | `room_turns.orphan_ttl_days` | 7 | `interactions` 행이 없는 `room_turns`(우리 서비스 이전에 열린 방, 놓친 시작)를 정리하기까지의 기간 | 짧으면 `room_created`가 늦게 오는 방의 turn을 잃고, 길면 고아 행이 쌓인다 | R49, 값은 분석 |
 | `topic_api.timeout_ms` | 800 | 재조회·요청자 프로필(R27)·hydration 호출의 타임아웃 | 내리면 `hydration_partial`이 늘고 p95가 짧아진다 | 분석 |
@@ -138,4 +140,5 @@
 
 - 설정 클래스는 하나이고 이 표의 그룹이 중첩 필드가 된다. 필드마다 docstring이 "뜻"과 "올리면 / 내리면"을 그대로 갖는다 — 표와 코드의 설명이 다르면 표가 맞다.
 - 게이트가 바꾸는 값(`rank.for_you.w_cf`)만 런타임에 움직인다. 나머지는 배포 시점 값이다. `rank.for_you.w_persona`는 O20이 규칙을 정하기 전까지 0으로 고정된 예약 자리다(R42).
+- 워커의 task 예산은 이 표에서 계산한다: 최악의 재조회 한 건 = `refresh.max_attempts` × `refresh.attempt_timeout_seconds` + 시도 사이 대기의 합. 여기서 deferq의 task 타임아웃·드레인·파드 종료 유예가 차례로 나오므로(`worker/budget.py`), 위 두 값을 고치면 배포 매니페스트의 `terminationGracePeriodSeconds`도 같이 움직인다.
 - 결정 로그의 `implementation`은 이 설정의 해시를 포함해, 어느 값으로 답했는지 나중에 알 수 있게 한다(계약 §8).
