@@ -54,16 +54,16 @@
 
 ### 1-4. 저장 모델과 적재 경로
 
-PostgreSQL: `visible_topic_rows`(+ `descriptions` JSON, hydration용), `agents`, `friends`, `interactions`, `catalog_edges`, `population_stats`. 인기도는 `interactions`에서 요청 시 계산(30일 창이라 작다) — 별도 테이블은 p95가 나빠지면.
+PostgreSQL: `visible_topic_rows`(+ `descriptions` JSON, hydration용), `agents`, `friends`, `interactions`, `room_turns`(R49), `attributions`(R47), `catalog_edges`, `population_stats`. 인기도는 `interactions`에서 요청 시 계산(30일 창이라 작다) — 별도 테이블은 p95가 나빠지면.
 DynamoDB(계약 §6-1): `USER#…/CF_CANDIDATES`, `REC#…/LOG`, `EVT#…`, `CONFIG/CF_GATE`.
 
-리스너(전부 `worker/`에 한 흐름씩): `topics_updated`·`user_topic_settings_updated` → 같은 debounce → 재조회 task(row 통째 교체, `agents` 없으면 생성, `topic_revision` 복제 지연 시 재시도); `personal_agent_visibility_changed`; `agent_dm_opened`(→ `interactions`, `agents.last_active_at`); `message_created`(`room_type` 필터 → `interactions.turns`); `friendship_changed`; `user_registered`(agent id 결정론적 계산, `email` 읽지 않음); `user_deactivated`. 모든 리스너가 `event_log`에 append.
+리스너(전부 `worker/`에 한 흐름씩): `topics_updated`·visibility 변경 신호(임시 이름 `user_topic_settings_updated`, R48) → 같은 debounce → 재조회 task(row 통째 교체, `agents` 없으면 생성, `topic_revision` 복제 지연 시 재시도); `personal_agent_visibility_changed`; `room_created`(`room_type` 필터 → `interactions`, `attributions`와 `(actor, owner)` 조인, `agents.last_active_at` — R46·R47); `message_created`(`room_type`·`sender_type` 필터 → `room_turns[room_id]` +1, `room_created`와 순서 무관 — R49); `friendship_changed`; `user_registered`(agent id 결정론적 계산, `email` 읽지 않음); `user_deactivated`. 모든 리스너가 `event_log`에 append. 어트리뷰션 보고 route `POST /attributions`(계약 §2-5, R47)는 이 단계에서 같이 만든다 — `room_created` 리스너가 조인하는 상대다.
 
 CLI: `python -m cli publish <event> …` 이벤트마다 하나.
 
 **열린 구현 판단 1 — 워커가 저장소에 직접 쓰나, API를 찌르나.** 지금 코드는 워커 → HTTP → API route다(pod 분리 대비). 저장소가 생기면 워커가 직접 쓰는 쪽이 단순하고 재시도가 한 곳이다. 권고: **워커가 직접 쓴다.** 권고를 택하면 `ingest.py`와 `/events/*` route를 지우고 API는 읽기만 한다.
 
-**완료 조건**: CLI로 `topics_updated`를 세 번 발행하면 재조회 1회·row 교체 1회, `user_topic_settings_updated`로 private 전환 뒤 row가 사라지고, `agent_dm_opened` → `interactions` 1행 + `last_active_at` 갱신, 각 이벤트가 `event_log`에 1건. 불변식 1(저장소에 private·hidden 없음)을 테스트가 강제.
+**완료 조건**: CLI로 `topics_updated`를 세 번 발행하면 재조회 1회·row 교체 1회, visibility 변경 신호로 private 전환 뒤 row가 사라지고, `POST /attributions` 뒤 `room_created` → `interactions` 1행(`entry`·`recommendation_id` 채워짐) + `last_active_at` 갱신, `message_created`를 `room_created`보다 먼저 보내도 turn이 보존되고, 각 이벤트가 `event_log`에 1건. 불변식 1(저장소에 private·hidden 없음)을 테스트가 강제.
 
 ### 1-5. 타입 ①② — 인덱스 소스와 응답
 
@@ -113,7 +113,7 @@ CLI: `python -m cli publish <event> …` 이벤트마다 하나.
 
 - 요청서 발송(`requests/README.md`의 순서). 인프라 답 → configmap/secret 갱신, dev 테이블·GSI 생성, alembic 적용.
 - 실측 보정 작업(R37, 스펙 §8)은 배포 뒤 첫 주기부터.
-- go-live 전제 확인: bourbon-api `discoverable`·`agent_dm_opened`, 클라이언트 `recommendation_id`, topic-api api AMQP, prod topic-api 워커.
+- go-live 전제 확인: bourbon-api `discoverable`·`room_created`, 클라이언트 `POST /attributions` 호출, topic-api api AMQP + visibility 변경 신호, prod topic-api 워커.
 
 ## 2. 순서의 이유
 

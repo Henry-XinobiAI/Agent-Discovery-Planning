@@ -30,9 +30,9 @@ POST /api/internal/svc/agent-discovery/recommend/explicit
 
 ## 2. 추천 카드 meta에 `recommendation_id`
 
-타입 ① 응답의 `recommendation_id`를 추천 카드(bourbon-api를 거쳐 클라이언트로 가는 메시지)의 meta에 실어 주시면 된다. 클라이언트는 그 카드에서 대화를 시작할 때 이 값을 bourbon-api의 대화 시작 요청에 `entry="recommend_explicit"`과 함께 넘긴다(클라이언트 요청서 §2). 카드 하나에 agent가 여럿이면 `recommendation_id`는 하나(응답 단위)다.
+타입 ① 응답의 `recommendation_id`를 추천 카드(bourbon-api를 거쳐 클라이언트로 가는 메시지)의 meta에 실어 주시면 된다. 클라이언트는 그 카드에서 대화를 시작할 때 이 값을 우리 route `POST /api/svc/agent-discovery/attributions`에 `entry="recommend_explicit"`과 함께 보고한다(클라이언트 요청서 §2, R47). bourbon-api는 거치지 않는다. 카드 하나에 agent가 여럿이면 `recommendation_id`는 하나(응답 단위)다.
 
-**왜**: bourbon-api가 이 값을 `agent_dm_opened` 이벤트에 실어 발행하고, 우리는 결정 로그와 조인해 "이 추천이 대화를 만들었나"를 잰다. 소급이 안 되는 값이라 첫 배포부터 필요하다.
+**왜**: 우리는 이 보고를 bourbon-api의 방 생성 이벤트와 이어 결정 로그와 조인해 "이 추천이 대화를 만들었나"를 잰다. 소급이 안 되는 값이라 첫 배포부터 필요하다.
 
 ## 3. 요청하지 않는 것 — 기록으로
 
