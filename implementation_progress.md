@@ -38,10 +38,10 @@
   완료 조건: 계약 §2·§3의 예시 JSON이 모델로 파싱·직렬화된다.
   PR: #21 (머지 2026-09-10). 도메인 어휘(`Tier`·`FeatureName`·`Entry`·`Degradation`·`SourceHit`·`Features`·`RankedOwner`·`MatchedTopic`·`Signals`)와 §4의 네 Protocol(`CandidateSource[Q: Query]`·`VisibilityFilter`·`Ranker`·`Assembler`), `api/structs/discovery.py`에 요청 넷·응답 셋. 불변식 7을 타입이 지키게 했다 — 이용자가 쓴 글(`owner_note`, `HolderNote.text`)은 기본 repr에서 빠진다. 불변식 5는 응답 어디에도 "몇 개를 걸렀다"가 없다는 것으로, 필드 이름이 아니라 모델 필드 집합을 훑는 테스트로 지킨다. 레지스터가 정하는 상한(`limit` 등)은 검증 시점에 레지스터에서 읽고, 계약이 정하는 하한만 필드 제약으로 둔다. 945 tests. 리뷰어 지적 24건 전부 반영. 계약 §11에 열린 항목 하나를 남겼다 — `GET /discover/by-topic/{topic_id}`의 응답 envelope이 §3-2에 없어 타입 ②의 envelope(섹션 하나)으로 읽었다.
 
-- [ ] **5. 1-4a 이벤트 미러·CLI publish** 🟢
+- [x] **5. 1-4a 이벤트 미러·CLI publish** 🟢
   `worker/events.py`를 실제 이벤트로 교체 — `topics_updated`, 임시 이름 `user_topic_settings_updated`(R48), `personal_agent_visibility_changed`, `room_created`(R46), `message_created`, `friendship_changed`, `user_registered`, `user_deactivated`(payload는 이벤트 정의서 §2). `touched` 필터 삭제(항상 재조회). `cli publish <event>` 이벤트별 서브커맨드. `tests/worker/test_user_topics.py`의 필터 테스트 4개 삭제, `test_app.py` import 한 줄.
   완료 조건: 이벤트 이름·필드가 정의서와 같고 CLI로 각 이벤트를 로컬 브로커에 넣을 수 있다.
-  PR: —
+  PR: #22 (머지 2026-09-10). 정의서 §2의 열 개 중 여덟 개를 미러(`agent_maturity_changed`는 컴포넌트 대기, `persona_updated`는 직접 쓰지 않음 — 둘 다 이유를 docstring에 적었다). 소비는 둘, 나머지 여섯은 리스너보다 먼저 선언만 — 큐는 리스너가 만드므로 비용 0. `touched` 필터는 최적화가 아니라 버그였다: `topics_updated`에는 그 필드가 없고 미러는 모르는 필드를 무시하므로 실제 이벤트의 **100%** 를 건너뛰었을 것이다. **미러의 세 규칙**은 근거가 하나다 — deferq는 역직렬화 실패도 ack하고(DLQ 없음) pydantic 에러를 `logger.exception`·Sentry로 보내는데, 그 에러는 거절한 값을, 필드 누락이면 **입력 문서 전체**를 인용한다. 그래서 모르는 필드 무시·필수 필드 없음(`null`도 부재)·식별자는 `str`이다. 못 쓰는 값은 플로우가 digest와 함께 떨군다. `discoverable`은 `bool | None`(false = 그 소유자 공개 row 전부 삭제라, 잘린 payload와 의도적 철회가 구별돼야 한다), `user_registered`의 `email`은 읽을 attribute 자체가 없다. `cli publish <event>` 여덟 서브커맨드. 리스너 rename이 버리는 큐는 **binding을 유지한 채 사본을 모은다** — 로컬에서 실제로 관찰(compose worker가 소스를 bind-mount하고 `.py`마다 재시작해 편집 중간 이름이 큐를 선언, 메시지 2건 적재). 배포 브로커에서 `deferq.arm_refresh_on_user_topic_updated`를 손으로 지워야 한다. 검증: 두 종류 3건 → `refresh.armed` ×3 → `refresh.delivered` ×1, 잘못된 user_id → 경고 1건(값 없이 digest·길이). 1014 tests. 리뷰 2회 지적 22건 전부 반영.
 
 - [ ] **6. 1-4b 저장 모델** 🟢
   PostgreSQL `visible_topic_rows`(+`descriptions`)·`agents`·`friends`·`interactions`·`room_turns`(R49)·`attributions`(R47) 테이블과 마이그레이션(계약 §6), DynamoDB 항목 저장소 `USER#…/CF_CANDIDATES`·`REC#…/LOG`·`EVT#…`·`CONFIG/CF_GATE`(§6-1). fake 저장소로 유닛 테스트, `LOCAL_STACK=1` 라이브 테스트. 아직 연결하지 않는다. 1-2b(`storage/catalog.py`)가 패턴.
