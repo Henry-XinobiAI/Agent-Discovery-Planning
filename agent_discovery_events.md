@@ -110,45 +110,71 @@ class PersonalAgentVisibilityChangedPayload(BaseModel):
 
 플랫폼 기준(§0)으로 2026-09-10에 다시 봤고 **유지**한다(오너): 필드의 소유자가 bourbon-api고 변화를 알 다른 길은 폴링뿐이다. 유저가 쓰는 boolean 필드의 변경이라 `friendship_changed`와 같은 부류고 payload에 새 값만 실려 상태를 내포하지 않는다. 소비자는 지금 우리 하나지만 프로필·검색이 같은 값을 읽게 될 수 있다 — 요청서에 이 근거를 적는다.
 
-### 2-4. `bourbon.room_created` — bourbon-api의 일반 이벤트, 우리는 `agent_dm`만 필터(R46)
+### 2-4. 대화 시작 — `bourbon.room_created` 요청을 철회하고 우리 안에서 푼다(R51, R46 개정)
 
-대화 시작 = 타인의 agent와의 방이 **만들어졌을 때**. 지금 코드에서는 `ensure_agent_dm_room(actor_id, other_id)`의 create 분기(room row insert 커밋 뒤)다. 이미 있는 방을 다시 여는 find·re-enter 분기는 내지 않는다 — 재입장은 "전에 있었다"를 아는 상태 이벤트라 플랫폼 기준(§0)에 어긋나고, 우리에게 필요하면 `message_created` 간격으로 우리 안에서 계산한다.
+bourbon-api가 기각했다. 대안으로 이미 있는 내부 route를 줬다:
 
-처음 안은 우리 전용 `agent_dm_opened`(actor·owner·`reopened`·`entry`·`recommendation_id`)였다. 플랫폼 기준으로 다시 보면 단일 소비자 전용 이름에 상태 필드와 사후분석 필드가 실린 모양이라, **bourbon-api가 어느 소비자에게나 낼 수 있는 일반 이벤트**로 바꾼다. bourbon-api에는 지금 방 생성 이벤트가 없다(발행 중인 것은 `user_registered`·`user_deactivated`·`friendship_changed`·`message_created`·`message_translated`).
-
-```python
-class RoomAgentSeat(BaseModel):
-    agent_id: UUID
-    owner_user_id: UUID | None       # personal agent의 소유자. 소유자 없는 agent가 생기면 None
-
-class RoomCreatedPayload(BaseModel):
-    room_id: UUID
-    room_type: str                   # RoomType 값: "user_dm" | "agent_dm" | "group"
-    creator_id: UUID
-    member_user_ids: list[UUID]
-    agents: list[RoomAgentSeat]      # 생성 시점의 착석 agent
-    occurred_at: AwareDatetime
-
-room_created = Event("bourbon.room_created", RoomCreatedPayload)
+```
+GET /api/internal/rooms/{room_id}/agent-context
 ```
 
-**우리 처리**: `room_type == "agent_dm"`만 받는다. actor = `creator_id`, 소유자 = `agents` 중 `owner_user_id != creator_id`인 착석 agent의 소유자(agent DM에는 actor 자신의 agent도 착석하므로 둘 중 하나다). 착석 agent가 모두 creator 소유면 자기 agent 방이라 무시. `interactions`에 `(actor, owner, room_id, started_at)` 기록, `popularity[owner]` 증가, `agents.last_active_at` 갱신. `entry`·`recommendation_id`는 이 이벤트가 아니라 `attributions`(R47, 계약 §2-5)와의 조인으로 채운다.
+**그런데 우리에게 필요한 건 소유자 하나뿐이다.** `room_type`과 actor는 `message_created`가 이미 싣고, 그 응답에는
+방 종류도 `creator_id`도 방 생성 시각도 없다(그 셋은 `GET /users/{id}/rooms`의 `RoomOut`에 있는데 그쪽은 소유자를
+주지 않는다). 그리고 응답에는 `context_messages`가 항상 딸려 오고 `limit`의 최솟값은 1이라 **이용자들의 메시지 본문**을
+끌 수 없다. 우리 서비스는 지금 남의 대화를 한 글자도 들고 있지 않고, 불변식 7과 직결된다.
 
-**방 종류에 의존하지 않는다.** bourbon-api가 친구 게이트를 풀면서 방 종류나 경로를 바꿔도 payload는 그대로고 우리 필터 값만 바뀐다.
+그들이 같이 제안한 나머지는 우리에게 해당이 없다. 메시지 수·유저 메시지 수는 이미 `message_created`로 메시지당 O(1)로
+세고 있어(R49) route를 페이징해 세는 건 훨씬 나쁘고, 리액션은 쓰지 않으며, "활성 room 감지 64샤드 스윕"은 우리 설계에
+없었다 — 우린 처음부터 이벤트 구동이다.
 
-**기각 시 대안**(요청서에 같이 적는다):
+**그래서 room id를 미리 계산해 둔다.** agent DM의 방 id는 결정론적이다(bourbon-api `rooms/dm_identity.py`, find 분기와
+create 분기가 같은 식을 쓴다):
 
-- (a) bourbon-api **내부 route로 room 구성 조회** — `message_created`(`room_type=agent_dm`)의 첫 건에서 `room_id`로 1회 읽어 actor·소유자를 알아낸다. 모든 대화를 보고, DB 직접 접근이 아니다. 새 room당 호출 1회(10만 유저 기준 하루 수천 건).
-- (b) agent DM의 room id는 `uuid5(DM_NAMESPACE, f"dm:user:{user_id}:agent:{agent_id}")`로 **결정론적**이다(`rooms/dm_identity.py`). 추천 시점에 후보별 room id를 계산해 결정 로그에 두고 `message_created`의 `room_id`와 매칭한다. 추천된 대화만 보이고(인기도·CF가 편향된다) bourbon-api의 id 규칙과 네임스페이스 상수에 결합되므로 마지막 수단.
+```python
+room_id = uuid5(DM_NAMESPACE, f"dm:user:{actor}:agent:{agent_id}")
+AGENT_NAMESPACE = uuid5(NAMESPACE_DNS, "agent.bourbon.xinobi.net")   # 우리 identity.py가 이미 가진 것
+DM_NAMESPACE    = uuid5(NAMESPACE_DNS, "dm.bourbon.xinobi.net")      # 이것 하나가 더 필요하다
+```
 
-### 2-5. `bourbon.message_created` — 있는 것으로 turn을 셈
+추천을 낼 때 requester와 agent id를 다 알므로, 그 방이 열리면 어떤 id일지 그때 안다. DynamoDB `ROOM#{room_id}`에
+`(requester, owner_user_id, recommendation_id, entry, served_at)`을 TTL과 함께 쓰고, **그 방의 첫 turn에서 한 번**
+읽는다 — `room_turns` upsert가 돌려주는 `turns == 1`이 곧 "이 방 처음 본다"라 조회 자리는 공짜다.
+
+**우리 처리**: `message_created`(`room_type == agent_dm`, `sender_type == user`)마다 turn +1. 첫 turn이면 예측
+인덱스를 한 번 읽고, 맞으면 `interactions`에 `(actor = sender_id, owner, room_id, started_at = 첫 메시지 시각)`을 쓰고
+actor의 `agents.last_active_at`을 갱신한다. 없으면 카운터를 하나 올리고 끝이다(R52).
+
+**대가 셋을 적어둔다.**
+
+- DM 네임스페이스 상수 하나에 결합된다. 그들이 바꾸면 적중률이 0이 되고 조용하다 — `identity.py`가 이미 지고 있는 것과
+  같은 종류의 위험이고, 적중률이 그 감시 신호다.
+- 어트리뷰션 창이 방 생성이 아니라 **첫 메시지** 기준이 된다. 추천으로 방만 열고 하루 뒤에 말을 걸면 `direct`다.
+  대화가 실제로 일어난 것만 세는 쪽이 맞다고 보지만, 재는 값의 의미가 바뀐다.
+- 추천으로 시작되지 않은 대화는 기록되지 않는다(R52). 인기도·CF·R28이 추천 전용 표본을 읽게 되므로 못 찾은 방을 세어
+  1-7 전에 다시 본다.
+
+**부수 효과 하나는 이득이다.** `room_created`는 create 분기에서만 발행되므로 R46이 `reopened`를 뺀 뒤로는 재방문을
+아예 못 봤는데, 메시지로 잡으면 본다.
+
+**한편 오늘 기준으로 채택 자체가 막혀 있다.** `ensure_agent_dm_room`이 친구가 아니면 방 생성을 거부한다
+(`FriendshipRequiredError`) — R46이 "친구 게이트를 풀면서"라고 적어둔 그 게이트다. 우리 설계는 그것이 풀린다는 전제다.
+
+### 2-5. `bourbon.message_created` — 있는 것으로 turn을 세고, 대화의 시작도 여기서 안다
 
 ```python
 # bourbon-api messages/events.py 그대로 미러
 room_id, message_id, sender_id, sender_type, type, room_type
 ```
 
-`room_type == "agent_dm"`이고 `sender_type`이 유저인 메시지 = 그 방의 actor가 agent에게 한 turn. 리스너는 `room_type` 필터 뒤 **`room_turns[room_id]`를 +1만 한다**(R49). `room_created`(§2-4)와는 큐가 달라 순서 보장이 없으므로 카운터를 방 키로 독립시켜 어느 쪽이 먼저 와도 버리거나 보류할 것이 없게 한다. 읽는 쪽이 `room_id`로 `interactions`와 조인해 (actor, owner)를 얻고, `interactions` 행이 없는 방(우리가 시작을 놓쳤거나 우리 서비스 이전에 열린 방)은 조인에서 빠지며 `room_turns.orphan_ttl_days` 뒤 정리한다. **bourbon-agent에 turn 이벤트를 요청할 필요가 없다.**
+`room_type == "agent_dm"`이고 `sender_type`이 유저인 메시지 = 그 방의 actor가 agent에게 한 turn. 리스너는 `room_type`
+필터 뒤 **`room_turns[room_id]`를 +1**한다(R49). 두 필터는 파싱보다 앞이다 — 제품의 모든 메시지가 이 리스너에 온다.
+
+**그 방의 첫 turn이면 대화의 시작이기도 하다**(R51). `room_turns` upsert가 돌려주는 `turns == 1`이 "이 방 처음 본다"이므로,
+그때 예측 인덱스 `ROOM#{room_id}`를 한 번 읽어 소유자를 알아내고 `interactions` 한 행을 만든다. §2-4를 보라.
+
+`room_turns`를 방 키로 독립시킨 이유는 그대로다: `interactions`와 순서에 의존하지 않게 하려던 것이었고, 이제 같은 이벤트가
+둘 다 만들지만 카운터는 여전히 방 키다 — 소유자를 못 찾은 방도 turn은 세어지고(그 방이 나중에 조인에서 빠질 뿐),
+`interactions` 행이 없는 방은 `room_turns.orphan_ttl_days` 뒤 정리한다. **bourbon-agent에 turn 이벤트를 요청할 필요가 없다.**
 
 ### 2-6. `bourbon.agent_maturity_changed` — 컴포넌트가 생기면
 
