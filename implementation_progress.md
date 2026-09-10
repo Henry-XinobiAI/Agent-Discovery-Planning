@@ -28,10 +28,10 @@
   완료 조건: 레지스터↔클래스 일치 테스트 통과, 해시가 값 변경에만 반응.
   PR: #19 (머지 2026-09-10). 22 그룹 67 필드, frozen·`extra="forbid"`, 부분 오버라이드는 pydantic 기본값이 채우므로 딥머지 코드 없음. `settings_hash()` = `v1@<12 hex>`(값만). 레지스터 68행 ↔ 클래스 67 리프, 차이는 `dynamodb.table_name` 하나(환경 소유, 예외 목록도 검사). 설명문은 비교하지 않는다 — 레지스터는 한국어, 코드 docstring은 영어(`CLAUDE.md`)라 다르게 읽히면 레지스터가 맞다. 886 tests. 리뷰어 지적 11건 전부 반영.
 
-- [ ] **3. 1-3b 설정 연결·env 제거** 🟢
+- [x] **3. 1-3b 설정 연결·env 제거** 🟢
   composition과 `worker/scheduling.py`가 새 `Settings`를 읽는다. 레지스터 행으로 대체된 `TOPIC_API_TIMEOUT_SECONDS`·`WORKER_REFRESH_*`를 config·ConfigMap·README·`.env.example`·테스트에서 제거한다. 주의: `topic_api.timeout_ms`는 레지스터 800 ms, 지금 env 기본 3 s — 1-9 실측 전에는 3000으로 시작하는 쪽이 안전(계획 파일 판단 1).
   완료 조건: `test_deploy_env_wiring.py` 통과, 두 env 키 참조 0건.
-  PR: —
+  PR: #20 (머지 2026-09-10). `topic_api.timeout_ms`는 800 대신 현행 3000에서 시작하기로 하고 레지스터를 먼저 고쳤다(#62) — 동작 변화 0. `TOPIC_API_MAX_ATTEMPTS`는 남는다(시도 예산은 환경의 결정). 두 composition root가 부팅 때 레지스터를 읽는다: 워커에서 오버라이드 파일이 잘못되면 리스너 안에서 터지고 deferq는 DLQ 없이 ack하므로 재조회가 조용히 사라진다. `compose/settings.overrides.json`이 로컬 디바운스 3 s이자 ConfigMap 마운트 파일의 워크드 예제. conftest autouse 픽스처 하나가 값·경로 캐시와 env를 되돌린다. 889 tests. 리뷰어 지적 9건 전부 반영.
 
 - [ ] **4. 1-3c 계약 스키마·도메인 인터페이스** 🟢
   `api/structs/`에 세 타입의 요청·응답 모델(envelope `contract_version, recommendation_id, resolved_topics[], agents[], empty, degraded[]`, `lang` ko·en·ja, 422/503), `agent_discovery/domain/`에 `TopicQuery`·`UserQuery`(`requester_traits` 예약)·`SourceHit`·`CandidateSource`·`VisibilityFilter`·`Ranker`·`Assembler` Protocol. route 없음.
