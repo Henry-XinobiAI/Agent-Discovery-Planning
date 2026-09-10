@@ -97,7 +97,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 | `owner_user_id` | UUID | 대화를 시작하는 상대 agent의 소유자(카드의 값) |
 | `entry` | `recommend_explicit` \| `discover_by_topic` \| `discover_for_you` | 어느 화면에서 |
 
-요청자는 edge-auth의 `x-user-id`. 응답 204. 추천을 거치지 않은 대화 시작(`direct`)은 보고하지 않는다. 우리는 `attributions`(§6)에 적고, 대화 시작 이벤트 `room_created`(§9-1)가 같은 `(actor, owner)` 쌍으로 오면 `attribution.window_hours` 안의 최근 보고 하나를 `interactions.entry`·`recommendation_id`에 채운다. 보고가 없으면 `entry = direct`. 보고는 best-effort다 — 측정용 값이라 빠져도 추천은 영향이 없다.
+요청자는 edge-auth의 `x-user-id`. 응답 204. 추천을 거치지 않은 대화 시작(`direct`)은 보고하지 않는다. 우리는 `attributions`(§6)에 적고 **`reported_at`은 우리 시계로 찍는다** — 이 payload에는 시각이 없다. 그 방의 첫 `message_created`가 같은 `(actor, owner)` 쌍으로 오면 `attribution.window_hours` 안의 최근 보고 하나를 `interactions.entry`·`recommendation_id`에 채우고 `attributed_by = report`를 남긴다(R51·R53). 보고가 없으면 예측 room 인덱스가 대신하고(`predicted`), 그것도 없으면 `entry = direct`다. 보고는 best-effort다 — 측정용 값이라 빠져도 추천은 영향이 없다.
 
 ---
 
@@ -318,8 +318,8 @@ class Ranker(Protocol):
 | `popularity` | `owner_user_id` | 시간 감쇠 카운트 | 대화 시작 이벤트 |
 | `cf_candidates` | `user_id` | `candidates: [(owner_user_id, score)]` top-K, `computed_at`, `model_version`(어느 전역 학습으로 만들었나 — 재현·갱신 판단용) | 워커의 주기 스윕이 배치로 쓴다 — 조건은 R19. K는 설정 레지스터 `cf.pool_k`(R20의 pool). **DynamoDB**(R18·R44 — `USER#{user_id}` / `CF_CANDIDATES`, §6-1, **TTL 없음**): 서빙은 단건 GetItem, 조인은 없다(재확인은 PostgreSQL `visible_topic_rows`에서). 오래된 항목도 그대로 서빙한다. 항목이 없는 요청자는 §2-3의 콜드스타트 경로 |
 | `interactions` | `(actor_user_id, owner_user_id, room_id)` | `started_at`, `entry`, `recommendation_id`, **`attributed_by`**(R53) (`turns`는 `room_turns`에서 조인) | **그 방의 첫 `message_created`로 생성**(R51 — `room_created` 요청은 철회했다). 소유자는 예측 인덱스 `ROOM#{room_id}`에서 오고, 거기 없는 방은 기록하지 않는다(R52). `entry`·`recommendation_id`는 `attributions` 보고가 먼저·예측 인덱스가 다음이고 `attributed_by`가 어느 쪽인지 남긴다(R53). CF 학습 입력. 자기 agent 방·user DM·group은 행 없음. 탈퇴: owner 행 삭제, actor 행은 actor 익명화(R49) |
-| `room_turns` (R49) | `room_id` | `turns`, `last_turn_at` | `message_created`(`room_type == agent_dm`, `sender_type == user`)마다 +1. `room_created`와 순서가 보장되지 않아 방 키로 독립시킨다 — 어느 쪽이 먼저 와도 버릴 것이 없다. `interactions` 행이 없는 방은 읽기 조인에서 빠지고 `room_turns.orphan_ttl_days` 뒤 정리 |
-| `attributions` (R47) | `(requester_user_id, owner_user_id, reported_at)` | `recommendation_id`, `entry` | 클라이언트의 §2-5 보고로 생성. `room_created`가 오면 `attribution.window_hours` 안의 최근 것 하나를 `interactions`에 옮긴다. 보존은 `decision_log.ttl_days`와 같게 |
+| `room_turns` (R49) | `room_id` | `turns`, `last_turn_at` | `message_created`(`room_type == agent_dm`, `sender_type == user`)마다 +1. 같은 이벤트가 `interactions`도 만들지만(R51) 예측하지 않은 방은 turn만 세므로 방 키로 독립시킨다. `interactions` 행이 없는 방은 읽기 조인에서 빠지고 `room_turns.orphan_ttl_days` 뒤 정리 |
+| `attributions` (R47) | `(requester_user_id, owner_user_id, reported_at)` | `recommendation_id`, `entry` | 클라이언트의 §2-5 보고로 생성하고 `reported_at`은 우리가 찍는다. 그 방의 첫 `message_created`가 오면 `attribution.window_hours` 안의 최근 것 하나를 `interactions`에 옮긴다(R51). 보존은 `decision_log.ttl_days`와 같게 |
 
 ### 6-1. DynamoDB key space — 테이블 하나 (R44)
 

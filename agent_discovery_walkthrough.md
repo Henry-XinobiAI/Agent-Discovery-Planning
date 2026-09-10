@@ -77,7 +77,7 @@ R이 지금까지 대화를 시작한 상대: **A**(12 turn, 다시 방을 연 �
 
 D의 row는 없다(전부 private). F의 row도 없다(agent가 private이면 소유자 row 전부 삭제). 이 두 "없음"이 불변식 1이다. R 자신의 `camping`(public)·`hand_drip`(friends) row도 실제로는 있다(다른 사람이 R을 찾을 때 쓰인다) — 위 표는 R의 요청에 관여하는 row만 적었고, R의 요청에서 본인은 제외다.
 
-**`agents`** — 추천 대상 풀. `bourbon.user_registered`가 만들고(`discoverable=false`로 시작), 공개 여부·성숙도 이벤트가 갱신한다. `last_active_at`(R19)은 그 유저가 우리 API를 호출했을 때, `room_created`의 creator였을 때, `topics_updated`가 왔을 때 갱신된다. `cf_candidates_computed_at`(R19)은 그 유저의 top-K를 마지막으로 만든 시각이다. R은 `cf_candidates_computed_at`이 9/05(H와의 대화 뒤 스윕)이고, 오늘 for-you 요청으로 `last_active_at`이 갱신됐으니 TTL 조건으로 다음 스윕의 갱신 대상이다.
+**`agents`** — 추천 대상 풀. `bourbon.user_registered`가 만들고(`discoverable=false`로 시작), 공개 여부·성숙도 이벤트가 갱신한다. `last_active_at`(R19)은 그 유저가 우리 API를 호출했을 때, 대화를 시작했을 때(그 방의 첫 `message_created`, R51), `topics_updated`가 왔을 때 갱신된다. `cf_candidates_computed_at`(R19)은 그 유저의 top-K를 마지막으로 만든 시각이다. R은 `cf_candidates_computed_at`이 9/05(H와의 대화 뒤 스윕)이고, 오늘 for-you 요청으로 `last_active_at`이 갱신됐으니 TTL 조건으로 다음 스윕의 갱신 대상이다.
 
 | owner_user_id | agent_id | discoverable | agent_maturity | last_active_at | cf_candidates_computed_at |
 |---|---|---|---|---|---|
@@ -268,7 +268,7 @@ B: 0.5·0.75 + 0.2·0.9 + 0.2·0.8 + 0.1·0.04 = 0.719
  "served_at": "2026-09-08T…Z"}
 ```
 
-R이 이 응답에서 B의 agent와 대화를 시작하면 클라이언트가 `POST /attributions`에 `entry=recommend_explicit, recommendation_id=rec-7f…`를 보고하고(R47 — 타입 ①은 bourbon-agent 카드의 meta에서 읽는다), 이어 bourbon-api의 `room_created`가 오면 둘을 (R, B) 쌍으로 이어 `interactions`에 쌓인다.
+R이 이 응답에서 B의 agent와 대화를 시작하면 클라이언트가 `POST /attributions`에 `entry=recommend_explicit, recommendation_id=rec-7f…`를 보고하고(R47 — 타입 ①은 bourbon-agent 카드의 meta에서 읽는다), 이어 그 방의 첫 `message_created`가 오면 둘을 (R, B) 쌍으로 이어 `interactions`에 쌓인다(R51).
 
 ---
 

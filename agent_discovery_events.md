@@ -23,7 +23,7 @@
 | friend 관계 변화 | **있음** `bourbon.friendship_changed` | 구독 | 없음 |
 | 유저 가입 (추천 대상 agent의 등장) | **있음** `bourbon.user_registered` (`CREATED → ACTIVATED` 전이에서 발행) | 구독 → `agents` row 생성 (§2-7) | 없음 |
 | 유저 탈퇴 | **있음** `bourbon.user_deactivated` | 구독 → 전부 삭제 | 없음 |
-| 타인 agent와 대화 시작 | **없음.** 대화는 `AGENT_DM` room(`A:B'`)이고 `ensure_agent_dm_room`이 find-or-create 하지만 이벤트는 없다 | bourbon-api의 일반 이벤트 `room_created`를 `room_type == agent_dm`으로 필터(§2-4, R46) | bourbon-api. 어트리뷰션 키는 클라이언트가 우리 route에 직접 보고한다(R47, 계약 §2-5) |
+| 타인 agent와 대화 시작 | **없음.** 대화는 `AGENT_DM` room(`A:B'`)이고 `ensure_agent_dm_room`이 find-or-create 하지만 이벤트는 없다 | 그 방의 첫 `message_created`. 방 id는 추천을 낼 때 우리가 계산해 둔다(§2-4, R51 — `room_created` 요청은 철회) | 우리 안에서 끝난다. 어트리뷰션 키는 클라이언트가 우리 route에 직접 보고한다(R47, 계약 §2-5) |
 | 대화 진행(turn) | **있음** `bourbon.message_created` (`room_id, sender_id, sender_type, room_type=agent_dm`) | 대화 시작 이벤트의 `room_id`와 조인 | 없음 — **새 turn 이벤트가 필요 없다** |
 | 성숙도 | topic 단위는 `score`(topic-api 임시). agent 단위는 컴포넌트 예정 | `score`를 feature로 | 컴포넌트가 생기면 (§2-6) |
 | 요청자·소유자의 HEXACO 성향 벡터 | **없음.** bourbon-agent의 추출 노트(`PERSONA_EXTRACTION#note`)에 암호화되어 있고, 이벤트 필드가 없다(bourbon-agent에 API를 열 가능성은 없으므로 route는 선택지가 아니다, R42). topic-api는 persona 테이블을 복호화 키를 공유해 직접 읽지만 우리는 그렇게 하지 않는다(R42) | 코드에 자리만(R42): feature `persona_similarity`는 0 | bourbon-agent — **이벤트**로(확정 아님). 어느 이벤트·어느 필드·어느 시점인지는 O20 뒤에 요청 |
@@ -36,7 +36,7 @@
 
 ### 새로 발견한 것 — 확인 필요
 
-- **main에서 agent DM을 열려면 두 사람이 친구여야 한다** (`_assert_friends_to_open`). 원격 브랜치 `temp/agent-dm-open-without-friendship`(2026-09-02)이 그 게이트를 제거한다. **오너 답(2026-09-08)**: 친구가 아니어도, 어떤 방향으로든 대화를 시작할 수 있게 할 것이고 그 방법(방 종류)은 bourbon-api의 몫이다. DM으로 결정될 가능성이 크다. `room_created`(§2-4, R46)는 `room_type`을 싣는 일반 이벤트라 bourbon-api가 방 종류를 바꾸면 우리 필터 값만 바뀐다.
+- **main에서 agent DM을 열려면 두 사람이 친구여야 한다** (`_assert_friends_to_open`). 원격 브랜치 `temp/agent-dm-open-without-friendship`(2026-09-02)이 그 게이트를 제거한다. **오너 답(2026-09-08)**: 친구가 아니어도, 어떤 방향으로든 대화를 시작할 수 있게 할 것이고 그 방법(방 종류)은 bourbon-api의 몫이다. DM으로 결정될 가능성이 크다. `message_created`(§2-4, R51)는 `room_type`을 싣는 일반 이벤트라 bourbon-api가 방 종류를 바꾸면 우리 필터 값만 바뀐다.
 - **우리 워커가 미러하는 `bourbon.user_topic_updated`(`touched` 필드)는 topic-api에 없다.** 실제 이름은 `bourbon.topics_updated`이고 payload도 다르다. 우리 코드 쪽 정정 대상이다(§4).
 
 ---
