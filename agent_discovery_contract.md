@@ -426,3 +426,4 @@ class Ranker(Protocol):
 - `fit`의 내용(O5 — 기획 중: "나와 비슷해요 / 다른 관점도 살펴봐요"). 자리만 있다.
 - 명시 피드백 이벤트(O6 — 제품 논의 없음). 자리도 아직 없다.
 - persona(HEXACO) 입력의 경로·동의 범위·가중 규칙(O20). 자리만 있다(R42): `UserQuery.requester_traits`, feature `persona_similarity`, 설정 `rank.for_you.w_persona`.
+- 섹션 한 개 페이지(`GET /discover/by-topic/{topic_id}`)의 응답 envelope. §3-2가 인쇄하지 않는다. 구현(1-3c)은 **타입 ②의 envelope에 섹션 하나**로 답하는 것으로 읽고 있다 — 클라이언트가 `sections[0].next_cursor`를 꺼내야 하는 비용이 있다. 전용 envelope(`topic_id`·`label`·`agents`·`next_cursor`를 최상위에)로 정하면 §3-2에 인쇄하고 이 항목을 지운다.
