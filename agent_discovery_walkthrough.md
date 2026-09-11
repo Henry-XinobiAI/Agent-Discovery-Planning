@@ -453,6 +453,8 @@ DynamoDB 쓰기는 유저 수가 아니라 그날 읽혔거나 활동한 유저 
 
 ### 5-5. Ranker — 가중 합, CF 가중은 게이트 뒤에
 
+> 이 절과 §3-4의 예시는 `recency`를 넣지 않는다 — 예제 세계에 row의 `updated_at`이 없어 계산할 값이 없기 때문이고, `rank.w_recency`를 0으로 둔 가중 집합이라는 뜻이다. 실제 서비스에서는 세 타입 모두 이 항을 갖는다(`rank.recency_half_life_days`, 레지스터 §2). 구현의 재현 테스트는 이 문단이 말하는 가중 집합을 그대로 주고 돌린다.
+
 ```
 score = w_pop·popularity + w_content·content_similarity(정규화) + w_cf·cf_score + w_mat·agent_maturity + …
 ```
