@@ -310,7 +310,7 @@ class Ranker(Protocol):
 
 | 집합 | 키 | 값 | 갱신 |
 |---|---|---|---|
-| `visible_topic_rows` | `(topic_id, tier, owner_user_id)` | `topic_score`(소유자 쪽 preference 강도), `topic_maturity`, `updated_at` | topic 변경 이벤트. 비공개 전환 = 삭제 |
+| `visible_topic_rows` | `(topic_id, tier, owner_user_id)` | `topic_score`(소유자 쪽 preference 강도, §7의 범위로 변환해서 저장), `topic_maturity`, `updated_at` | topic 변경 이벤트. 비공개 전환 = 삭제 |
 | `visible_topic_rows` 보조 인덱스 | `owner_user_id` | → 그 소유자의 row들 | agent private 시 일괄 삭제용 |
 | `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, **`visibility_changed_at`**, `updated_at`, **`last_active_at`**, **`cf_candidates_computed_at`**(R19) | `bourbon.user_registered`로 생성(추천 대상 풀), 공개 여부·성숙도 이벤트로 갱신(공개 여부는 `visibility_changed_at`이 더 새로울 때만 — 이벤트에 순서가 없다), `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재조회가 만든다. `last_active_at`은 우리 API 요청·**agent_dm 방의 첫 `message_created`를 보낸 사람**(R51)·`topics_updated` 셋 중 어느 것이든 갱신한다. **`cf_candidates_computed_at`**(R19)은 그 유저의 top-K를 마지막으로 만든 시각 — 스윕 조건 `last_active_at > cf_candidates_computed_at`의 오른쪽 |
 | `requester_topics` (**R27: 저장하지 않음**) | `user_id` | 요청자 자신의 topic 목록(점수 포함) — 본인의 `public`·`friends`·`private`, `hidden` 제외(R22). 타입 ②의 섹션과 타입 ③의 content 쿼리에 씀 | 요청 시 topic-api 내부 route(`visibility=public&visibility=friends&visibility=private`)로 읽는다(R27). 소유자 키 아래에만 두는 미러는 지연 시간이 문제될 때의 대안 |
@@ -345,7 +345,7 @@ class Ranker(Protocol):
 | feature | 정의 | 범위 | 출처 | 타입 |
 |---|---|---|---|---|
 | `coverage` | 뽑힌 topic 중 가진 수 | 0~3 | topic_index | ① (1차 정렬 키) |
-| `topic_score` | 소유자 쪽 preference 강도, matched topic 합 또는 최대 | 0~1 | visible_topic_rows | ①② |
+| `topic_score` | 소유자 쪽 preference 강도, matched topic 합 또는 최대. **topic-api의 `score`는 0~100이고 이 feature는 0~1이다** — 변환은 `providers/topic_api/adapter.py`에서 한 번 한다(그쪽 단위가 우리 단위로 넘어오는 유일한 지점). 원본 스케일 그대로 두면 `rank.*.w_topic_score` 하나가 나머지 feature 전부의 100배가 되어 가중합에 항이 하나만 남는다(1-6에서 발견) | 0~1 | visible_topic_rows | ①② |
 | `topic_maturity` | matched topic 성숙도 최대 | 0~1 | visible_topic_rows (임시값 → 컴포넌트) | ①②③ |
 | `agent_maturity` | agent 성숙도 | 0~1 | agents | ①②③ |
 | `popularity` | R29: 최근 30일 창의 대화 시작을 반감기 7일로 감쇠해 합산, 시작마다 `cf_score`와 같은 confidence 가중, 신규 agent 사전값 부스트, 전체 최대로 정규화. 값은 설정 레지스터 | 0~1 | popularity | ③ (①②는 약한 가중) |
