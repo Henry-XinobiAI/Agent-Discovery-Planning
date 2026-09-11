@@ -69,7 +69,7 @@
 
 ### 3-1. 군집과 topic 선호
 
-1. 카탈로그를 읽어 상위 2단계 그룹 `G`와 각 그룹의 leaf 집합을 만든다.
+1. 카탈로그를 읽어 상위 그룹 `G`와 각 그룹의 leaf 집합을 만든다. **그룹은 root다**(1-6에서 파일을 재고 정했다). §1 표의 "54 상위 그룹"과 여기 "상위 2단계"가 갈리는데, 한 단계 아래(736개)에서는 **중앙값 그룹이 leaf 하나**라 군집의 주 취향이 topic 하나가 되고 커버리지 정렬이 전부 동점이 된다. root는 중앙값 16개, 평균 49개.
 2. 군집 `k`마다 그룹 선호 벡터를 뽑는다: 주 그룹 1~3개(가중 0.6~0.8), 나머지 그룹에 잔여를 Dirichlet로. 군집 안 topic 인기는 그룹 선호 × 그룹 내 Zipf.
 3. 군집 크기를 `cluster_size_alpha`로 뽑아 `U`를 배분한다.
 
@@ -139,30 +139,34 @@ LLM 확장은 비용이 있으므로 검증에서는 **쿼리 200개만** 실제
 
 ## 5. 출력 파일
 
-디렉터리 `synthetic/<run_id>/`, 형식은 parquet(테이블)과 jsonl(이벤트 스트림). `run_id` = 파라미터 해시 + 시드.
+디렉터리 `data/synthetic/<run_id>/`(코드 repo에서는 `synthetic/`이 생성기 패키지 이름이라 `data/` 밑으로 간다), 형식은 parquet(테이블)과 jsonl(이벤트 스트림). `run_id` = 파라미터 해시 + 시드.
+
+**시계는 파라미터가 아니라 인자다.** 모든 시각이 `horizon_days` 안에 들어가는 그 기준 시각은 `params.json`에 없으므로 옆에 `run.json`으로 적는다(`run_id`, `now`). 같은 `params.json`을 다른 날 돌리면 같은 이름에 다른 날짜의 모집단이고, 그걸 말해 주는 건 그 파일뿐이다.
 
 | 파일 | 행 | 10만에서의 크기(추정) |
 |---|---|---|
 | `params.json` | 1 | — |
 | `clusters.parquet` | K | — |
 | `users.parquet` | U | `user_id, agent_id, primary_cluster, secondary_clusters, registered_at, discoverable, agent_maturity, deactivated_at` |
-| `user_topics.parquet` | U × 평균 topic 수 ≈ 100만 | `user_id, topic_id, score, visibility, revision, updated_at` |
-| `friends.parquet` | U × E[degree]/2 ≈ 125만(중앙값 기준)~190만(로그정규 평균 기준) | `user_low, user_high, accepted_at` |
+| `user_topics.parquet` | U × 평균 topic 수 ≈ 100만 | `user_id, topic_id, score, visibility, revision, updated_at` + `published_at, closed_from`(§5 목록 밖. §3이 말하는 "중간부터 다시 돌린다"를 위해 필요하다 — 이 둘이 없으면 테이블에서 이벤트 스트림을 되짚을 수 없고, 비공개로 돌린 row가 한때 무엇이었는지 아무 데도 남지 않는다) |
+| `friends.parquet` | U × E[대칭화 degree]/2 ≈ **366만**(10만에서 실측). 앞서 적었던 125만~190만은 유저가 *고르는* degree를 최종 degree로 본 값이라 틀렸다 — §7이 말하는 대로 대칭화하면 평균이 두 배가 되고(실측 73.4), 쌍 수는 그 절반이다 | `user_low, user_high, accepted_at` |
 | `conversations.parquet` | U × λ ≈ 30만 | `room_id, actor_user_id, owner_user_id, agent_id, started_at, turns, reopened` |
-| `events.jsonl` | ≈ 450만~500만 건: registered 10만 + topics_updated ≈100만 + visibility 변경 신호 ≈40만(공개한 topic + 비공개 전환) + agent 공개 여부 ≈6만 + friendship ≈125만~190만 + room_created ≈30만 + message_created ≈120만(turn 평균 4) + deactivated 1천 | 시간순. 이벤트 이름과 payload는 `agent_discovery_events.md` 그대로 |
+| `events.jsonl` | 10만·λ=10에서 실측 **920만 건**: registered 10만 + topics_updated ≈100만 + visibility 변경 신호 ≈44만 + agent 공개 여부 ≈5만 + friendship ≈366만 + message_created ≈290만(turn 평균 4) + deactivated 1천. **`room_created`는 없다** — §3-5의 표와 R46이 그 방의 첫 `message_created`로 대체했다 | 시간순. 이벤트 이름과 payload는 `agent_discovery_events.md` 그대로 |
 | `queries.parquet` | 2,000 | `query_id, requester, lang, text, topic_ids` |
 | `truth_*.parquet` | 타입별 | §4 |
-| `topic_api_stub/` | — | 재조회 목 서버가 읽는 유저별 현재 row 스냅샷 |
+| `topic_api_stub/` | — | 재조회 목 서버가 읽는 유저별 현재 row 스냅샷. 구현에서는 목 서버가 실제로 읽는 자리(`data/topic_api_mock/users/`)에 시드 스크립트가 직접 쓴다 — run 디렉터리에 두고 10만 개 파일을 복사할 이유가 없다. **모든 tier를 담는다**(R22·R27: 요청자 자기 프로필은 private까지 읽는다). 10만에서 약 900 MB |
 
-100만에서는 위 행 수가 10배, `events.jsonl`은 4,500만~5,000만 건 정도. 생성 시간 목표는 10만 5분 이내, 100만 1시간 이내(단일 프로세스, numpy 벡터화).
+100만에서는 위 행 수가 10배. 생성 시간 목표는 10만 5분 이내, 100만 1시간 이내(단일 프로세스, numpy 벡터화) — 10만 실측은 생성·적재·픽스처까지 합쳐 66초다.
 
 ---
 
 ## 6. 검증 — 생성기 자체가 맞는지
 
-1. **두 적재 경로의 결과 일치**: (가) 이벤트 리플레이 뒤 저장소 상태 == (나) 직접 적재 상태. row 단위 diff 0.
-2. **불변식**: 저장소에 private/hidden row 없음, 탈퇴 유저 row 없음, `discoverable=false` 소유자의 row 없음. 직접 적재 (나)도 같은 조건으로 걸러 넣는다: `user_topics.parquet`에서 visibility ∈ {public, friends}이고 소유자의 `discoverable=true`이고 `deactivated_at`이 null인 행만 `visible_topic_rows`로.
-3. **분포 재현**: 생성된 topic 수·degree·대화 수의 분포가 파라미터와 일치(KS 검정 또는 퍼센타일 비교).
+1. **두 적재 경로의 결과 일치**: (가) 이벤트 리플레이 뒤 저장소 상태 == (나) 직접 적재 상태. **row 단위 diff 0, 단 시각 컬럼은 뺀다.** `bourbon.message_created`와 `bourbon.user_registered`는 payload에 자기 시각이 없어서 워커가 발행 시각으로 대체한다(`worker/flows.py`) — 리플레이는 `agents.registered_at`·`last_active_at`과 `room_turns.last_turn_at`을 리플레이한 시계로 찍는다. payload는 bourbon-api의 모양이므로 필드를 더해서 해결할 일이 아니다. 1-6 실측(150 유저): `visible_topic_rows` 520행 차이 0, `agents` 150행 차이 0(`discoverable` 포함), `friends` 2,189행 동일. `interactions`는 직접 적재 927 대 리플레이 0이고 **둘 다 맞다** — 이벤트 경로는 추천이 예측한 방에 메시지가 들어와야 기록하는데(R51) 이 모집단은 추천이 없던 세상이다(§3-4.3).
+2. **불변식**: 저장소에 private/hidden row 없음, 탈퇴 유저 row 없음. 직접 적재 (나)도 같은 조건으로 걸러 넣는다: `user_topics.parquet`에서 visibility ∈ {public, friends}이고 소유자의 `deactivated_at`이 null인 행만 `visible_topic_rows`로.
+   **`discoverable=false` 소유자의 row는 조건이 아니다** (1-6에서 정정). topic 재조회는 그 플래그를 보지 않는다 — 기본값이 false이고 R23 이벤트를 아직 아무도 발행하지 않으므로, 플래그를 지키는 재조회는 아무에게도 row를 만들지 않는다. 답변에서 불변식 1을 참으로 만드는 것은 읽기 쪽의 `agents.discoverable` 조인이다(1-5). 직접 적재가 그걸로 거르면 이벤트 경로가 절대 재현할 수 없는 저장소가 되어 검증 1이 성립하지 않는다.
+3. **분포 재현**: 생성된 topic 수·degree·대화 수의 분포가 파라미터와 일치(KS 검정 또는 퍼센타일 비교). 1-6은 세 번째 방법으로 했다 — §2의 행마다 값을 배열에서 되재서 파라미터와 비교하고, 허용 오차는 테스트가 감당할 크기에서의 표집 오차로 잡는다(`synthetic/checks.py`, 측정 37개). **성질 테스트로는 안 된다**: "중복 없음/범위 안/떠난 뒤 아무 일 없음"으로 짠 첫 판은 변이 12개 중 9개를 통과시켰다(뒤집힌 Beta, 납작해진 Zipf, 무시된 tier 비율, 50배가 된 비율). 성질은 row 하나에 대한 말이고 분포는 100만 개의 모양에 대한 말이라, 모양이 틀렸을 때 어느 row도 틀리지 않는다.
+   검사는 **규모에 흔들리지 않아야** 자리를 얻는다 — 기댓값이 파라미터 자체이거나 모집단에서 계산되는 값이어야 한다. `friend_degree`가 빠진 이유가 그것이고(§2 값은 유저가 *고르는* 수, §7이 대칭화를 말한다), 출력에서 되잴 수 없는 파라미터는 생성기가 기록해 둔다(`off_cluster_topic_rate`를 위한 "이 row가 어느 소스에서 왔나" 컬럼). 검사 자체는 **파라미터를 고정하고 코드를 변이시켜** 확인한다 — 파라미터를 흔들면 양쪽이 같이 움직여 아무것도 증명하지 않는다.
 4. **민감도**: `opener_rate`, `affinity` 노이즈, `off_cluster_topic_rate`를 ±50% 흔들어 §4 지표가 어떻게 움직이는지 표로 남긴다. 가정이 결과를 지배하는 파라미터를 알아 두어야 베타 뒤 어느 실측을 먼저 넣을지 정할 수 있다.
 5. **재현성**: 같은 `params.json`과 시드로 두 번 생성해 파일 해시가 같다.
 
