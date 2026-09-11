@@ -81,6 +81,33 @@ room_created = Event("bourbon.room_created", RoomCreatedPayload)
 - (a) room 구성을 돌려주는 **내부 route**(`room_id` → `room_type`, 멤버, 착석 agent와 소유자). 우리는 `message_created`의 첫 건에서 방마다 1회 호출한다. 새 방당 1회라 부담이 작다.
 - (b) 아무것도 없으면 agent DM room id가 `uuid5(DM_NAMESPACE, "dm:user:{user}:agent:{agent}")`로 결정론적인 점을 써서, 추천한 상대별 room id를 우리가 미리 계산해 `message_created`와 매칭한다. 추천을 거치지 않은 대화는 못 보고 `DM_NAMESPACE`에 결합되므로 우리가 원하는 길은 아니다.
 
+## 2-2. 공개 prefix `/api/svc/agent-discovery/`를 경로 레지스트리에 등록 (2026-09-11)
+
+**부탁**: `k8s/base/api-svc-dispatch.yaml`의 `404` 폴백 **위에** 블록 하나를 추가해 주세요. 지금 우리 서비스는
+`/api/internal/svc/agent-discovery/` 블록만 등록돼 있습니다.
+
+```yaml
+    - match:
+        - uri:
+            prefix: /api/svc/agent-discovery/
+      route:
+        - destination:
+            host: bourbon-agent-discovery-api
+            port:
+              number: 80
+```
+
+**왜**: 클라이언트가 추천 카드에서 대화를 시작할 때 우리에게 보고하는 route `POST /api/svc/agent-discovery/attributions`
+(계약 §2-5, R47)와, 이어질 탐색 탭 route(타입 ②③)가 이 prefix에 있습니다. 등록이 없으면 SPA의 catch-all로 떨어져
+HTML이 돌아옵니다.
+
+**우리 쪽에서 이미 끝난 것**: pod에 `bourbon.xinobi.ai/edge-auth: enabled` 라벨이 붙어 있어(공개 surface가 없던
+때부터) 이 prefix는 등록되는 즉시 사이드카 검사를 받습니다. 우리는 `x-user-id`를 파싱만 하고 토큰을 읽지 않으며,
+CORS preflight는 우리 앱이 직접 답합니다(`docs/microservice-edge-auth.md` 5단계). 별도 워크로드나 정책 예외는
+필요 없습니다.
+
+**답이 필요한 것은 없습니다** — 머지 시점만 알려 주시면 됩니다.
+
 ## 3. 그대로 쓰는 것 (변경 요청 없음)
 
 - `bourbon.friendship_changed` (`user_low, user_high, action, occurred_at`) — 친구 미러(R17).

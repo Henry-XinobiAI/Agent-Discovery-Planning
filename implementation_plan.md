@@ -114,7 +114,7 @@ CLI: `python -m cli publish <event> …` 이벤트마다 하나.
 
 - 요청서 발송(`requests/README.md`의 순서). 인프라 답 → configmap/secret 갱신, dev 테이블·GSI 생성, alembic 적용.
 - 실측 보정 작업(R37, 스펙 §8)은 배포 뒤 첫 주기부터.
-- go-live 전제 확인: bourbon-api `discoverable`과 **친구 게이트 해제**(그 전에는 비친구 추천이 채택되지 않는다), 클라이언트 `POST /attributions` 호출, topic-api api AMQP + visibility 변경 신호, prod topic-api 워커.
+- go-live 전제 확인: bourbon-api `discoverable`과 **친구 게이트 해제**(그 전에는 비친구 추천이 채택되지 않는다), bourbon-api 경로 레지스트리에 공개 prefix `/api/svc/agent-discovery/` 등록(요청서 §2-2 — 없으면 공개 route가 밖에서 닿지 않는다), 클라이언트 `POST /attributions` 호출, topic-api api AMQP + visibility 변경 신호, prod topic-api 워커.
 
 ## 2. 순서의 이유
 

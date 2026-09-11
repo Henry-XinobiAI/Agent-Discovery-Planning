@@ -5,7 +5,7 @@
 | 받는 곳 | 파일 | 요약 | 보내는 순서 |
 |---|---|---|---|
 | 인프라 | [`infra.md`](infra.md) | PostgreSQL 인스턴스(플랫폼에 처음 — 근거 포함), DynamoDB 테이블 1개(prod terraform 시점), deferq용 Redis DB 번호, AMQP 계정 정보 | 1차 배포 2주 전 |
-| bourbon-api | [`bourbon-api.md`](bourbon-api.md) | personal agent 새 필드 `discoverable` + `personal_agent_visibility_changed`(R23), 그리고 **친구 게이트 해제 시점**. 방 생성 이벤트 요청은 철회(R51) | **묶음 안에서 가장 먼저** — 친구가 아니면 agent DM이 열리지 않아, 그 전에는 추천이 나가도 채택되지 않는다. 상대 쪽 개발 기간이 필요하므로 보내는 시점이 오면 이것부터 |
+| bourbon-api | [`bourbon-api.md`](bourbon-api.md) | personal agent 새 필드 `discoverable` + `personal_agent_visibility_changed`(R23), **친구 게이트 해제 시점**, 공개 prefix `/api/svc/agent-discovery/`의 경로 레지스트리 등록. 방 생성 이벤트 요청은 철회(R51) | **묶음 안에서 가장 먼저** — 친구가 아니면 agent DM이 열리지 않아, 그 전에는 추천이 나가도 채택되지 않는다. 상대 쪽 개발 기간이 필요하므로 보내는 시점이 오면 이것부터 |
 | 클라이언트 | [`client.md`](client.md) | 탐색 탭이 우리 API를 직접 호출(`lang` 전달), 카드에서 대화를 시작할 때 우리 route `POST /attributions`에 보고(R47) | bourbon-api와 같이 |
 | bourbon-agent | [`bourbon-agent.md`](bourbon-agent.md) | 타입 ① 호출을 새 계약(`/recommend/explicit`)으로, 요청자 = 실제 말한 사람, 카드 meta에 `recommendation_id`(R24·R47). HEXACO는 **아직 요청하지 않는다**(O20) | bourbon-api 다음 |
 | bourbon-topic-api | [`bourbon-topic-api.md`](bourbon-topic-api.md) | api 프로세스 AMQP 연결 + visibility 변경 신호 발행(형태는 topic-api 선택, R48), prod 워커 replicas | bourbon-api 다음 |
