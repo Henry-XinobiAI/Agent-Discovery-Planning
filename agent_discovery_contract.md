@@ -205,6 +205,8 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 
 "몇 개가 가려졌다"는 어떤 형태로도 응답에 없다(§5).
 
+**이 목록도 여기에 남는다**(R54). 응답에 실려 나가는 닫힌 값 집합이라 소비자가 읽는 것이 이 표와 OpenAPI 스키마이고, 코드에서는 `agent_discovery/domain/discovery.py`의 `DegradedReason`이 같은 목록을 갖는다. 값을 더할 때는 둘을 같이 고친다 — 소비자가 모르는 값을 받게 되는 변경이므로 계약 버전(§0)을 먼저 본다.
+
 ---
 
 ## 4. 도메인 인터페이스 — 소스를 갈아 끼우는 자리
@@ -356,7 +358,9 @@ class Ranker(Protocol):
 | `tier_is_friends` | 근거 row가 friends tier인가 | 0/1 | 필터 결과 | 모두. 초기 가중 .05, 측정 뒤 조정(R32) |
 | `persona_similarity` | **R42 예약.** 요청자와 소유자의 HEXACO facet 벡터 유사도(confidence·관측 수 가중). topic이 겹치지 않아도 성향이 맞는 사람을 찾아낸다. **입력 경로가 없어 지금은 항상 0이고 `present`에 없다**(O20) | 0~1 | 요청자 성향(`UserQuery.requester_traits`) × 소유자 성향 — 둘 다 bourbon-agent가 **이벤트**로 준다(방향만, O20 — bourbon-agent에 API를 열 가능성은 없다). persona 테이블 직접 읽기·복호화 키 공유는 하지 않는다(R42) | ③. 가중 `rank.for_you.w_persona`는 0에서 시작, 올리는 규칙은 O20 |
 
-없는 feature는 0이고 `present`에 없다. 가중치는 설정이다 — 값은 `agent_discovery_settings.md`(R39).
+없는 feature는 0이고 `present`에 없다. 가중치는 설정이다 — 뜻은 `agent_discovery_settings.md`, 값은 코드다(R54).
+
+**이 목록은 여기에 남는다**(R54). 튜닝하는 값이 아니라 답이 무엇으로 이루어지는지를 말하는 어휘이고, 소스를 갈아 끼울 때(§4) 새 소스가 무엇을 채워야 하는지를 이 표가 정한다. 코드에서는 `agent_discovery/domain/discovery.py`의 `FeatureName`이 같은 목록을 갖는다 — 한쪽만 늘어나도 알려 주는 것이 없으므로 feature를 더할 때는 둘을 같이 고친다.
 
 ---
 

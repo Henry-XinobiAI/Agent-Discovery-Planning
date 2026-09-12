@@ -1,6 +1,6 @@
 # 구현 계획 — bourbon-agent-discovery-api
 
-> `agent_discovery_redesign.md` §9의 5·6번을 단계로 자른 것(2026-09-10). 결정은 `decisions.md`, 지켜야 할 것은 `agent_discovery_contract.md`, 값은 `agent_discovery_settings.md`다. 이 문서는 **순서와 완료 조건**만 정한다. 코드 repo에서 단계를 시작할 때 `tasks/todo.md`에 체크 항목으로 옮기고, 끝난 단계는 여기에 날짜를 적는다.
+> `agent_discovery_redesign.md` §9의 5·6번을 단계로 자른 것(2026-09-10). 결정은 `decisions.md`, 지켜야 할 것은 `agent_discovery_contract.md`, 설정의 뜻은 `agent_discovery_settings.md`다(값은 코드 — R54). 이 문서는 **순서와 완료 조건**만 정한다. 코드 repo에서 단계를 시작할 때 `tasks/todo.md`에 체크 항목으로 옮기고, 끝난 단계는 여기에 날짜를 적는다.
 
 ## 0. 전제 (R43·R44)
 
@@ -46,7 +46,7 @@
 
 ### 1-3. 설정 클래스와 계약 스키마
 
-- `agent_discovery/settings.py`: 설정 레지스터 §1~§10의 그룹이 중첩 필드. 필드 docstring = 표의 "뜻"과 "올리면 / 내리면". `settings_hash()`가 결정 로그 `implementation: "v1@<hash>"`를 만든다. 테스트: 레지스터 표의 이름 목록과 클래스 필드 목록이 같다(표를 파싱해 비교).
+- `agent_discovery/settings.py`: 설정 레지스터 §1~§10의 그룹이 중첩 필드. 필드 docstring = 표의 "뜻"과 "올리면 / 내리면"이고, 값과 출처는 필드가 갖는다(R54). `settings_hash()`가 결정 로그 `implementation: "v1@<hash>"`를 만든다. 테스트: 모든 필드에 설명과 출처가 있다 — 레지스터를 파싱하는 테스트는 R54로 없앴다.
 - `api/structs/`: 세 타입의 요청·응답 pydantic 모델, envelope, `degraded`, 오류(422/503), `lang` 검증(ko·en·ja). `label`·`owner_note`는 문자열, 대체 순서 requested → en → 있는 것 → null.
 - 도메인 인터페이스(계약 §4): `TopicQuery`, `UserQuery`(`requester_traits` 예약), `SourceHit`, `CandidateSource`, `VisibilityFilter`, `Features`/`Ranker`, `Assembler`. 구현 없이 Protocol과 dataclass만.
 
@@ -108,7 +108,7 @@ CLI: `python -m cli publish <event> …` 이벤트마다 하나.
 
 - `cli validate`: 스펙 §4 정답으로 인기도만·content만·CF만·합친 랭커의 recall@10·NDCG@10·군집 비율·위반 수 표, λ∈{3,10,30} 세 값, 같은 `params.json` 스냅샷.
 - 부하: 타입 ①② p50/p95(목표: 실측 스파이크 자릿수), 타입 ③ 콜드스타트·`cf_candidates` 있는 경우.
-- 결과 문서 `validation_results.md`(기획 저장소), 설정 레지스터의 "분석" 값을 측정값으로 갱신.
+- 결과 문서 `validation_results.md`(기획 저장소). "분석"으로 정해 둔 초기값을 측정값으로 갱신하는 것은 **코드의 `settings.py`**이고(R54), 근거는 그 결과 문서에 남는다.
 
 **완료 조건**: 표가 있고, 레지스터의 가중치가 측정 근거를 가리킨다.
 
