@@ -5,6 +5,8 @@
 > **진행 방식(오너 2026-09-08)**: 추가가 필요한 이벤트는 agent-discovery-api에서 먼저 정의하고, 우리가 직접 발행해 테스트하며 써 보고, 그 뒤에 발신 repo에 요청한다. 대신 **그 이벤트를 발행할 repo가 그 지점에서 그 필드를 실제로 갖고 있는지**를 먼저 검증한다. §3이 그 검증이다.
 >
 > rev 2. rev 1은 pull 이전 코드를 봤고 topic-api에 이벤트가 없다고 적었다. 틀렸다 — 아래 §1에 정정.
+>
+> **rev 3 (2026-09-13)**: 친구 게이트가 내려갔고(bourbon-api #325), R48의 답이 왔다(topic-api #68·#69). §2-2는 요청이 아니라 **있는 이벤트**가 됐고, §2-3은 철회됐다 — bourbon-api가 만든 것은 `discoverable`이 아니라 파생 상태 `agents.public`이고 그 변화를 알리는 이벤트는 없다. R55·R56·R57.
 
 ---
 
@@ -15,11 +17,11 @@
 | 우리가 필요한 것 | 지금 있나 | 우리 처리 | 요청할 것 |
 |---|---|---|---|
 | 유저 topic이 바뀌었다는 힌트 | **있음** `bourbon.topics_updated` (topic-api 워커, persona 동기화로 변경된 topic마다 1건) | 힌트로 받고 그 유저의 공개된 집합을 **재조회한다** (§2-1) | 없음 |
-| 유저가 visibility를 바꿨다는 힌트 | **없음.** `PATCH /me/topics/{topic_id}`는 api 프로세스에서 처리되고, 그 프로세스에는 AMQP 연결이 없다 | 같은 재조회 | topic-api에 "필요"만 요청하고 형태는 topic-api가 정한다(§2-2, R48). **비공개 전환이 이 경로로만 오므로 가장 중요** |
-| 공개된 집합 조회 | **있음** `GET /api/internal/svc/topic/users/{id}/topics?visibility=public&visibility=friends` (반복 파라미터, 기본 `public`) — 항목마다 `score, visibility, revision, updated_at, support, descriptions` | 재조회의 실제 호출 | 없음 |
+| 유저가 visibility를 바꿨다는 힌트 | **있음** `bourbon.topic_visibility_changed` (topic-api #68 — 움직인 topic마다 1건. api 프로세스에 AMQP가 붙었다) | 같은 재조회 | 없음 — R48의 답이 왔다(§2-2, R55) |
+| 공개된 집합 조회 | **있음** `GET /api/internal/svc/topic/users/{id}/topics?visibility=public&visibility=friends&consistent=true` (반복 파라미터, 기본 `public`) — 항목마다 `score, visibility, revision, updated_at, support, descriptions` | 재조회의 실제 호출. `consistent`는 topic-api #69가 더한 DynamoDB 강한 읽기이고 재조회에만 켠다(R56) | 없음 |
 | 요청자 자신의 프로필 조회 | **있음** 같은 route, `visibility=public&visibility=friends&visibility=private` — `hidden`은 요청하지 않는다(R22) | 타입 ②의 섹션·타입 ③ content 입력 — 요청 시 조회(R27) | 없음 |
 | 카탈로그 그래프(edge 목록) | **없음.** 카탈로그는 `data/catalog_dist/catalog.json`으로 이미지에 실리고 내부 route가 없다 | content 유사도의 계층 감쇠(R25)에 최단 hop 거리가 필요 | 없음 — `catalog.json`을 빌드 때 복사(R26). route는 보류(§2-8) |
-| agent 공개 여부 | **없음.** 새 필드 `discoverable`(기본 false)을 bourbon-api에 요청한다(R23) | 우리가 정의 (§2-3) | bourbon-api |
+| agent 공개 여부 | **없음, 그리고 생기지 않는다.** bourbon-api는 `discoverable` 대신 파생 상태 `agents.public`("public topic이 1개 이상 있나")을 뒀고, 그 변화를 알리는 이벤트는 내지 않는다 | 같은 사실을 **재조회가 파생한다** — 읽어 온 집합에 `public` row가 하나라도 있으면 `discoverable = true`(§2-3, R57) | 없음 — 요청 철회 |
 | friend 관계 변화 | **있음** `bourbon.friendship_changed` | 구독 | 없음 |
 | 유저 가입 (추천 대상 agent의 등장) | **있음** `bourbon.user_registered` (`CREATED → ACTIVATED` 전이에서 발행) | 구독 → `agents` row 생성 (§2-7) | 없음 |
 | 유저 탈퇴 | **있음** `bourbon.user_deactivated` | 구독 → 전부 삭제 | 없음 |
@@ -54,7 +56,7 @@ bourbon-agent ──bourbon.persona_updated──▶ topic-api worker
 - `worker/listener.py` `on_persona_updated_sync_topics`: 동기화 뒤 `changed`가 비어 있지 않으면 `_announce`가 topic마다 `topics_updated`를 발행한다. best-effort — 발행 실패는 경고만 남긴다. docstring이 소비자 계약을 이렇게 적는다: **"a consumer that missed an event converges on its next read of the user's topics."** 즉 topic-api 스스로 이벤트를 **힌트**로 정의했다.
 - `topic_revision` = 그 topic row의 카운터(`UserTopic.revision`). 읽어 온 row의 `revision`이 이 값 이상이면 이벤트가 말한 상태 이상이다.
 - 같은 워커의 `worker/images.py`가 `topics_updated`를 소비해 이미지 작업을 한다. 소비자가 이미 하나 있어 이벤트가 살아 있다.
-- **api 프로세스(gunicorn)에는 AMQP가 없다.** `PATCH /me/topics/{topic_id}`(visibility), `PUT /users/{id}/topics/{topic_id}/score`, `PUT /users/{id}/topics/scores/bulk`, `DELETE /users/{id}`, 카탈로그 병합은 모두 발행 없이 끝난다.
+- **api 프로세스(gunicorn)에는 AMQP가 없다.** ~~(2026-09-13 정정: topic-api #68이 붙였다 — visibility 쓰기 다섯 지점이 이제 발행한다. §2-2)~~ `PATCH /me/topics/{topic_id}`(visibility), `PUT /users/{id}/topics/{topic_id}/score`, `PUT /users/{id}/topics/scores/bulk`, `DELETE /users/{id}`, 카탈로그 병합은 모두 발행 없이 끝난다.
 - 내부 조회 route `GET /users/{user_id}/topics`는 `visibility=` 쿼리(기본 `public`)로 tier를 고르고, 항목에 `score, visibility, revision, updated_at, support, descriptions`가 있다.
 
 ---
@@ -77,38 +79,47 @@ class TopicUpdatedPayload(BaseModel):     # topic-api worker/events.py 그대로
 
 **topic_revision 활용**: 재조회 결과의 row `revision`이 이벤트의 `topic_revision`보다 작으면(복제 지연) 잠시 뒤 한 번 더 조회한다. 그 이상이면 정상.
 
-### 2-2. visibility 변경 신호 — topic-api에 "필요"만 요청, 형태는 topic-api가 정한다(R48)
-
-비공개 전환(`public/friends → private/hidden`)은 **오직** `PATCH /me/topics/{topic_id}`로 일어나고 이 경로는 지금 아무것도 발행하지 않는다(api 프로세스에 AMQP 연결이 없다). 힌트가 없으면 유저가 비공개로 되돌린 topic이 다음 persona 동기화까지 추천에 남고, 대화하지 않는 유저에게는 그 "다음"이 오지 않는다. 응답 직전 재확인(계약 §5 불변식 4)은 우리 저장소를 다시 보는 것이라 이를 잡지 못한다. 이것이 요청의 핵심이다.
-
-**우리가 필요한 것**: visibility가 바뀌면 `user_id`(가능하면 `topic_id`)가 담긴 이벤트 하나. 새 visibility 값은 필요 없다 — 우리는 어차피 재조회하고, 값이 있으면 소비자가 재조회를 생략하려는 유혹이 생긴다.
-
-**형태는 topic-api가 정한다.** 플랫폼 기준(§0, "판정 기준이 명확하고 소비자가 여럿인 것만 새 타입으로")에 비추어 우리가 특정 타입을 요구하지 않는다. 보이는 길은 셋이고 우리 처리는 셋 모두 같다.
-
-1. 기존 `bourbon.topics_updated`를 settings 쓰기에서도 발행한다. payload는 이미 `user_id, topic_id, topic_revision`을 갖는다. `persona_revision: PositiveInt`(persona 동기화의 출처 추적용 — 추출이 읽은 persona 슬롯 버전. 지금 읽는 소비자가 없고 우리도 읽지 않는다)를 어떻게 할지는 topic-api의 몫이다. **"타입 추가 신중" 기준에 가장 가깝다는 의견만 적는다.**
-2. 마지막 추출 기록의 `persona_revision`을 그대로 실어 1과 같이 발행한다 — 스키마 변경 없음, 쓰기마다 읽기 하나.
-3. 새 타입(예 `bourbon.user_topic_settings_updated` `{user_id, topic_id, topic_revision}`) — 처음 우리가 제안했던 안.
-
-- **우리 처리**: §2-1과 같은 debounce → 재조회. 어느 형태든 같은 task로 모인다.
-- **발행 지점**(어느 안이든): `api/routers/me_topics/router.py` `patch_my_topic` → `write_topic_settings` → 저장소 `write_settings`(UPDATED_NEW) 성공 뒤. best-effort 발행이라 브로커가 없어도 patch는 성공해야 한다.
-- **전제 작업**: api 프로세스에 AMQP 연결. 워커의 `worker/amqp.py`를 api 프로세스 lifespan에도 붙이는 일이고, 설정 `DEFERQ_AMQP_URL`은 이미 있다(현재 "worker only").
-- **우리 미러**: 답이 오기 전까지 `bourbon.user_topic_settings_updated` `{user_id, topic_id, topic_revision}`을 임시 이름으로 두고 CLI 발행으로 테스트한다. 형태가 정해지면 이름만 바꾼다(1안이면 `topics_updated` 리스너 하나로 합쳐진다).
-
-### 2-3. `bourbon.personal_agent_visibility_changed` — 새 필드 `discoverable`(R23), bourbon-api에 요청
-
-R23(2026-09-09): bourbon-api의 personal agent에 새 필드 `discoverable`(기본 false)을 두고 그 쓰기 지점에서 발행한다. 필드 정의가 뒤에 바뀌어도 우리가 받는 것은 같다.
+### 2-2. `bourbon.topic_visibility_changed` — R48의 답이 왔다(R55)
 
 ```python
-class PersonalAgentVisibilityChangedPayload(BaseModel):
-    owner_user_id: UUID
-    agent_id: UUID
-    discoverable: bool               # 필드 이름이 무엇이든 "추천에 나올 수 있는가" 하나로 받는다
-    occurred_at: AwareDatetime
+class TopicVisibilityChangedPayload(BaseModel):    # topic-api runtime/events.py 그대로 미러
+    user_id: UUID
+    topic_id: str | None
 ```
 
-발행 지점은 `discoverable`의 쓰기 지점(`personal_agents/service.py`). 탈퇴는 `user_deactivated`로 따로 오므로 겹쳐도 무해하다. **우리 처리**: `false` → 그 소유자의 공개된 row 전부 삭제 + `agents` 갱신. `true` → `agents`만 갱신하고 row는 다음 topic 재조회가 채운다(또는 즉시 재조회 1회).
+R48은 형태를 topic-api에 맡기면서 보이는 길 셋을 적어 뒀다 — 기존 `topics_updated`를 settings 쓰기에서도 발행,
+마지막 `persona_revision`을 실어 같이 발행, 새 타입. topic-api는 **셋째를 택했고** 필드는 둘뿐이다.
 
-플랫폼 기준(§0)으로 2026-09-10에 다시 봤고 **유지**한다(오너): 필드의 소유자가 bourbon-api고 변화를 알 다른 길은 폴링뿐이다. 유저가 쓰는 boolean 필드의 변경이라 `friendship_changed`와 같은 부류고 payload에 새 값만 실려 상태를 내포하지 않는다. 소비자는 지금 우리 하나지만 프로필·검색이 같은 값을 읽게 될 수 있다 — 요청서에 이 근거를 적는다.
+- **발행 지점 다섯**: `/me/topics/{topic_id}` PATCH, `/me/topics/bulk`, 내부 PATCH, topic 삭제, 계정 삭제. api 프로세스에 AMQP 연결이 붙었다 — §1이 "없다"고 적었고 R48이 전제 작업으로 세어 둔 그 일이 이 PR에서 끝났다.
+- **움직인 row마다 한 건.** visibility를 이름에 올리지 않은 patch는 발행하지 않고, 같은 값을 다시 써도 발행하지 않는다. 행이 새로 생기면서 visibility를 말하면 발행한다. bulk는 움직인 행마다 한 건이되 **첫 발행 실패 뒤 그 요청의 나머지를 건너뛴다**.
+- **topic 삭제는 visibility를 보지 않고 무조건 한 건**이고, 계정 삭제는 `topic_id=None` 한 건으로 그 사람의 모든 row를 덮는다.
+- **쓰기 뒤 best-effort**, 트랜잭션 없이(DynamoDB 단건 쓰기). 쓰기와 발행 사이에 죽으면 이벤트는 없고, 발행이 실패해도 요청은 성공한다.
+
+**우리 처리**: §2-1과 같다. `user_id`만 꺼내 유저 단위 debounce를 걸고, task가 재조회해 그 유저의 row를 통째로 교체한다. `topic_id`는 로그의 지문으로만 쓴다.
+
+**revision이 없다**, 그리고 그것이 우리에게 남긴 구멍이 하나 있다. 그들 docstring이 이유를 적는다 — 삭제 경로에는 실을 revision이 남아 있지 않고, 발행 지점마다 payload 모양이 하나여야 소비자가 "어느 쓰기였나"로 분기하지 않는다. 그래서 §2-1의 "재조회 결과가 이벤트보다 낡게 왔으면 한 번 더" 절이 **이 경로에는 성립하지 않는다**. 그 자리를 `consistent=true`가 대신한다(R56): 재조회를 강한 읽기로 해서, 약한 읽기가 돌려줄 수 있는 "바꾸기 전" 스냅샷을 아예 배제한다.
+
+**우리 미러의 `topic_id`는 optional이다.** 계정 삭제가 `null`을 싣고, 미러에서 `null`이 타입 오류가 되면 이벤트가 사라지면서 payload가 로그와 Sentry에 찍힌다(§0의 미러 규칙, `worker/events.py`).
+
+### 2-3. ~~`bourbon.personal_agent_visibility_changed`~~ — 철회, `discoverable`은 재조회가 파생한다(R57, R23 개정)
+
+**요청을 거둔다.** 이유를 남기는 것은 §2-4와 같은 이유다 — 나중에 누가 이 문서를 보고 다시 요청할 필요가 없게.
+
+bourbon-api가 만든 것은 `discoverable`이 아니었다. #325가 친구 게이트를 내리면서 `agents.public`을 뒀는데, 우리가 요청한 것과 다른 물건이다.
+
+- **유저가 쓰는 필드가 아니다.** 쓰는 곳은 `reconcile_public` 하나뿐이고, 값은 topic-api에 "이 사람이 public topic을 갖고 있나"를 물어 받은 답이다. 어떤 route도 응답 스키마도 이 값을 노출하지 않는다.
+- **변화를 알리는 이벤트가 없다.** `personal_agent_visibility_changed`는 그 repo에 존재하지 않는다.
+
+그래서 R23이 요청한 "쓰되 목록에는 안 올린다"는 옵트인은 플랫폼에 없고, 기다려도 오지 않는다. 기다리는 동안 우리 쪽에서 벌어지는 일은 조용하다: 컬럼은 `false`로 태어나고 후보 조회·CF 스윕·IDF가 전부 그것을 조인하므로 **모든 추천이 빈 답이 된다** — 에러도 `degraded`도 없이.
+
+**그래서 같은 사실을 우리가 파생한다.** 재조회가 읽어 온 집합에 `public` tier row가 하나라도 있으면 `discoverable = true`, 없으면 `false`를, **row를 교체하는 바로 그 트랜잭션 안에서** 쓴다. bourbon-api의 `reconcile_public`과 같은 술어에 같은 입력이고, 다른 점은 우리가 그것을 row와 **함께** 쓴다는 것이다 — 이벤트 둘·시계 둘이던 것이 하나가 되어 플래그와 row가 어긋날 수 없다.
+
+딸린 결과 둘:
+
+- `agents.visibility_changed_at`은 존재 이유가 사라진다. 순서 없는 이벤트 둘을 발행자 시계로 비교하려고 둔 컬럼인데, 비교할 두 이벤트가 없다. 삭제한다.
+- 플래그는 후보 조회의 **`public` 갈래에만** 붙는다. 뜻이 "public topic이 있나"가 된 이상 그것으로 friends tier row까지 막으면, public topic 없이 친구에게만 공개한 소유자가 **자기 친구에게도 안 보인다** — 게이트는 그 사람을 친구 갈래로 통과시키는데.
+
+**R23이 지키려던 구분은 살아 있다**: "누구나 말 걸 수 있다"와 "낯선 사람에게 추천된다"는 세기가 다른 노출이다. 플랫폼이 전자 하나만 스위치로 만들었을 뿐이다. 후자를 따로 두는 것은 O22이고, 그것은 **우리 목록에 대한 설정이라 bourbon-api에 다시 요청할 일이 아니다** — 우리 route와 우리 컬럼으로 끝난다.
 
 ### 2-4. 대화 시작 — `bourbon.room_created` 요청을 철회하고 우리 안에서 푼다(R51, R46 개정)
 
@@ -156,8 +167,18 @@ actor의 `agents.last_active_at`을 갱신한다. 없으면 카운터를 하나 
 **부수 효과 하나는 이득이다.** `room_created`는 create 분기에서만 발행되므로 R46이 `reopened`를 뺀 뒤로는 재방문을
 아예 못 봤는데, 메시지로 잡으면 본다.
 
-**한편 오늘 기준으로 채택 자체가 막혀 있다.** `ensure_agent_dm_room`이 친구가 아니면 방 생성을 거부한다
-(`FriendshipRequiredError`) — R46이 "친구 게이트를 풀면서"라고 적어둔 그 게이트다. 우리 설계는 그것이 풀린다는 전제다.
+**그 게이트는 내려갔다**(bourbon-api #325, 2026-09-13). `ensure_agent_dm_room`은 이제 **친구이거나, 상대 agent가
+public이면** 방을 연다(`_agent_reachable` — agent가 켜져 있고 소유자가 활성이라는 조건이 함께 걸린다). 방 생성뿐
+아니라 재입장과 **쓰기**에도 같은 조건이 걸리고, 거절은 403 `agent_not_accessible`이다. 우리 설계가 전제로 삼았던
+것이 실제가 됐고, 이것이 우리 일정의 유일한 외부 의존이었다.
+
+여기서 `public`은 파생 상태다 — "public topic을 1개 이상 갖고 있나"(§2-3). 그래서 **게이트의 두 갈래가 우리 후보
+조회의 두 갈래와 일대일이다**: public tier row는 public topic이 있는 소유자에게만 생기고, friends tier row는 친구
+에게만 나간다. 우리가 내는 카드는 게이트가 통과시키는 집합이다.
+
+**다만 우리가 볼 수 없는 조건 셋이 남는다**(요청서 bourbon-api §2): `agent.enabled`, 소유자의 활성 상태, 그리고
+agent row의 존재 자체 — #325가 `_ensure_personal_agent` 부트스트랩을 지워서 row가 없으면 404다. 셋 다 게이트가
+우리보다 엄한 방향이라 노출이 아니라 **눌리지 않는 카드**로 나타난다.
 
 ### 2-5. `bourbon.message_created` — 있는 것으로 turn을 세고, 대화의 시작도 여기서 안다
 
@@ -220,21 +241,21 @@ GET /api/internal/svc/topic/catalog/graph
 
 | 이벤트 | 발행 repo · 지점 | 필드 | 그 지점에 있나 |
 |---|---|---|---|
-| visibility 변경 신호(R48, 형태는 topic-api 선택) | topic-api `api/routers/me_topics/router.py` `patch_my_topic`, `write_topic_settings` 반환 뒤 | `user_id` | ✅ `owner`(`OwnerId` = demo stand-in 적용 뒤 **실제 쓰인 id**). `viewer_id`는 응답에 echo되는 헤더 id라 쓰지 않는다 |
-| | | `topic_id` | ✅ 경로 |
-| | | `topic_revision` | ✅ `write_settings`(UPDATED_NEW)가 돌려주고 응답 `TopicWriteReceipt.revision`에 이미 실린다 |
-| | | AMQP 연결 | ❌ api 프로세스에 없음 — **전제 작업** |
+| visibility 변경 신호(R48) → **`topic_visibility_changed`로 발행됨**(#68) | topic-api — `/me/topics` 단건·bulk, 내부 PATCH, topic 삭제, 계정 삭제 다섯 지점, 쓰기 뒤 | `user_id` | ✅ |
+| | | `topic_id` | ✅ 경로. 계정 삭제만 `None` |
+| | | `topic_revision` | ❌ **싣지 않기로 했다** — 발행 지점마다 payload 모양을 하나로 두려는 그들 선택이고, 삭제 경로에는 실을 revision이 없다. 우리 쪽 대응은 `consistent=true`(R56) |
+| | | AMQP 연결 | ✅ #68이 붙였다 (rev 2에서는 ❌였다) |
 | ~~`room_created`~~ (철회, R51) | bourbon-api `rooms/service.py` `ensure_agent_dm_room` create 분기, room 생성 트랜잭션 커밋 뒤(같은 자리의 `user_dm`·group 생성에서도 같은 이벤트) | `room_id, room_type, creator_id` | ✅ `room.id, room.type, actor_id` |
 | | | `member_user_ids` | ✅ 같은 트랜잭션의 `RoomMember` row |
 | | | `agents[{agent_id, owner_user_id}]` | ✅ `_seat(agent_id=…)` 둘(`actor_agent_id`, `target_agent_id`). 소유자는 `_ensure_personal_agent`가 받은 `user_id` |
 | | | AMQP | ✅ bourbon-api는 `friends/events.py`가 같은 모양으로 발행 중 |
-| `personal_agent_visibility_changed` | bourbon-api `personal_agents/service.py` — 새 필드 `discoverable`의 쓰기 지점(R23) | `owner_user_id, agent_id, discoverable` | ❌ 필드가 아직 없다 — **전제 작업**(필드 추가). `agent.id`, `owner_user_id`는 그 서비스에 있다 |
+| ~~`personal_agent_visibility_changed`~~ (철회, R57) | — | — | ❌ 필드가 만들어지지 않았다. bourbon-api가 둔 것은 파생 상태 `agents.public`이고 이벤트도 없다 — 같은 사실을 우리 재조회가 파생한다(§2-3) |
 | `topics_updated` 소비 | — | — | ✅ 이미 발행 중. 우리 워커가 이름·payload를 맞춰야 함 |
 | `message_created` 소비 | — | `room_type` | ✅ payload에 있다. 값은 `RoomType` enum(`user_dm, agent_dm, group`), 두 repo 주석도 같다. `sender_type`은 `user / agent / system` |
 | `agent_maturity_changed` | 성숙도 컴포넌트 | — | 컴포넌트가 없어 검증 불가. 미룸 |
 | 카탈로그 그래프 route(§2-8, R26으로 보류) | topic-api `topic/catalog/artifact.py`, `runtime/services.py`가 시작 시 메모리에 올림 | `built_at, topics, edges` | ✅ 아티팩트 객체가 셋 다 갖고 있다 — route는 직렬화만. 지금은 같은 파일을 빌드 때 복사한다 |
 
-결론: **visibility 변경 신호와 `room_created`는 발행 지점에 필드가 다 있었고**(그래도 `room_created`는 R51로 철회했다 — 필드가 있느냐가 아니라 요청할 필요가 있느냐가 바뀌었다), **`personal_agent_visibility_changed`는 새 필드 `discoverable`이 전제다.** 막힌 것은 둘 — topic-api api 프로세스의 AMQP 연결, bourbon-api의 `discoverable` 필드(R23). 어트리뷰션은 다른 서비스를 거치지 않는다(R47).
+결론(rev 3): **막힌 것은 없다.** topic-api는 AMQP를 붙이고 `topic_visibility_changed`를 발행한다(#68·#69). bourbon-api의 `discoverable`은 만들어지지 않았고 앞으로도 오지 않는다 — 그 자리를 우리 재조회의 파생이 대신하므로(R57) 남은 요청이 아니라 닫힌 항목이다. `room_created`는 필드가 다 있었지만 R51로 철회했다(요청할 필요가 바뀐 것이지 필드가 없던 것이 아니다). 어트리뷰션은 다른 서비스를 거치지 않는다(R47).
 
 ---
 
@@ -243,7 +264,7 @@ GET /api/internal/svc/topic/catalog/graph
 1. **미러 정정**: `worker/events.py`의 `bourbon.user_topic_updated`(`touched`)를 실제 이름 `bourbon.topics_updated`(`user_id, topic_id, persona_revision, topic_revision`)로 바꾼다. 필터 조건 "`touched`에 visibility가 있을 때만"은 사라진다 — `topics_updated`는 persona 동기화로 변경된 topic이라 **항상** 재조회 대상이다.
 2. **새 이벤트 셋을 우리 `worker/events.py`에 선언**한다(§2-2, §2-3, §2-4의 모양). 발신 repo가 아직 안 내도 큐는 만들어지고 비어 있을 뿐이다.
 3. **CLI 발행 명령**: `cli publish topics-updated / topic-settings-updated / room-created / message-created …`로 로컬 RabbitMQ에 넣어 왕복을 테스트한다. 합성 데이터 생성기(재설계 §6-2)가 같은 발행기를 써서 10만 유저의 이벤트 스트림을 만든다.
-4. **재조회 task 하나**: `topics_updated`와 visibility 변경 신호(임시 이름 `user_topic_settings_updated`, R48) 두 리스너가 같은 debounce → 같은 task로 모인다. task는 내부 route를 `visibility=public&visibility=friends`로 조회해 공개된 row를 교체한다. 지금 코드는 `public`만 조회한다(`agent_discovery/composition.py`의 요청 tier) — 한 줄 변경.
+4. **재조회 task 하나**: `topics_updated`와 `topic_visibility_changed`(R55) 두 리스너가 같은 debounce → 같은 task로 모인다. task는 내부 route를 `visibility=public&visibility=friends&consistent=true`(R56)로 조회해 공개된 row를 교체하고, **같은 트랜잭션에서 `agents.discoverable`을 파생한다**(R57 — 읽어 온 집합에 `public` row가 있나).
 5. **turn 카운터**: `message_created`를 `room_type` 필터로 받아 `interactions`를 보강한다.
 6. **카탈로그 edge 테이블**: R26대로 topic-api repo의 `catalog.json`을 빌드 때 복사해 edge 테이블을 채우고, R25의 hop 계산을 테스트한다. `built_at`을 결정 로그에 남긴다.
 7. 위가 로컬에서 도는 것을 확인한 뒤 §6의 요청서를 낸다.
@@ -252,8 +273,8 @@ GET /api/internal/svc/topic/catalog/graph
 
 ## 5. 오너 확인 항목
 
-1. ~~agent DM의 친구 게이트~~ **답 있음(2026-09-08)**: 친구가 아니어도 대화를 시작할 수 있게 한다. 방법은 bourbon-api가 정하고(DM 유력), 우리 이벤트는 그에 맞춰 조정한다. 추천은 "public agent는 누구에게나 열린다"를 전제한다.
-2. ~~agent 공개 여부의 필드~~ **답 있음(2026-09-09, R23)**: 새 필드 `discoverable`, 기본 false. §2-3.
+1. ~~agent DM의 친구 게이트~~ **답 있음(2026-09-08), 그리고 실제로 내려갔다(2026-09-13, bourbon-api #325·#326)**: 친구이거나 상대 agent가 public이면 열린다. `public`은 "public topic이 1개 이상 있나"의 파생 상태다. §2-4.
+2. ~~agent 공개 여부의 필드~~ **답 있었으나 그 필드는 만들어지지 않았다(R57, 2026-09-13)**: bourbon-api가 둔 것은 파생 상태 `agents.public`이고 이벤트도 없다. 우리 `discoverable`은 재조회가 파생한다. §2-3. 옵트인을 따로 두는 것은 O22.
 3. ~~`recommendation_id`의 전달 경로~~ **답 있음(2026-09-09, R24 → 2026-09-10 R47로 개정)**: 클라이언트가 우리 route `POST /attributions`에 직접 보고한다. 계약 §2-5.
 4. ~~재조회 tier 범위~~ **답 있음(2026-09-09, R22)**: 타인 row는 `visibility=public&visibility=friends`만 조회해 저장한다. 요청자 자신의 프로필은 `public`·`friends`·`private`이고 `hidden`은 읽지 않는다. 어디서 읽나는 R27 — 요청 시 topic-api 조회. 소유자 키 아래에만 두는 미러는 지연 시간이 문제될 때의 대안.
 5. **topic-api 워커 0 replicas**: prod에서 persona 동기화가 안 돌면 `topics_updated`도 없다. 우리 테스트는 dev에서 하되, prod 시점에는 이 전제가 풀려 있어야 한다.
@@ -267,8 +288,8 @@ GET /api/internal/svc/topic/catalog/graph
 
 | 받는 곳 | 묶음 | 선행 |
 |---|---|---|
-| topic-api | api 프로세스 AMQP 연결 + visibility 변경 신호 발행(`patch_my_topic` 1곳, 형태는 topic-api 선택 — R48) | 바로 가능. 카탈로그 route는 보류(R26) |
-| bourbon-api | `personal_agent_visibility_changed`(새 필드 `discoverable`, R23), 그리고 **친구 게이트 해제 시점** — 그 전에는 비친구에게 추천이 나가도 방이 열리지 않는다. 방 생성 이벤트는 철회(R51) | R23 |
+| topic-api | ~~api 프로세스 AMQP 연결 + visibility 변경 신호 발행~~ **완료**(#68·#69 — `topic_visibility_changed`, `consistent=true`). 카탈로그 route는 보류(R26) | — |
+| bourbon-api | ~~`personal_agent_visibility_changed`~~ 철회(R57), ~~친구 게이트 해제~~ **완료**(#325·#326). 방 생성 이벤트는 철회(R51). **남은 것은 요청이 아니라 알림 셋** — 백필이 없다는 것, 리컨사일에 재시도가 없다는 것, 게이트의 조건 셋을 우리가 못 본다는 것(요청서 §2) | — |
 | 클라이언트 | 카드에서 대화를 시작할 때 우리 route `POST /attributions`에 `recommendation_id`·`owner_user_id`·`entry` 보고(R47). 타입 ②③은 우리 응답에서, 타입 ①은 bourbon-agent 카드의 meta에서 받는다 | R47 |
 | bourbon-agent | 타입 ① 호출을 새 계약으로(요청자 = 실제 말한 사람. 자기 agent에게 묻는 경우 소유자와 같다. 타인의 agent 방에서 묻는 경우가 제품에 있다면 그 사람이어야 하는데, 지금 코드는 항상 agent 소유자를 보낸다), 응답의 `recommendation_id`를 카드 meta에 실어 전달(R24·R47 — 클라이언트가 meta에서 읽어 우리 route에 보고한다). **HEXACO 성향 벡터를 싣는 이벤트 필드는 이 묶음에 넣지 않는다** — 이벤트로 받는다는 방향만 있고(R42, bourbon-agent에 API는 열지 않는다) 무엇을 내보낼지·동의 범위가 O20에서 정해진 뒤 별도 요청 | 계약 확정 · R47 · (HEXACO는 O20 뒤) |
 | 성숙도 컴포넌트 | `agent_maturity_changed` | 컴포넌트 존재 |
