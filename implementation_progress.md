@@ -117,6 +117,9 @@
   **왜**: bourbon-api #325가 `_agent_reachable`(친구 or `agents.public`)로 게이트를 내렸고, #326이 `agents.public`을 topic visibility에서 파생시킨다. 그런데 R23이 요청한 `discoverable`은 **만들어지지 않았고** `personal_agent_visibility_changed`도 없다. 우리 컬럼은 `false`로 태어나 아무도 뒤집지 않는데 후보 조회·CF 스윕·IDF가 전부 그것을 조인하므로, 운영에서 **모든 추천이 조용히 빈 답**이 된다. 같은 날 topic-api #68·#69가 R48에 답했다 — `bourbon.topic_visibility_changed`(revision 없음)와 `consistent=true`.
   **할 것**: 재조회가 `consistent=true`로 읽고(R56), row를 교체하는 **같은 트랜잭션에서** `discoverable`을 파생한다(R57 — 읽어 온 집합에 `public` row가 있나). `personal_agent_visibility_changed` 미러·리스너·흐름과 `agents.visibility_changed_at`을 지운다. 플래그는 후보 조회의 `public` 갈래에만 붙인다 — friends 갈래까지 막으면 public topic 없이 친구에게만 공개한 소유자가 자기 친구에게도 안 보이는데 게이트는 그 사람을 통과시킨다.
   **남기는 것**: `public` 갈래의 `discoverable` 조건은 이제 row의 존재가 함의해 중복이다. 그래도 남긴다 — O22(추천 목록 옵트인)가 생기는 날 일을 하게 되고, 그날 다시 넣는 것은 조용한 노출 버그가 되는 방향이다. 코드 주석에 그 이유를 적는다.
+  **한 것**: 커밋 여섯. (1) 재조회 읽기에 `consistent=true`, 요청자 조회에는 넣지 않음 — 두 메서드가 이미 갈라져 있어 비용 0. (2) 미러를 `topic_visibility_changed`로, `topic_revision` 제거, 계정 삭제(`topic_id` 없음) 경로 테스트. (3) `touch_agent`가 `discoverable`을 **받는다**(주지 않으면 안 건드린다) — row 교체와 같은 문장·같은 잠금·같은 트랜잭션. (4) `worker/visibility.py`·미러·두 문장·테스트와 `visibility_changed_at`(마이그레이션 0007) 삭제. (5) 플래그를 `public` 갈래로, `published_by`도 tier별로. (6) 옛 배치를 설명하던 문서 여섯 곳.
+  **알아낸 것 둘**: (a) 합성 생성기의 `agent_discoverable_rule` 예외 2%가 **표현 불가능**해졌다 — 두 적재 경로가 같은 규칙을 돌리므로 예외가 있으면 §6-1의 row diff가 0이 될 수 없다. 재던 값이 불변식으로 바뀌었다. (b) 정답 모델(`synthetic/truth.py`)도 tier별 두 갈래로 다시 썼다 — 생성기 규칙상 public row의 소유자는 반드시 discoverable이라 한 갈래로 접어도 통과하지만, 그러면 정답이 서비스와 **규칙이 아니라 우연**에 대해 합의하게 된다.
+  **테스트**: 1,568 유닛 / 1,697 라이브(항목 13-1 뒤 1,564 / 1,695). 순증 넷 — `consistent` 둘, 계정 삭제 이벤트 하나, friends-only 소유자 하나 — 이고 나머지는 교체다.
   PR: —
 
 - [ ] **14. 1-9 검증** 🔴
@@ -125,6 +128,7 @@
 
 - [ ] **15. 1-10 배포 준비** 🟢
   요청서 발송(`requests/`), `DATABASE_URL`의 `optional: true` 제거, Redis DB 번호 반영, `INGEST_BASE_URL` 등 잔여 키 정리, go-live 차단 항목 해소.
+  **브로커에서 손으로 지울 큐 둘**: `deferq.arm_refresh_on_user_topic_updated`(항목 5)와 `deferq.arm_refresh_on_topic_visibility_changed`가 대체한 `deferq.arm_refresh_on_user_topic_settings_updated`(항목 13-2). 둘 다 아무도 발행한 적 없는 이름이라 비어 있지만, 버려진 큐는 binding을 유지한 채 사본을 모은다.
   PR: —
 
 ## 미룬 소소한 것 (해당 PR에서 되짚기)
