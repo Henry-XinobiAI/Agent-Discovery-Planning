@@ -108,6 +108,7 @@ CLI: `python -m cli publish <event> …` 이벤트마다 하나.
 
 - `cli validate`: 스펙 §4 정답으로 인기도만·content만·CF만·합친 랭커의 recall@10·NDCG@10·군집 비율·위반 수 표, λ∈{3,10,30} 세 값, 같은 `params.json` 스냅샷.
 - 부하: 타입 ①② p50/p95(목표: 실측 스파이크 자릿수), 타입 ③ 콜드스타트·`cf_candidates` 있는 경우.
+- **IDF 분모의 비용**(R58에서 넘어온 항목). 분모가 `agents`의 `count(*)`(10만 행, 정렬 없음)에서 `visible_topic_rows ⋈ agents`의 `count(DISTINCT owner_user_id)`(첫 목표 규모에서 약 60만 행 + 정렬 — PostgreSQL에 `count(DISTINCT)`의 해시 경로가 없다)로 옮겨갔다. 쿼리마다 한 번이고 상관 서브쿼리가 아니지만(InitPlan), **타입 ③ 요청 경로**에 있다. 실측해서 감당 못 하면 두 갈래가 있다: `count(*) FROM agents WHERE discoverable OR EXISTS(friends row)`(기존 `visible_topic_rows(owner_user_id)` 인덱스로 semi-join), 또는 `population_stats`(마이그레이션 0001, 아직 writer 없음)에 주기적으로 적어두고 읽기. 재 보기 전에는 고르지 않는다.
 - 결과 문서 `validation_results.md`(기획 저장소). "분석"으로 정해 둔 초기값을 측정값으로 갱신하는 것은 **코드의 `settings.py`**이고(R54), 근거는 그 결과 문서에 남는다.
 
 **완료 조건**: 표가 있고, 레지스터의 가중치가 측정 근거를 가리킨다.
