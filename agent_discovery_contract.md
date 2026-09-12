@@ -295,7 +295,7 @@ class Ranker(Protocol):
 
 ## 5. 불변식 — 언제나
 
-1. **저장소에는 공개된 row만 있다.** `(topic_id, owner, tier ∈ {public, friends})`. private·hidden은 들어오지 않고, 비공개로 되돌리면 지운다. agent가 private이면 그 소유자의 row 전부를 지운다.
+1. **저장소에는 공개된 row만 있다.** `(topic_id, owner, tier ∈ {public, friends})`. private·hidden은 들어오지 않고, 비공개로 되돌리면 지운다. 소유자 단위 공개 여부(`agents.discoverable`)는 **그 row들에서 파생된다**(R57): public row가 하나도 없으면 false다. 지우는 규칙이 아니라 세는 규칙이라, 플래그와 row가 어긋날 자리가 없다.
 2. **friends row는 요청자가 소유자의 친구일 때만 통과한다.** 기준은 bourbon-api이고, 판정은 `bourbon.friendship_changed`로 미러한 친구 집합으로 후보 조회 쿼리 안에서 한다(R17).
 3. **친구 집합을 못 읽으면 friends tier는 빠진다(fail-closed).** 응답은 `degraded: ["friends_unavailable"]`, 상태는 200. R17·R18 배치에서는 친구 집합이 `visible_topic_rows`와 같은 PostgreSQL에 있어 "row는 읽었는데 친구 집합만 못 읽는" 경우가 없고 그 장애는 503이다. 이 항은 계약에 예약된 규칙으로 남긴다 — 친구 집합을 다른 저장소로 옮기는 날 다시 살아난다.
 4. **사전 계산 결과는 노출을 허가하지 않는다.** 응답 직전에 현재 공개된 row로 다시 거른다.
@@ -314,7 +314,7 @@ class Ranker(Protocol):
 |---|---|---|---|
 | `visible_topic_rows` | `(topic_id, tier, owner_user_id)` | `topic_score`(소유자 쪽 preference 강도, §7의 범위로 변환해서 저장), `topic_maturity`, `updated_at` | topic 변경 이벤트. 비공개 전환 = 삭제 |
 | `visible_topic_rows` 보조 인덱스 | `owner_user_id` | → 그 소유자의 row들 | agent private 시 일괄 삭제용 |
-| `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, **`visibility_changed_at`**, `updated_at`, **`last_active_at`**, **`cf_candidates_computed_at`**(R19) | `bourbon.user_registered`로 생성(추천 대상 풀), 공개 여부·성숙도 이벤트로 갱신(공개 여부는 `visibility_changed_at`이 더 새로울 때만 — 이벤트에 순서가 없다), `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재조회가 만든다. `last_active_at`은 우리 API 요청·**agent_dm 방의 첫 `message_created`를 보낸 사람**(R51)·`topics_updated` 셋 중 어느 것이든 갱신한다. **`cf_candidates_computed_at`**(R19)은 그 유저의 top-K를 마지막으로 만든 시각 — 스윕 조건 `last_active_at > cf_candidates_computed_at`의 오른쪽 |
+| `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, `updated_at`, **`last_active_at`**, **`cf_candidates_computed_at`**(R19) | `bourbon.user_registered`로 생성(추천 대상 풀, `discoverable`은 기본 false), **`discoverable`은 재조회가 파생한다**(R57 — 읽어 온 집합에 `public` row가 있나. row 교체와 **같은 트랜잭션**이라 둘이 어긋날 수 없고, 그래서 이벤트 순서를 비교하던 `visibility_changed_at`은 없앴다), 성숙도는 성숙도 이벤트로, `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재조회가 만든다. `last_active_at`은 우리 API 요청·**agent_dm 방의 첫 `message_created`를 보낸 사람**(R51)·`topics_updated` 셋 중 어느 것이든 갱신한다. **`cf_candidates_computed_at`**(R19)은 그 유저의 top-K를 마지막으로 만든 시각 — 스윕 조건 `last_active_at > cf_candidates_computed_at`의 오른쪽 |
 | `requester_topics` (**R27: 저장하지 않음**) | `user_id` | 요청자 자신의 topic 목록(점수 포함) — 본인의 `public`·`friends`·`private`, `hidden` 제외(R22). 타입 ②의 섹션과 타입 ③의 content 쿼리에 씀 | 요청 시 topic-api 내부 route(`visibility=public&visibility=friends&visibility=private`)로 읽는다(R27). 소유자 키 아래에만 두는 미러는 지연 시간이 문제될 때의 대안 |
 | `friends` (**R17: 미러, 필수**) | canonical pair `(user_low, user_high)`. 조회는 `user_id` → 친구 id 집합(상한 5,000) | `state ∈ {friends, removed}`, `changed_at`(발행자 시각) | `bourbon.friendship_changed`: `accepted`·`removed` 모두 upsert, **자기보다 새 `changed_at`이 있으면 적용하지 않는다**(R50 — 이벤트 둘이 커밋 순서로 정착하므로 지우는 설계로는 끊긴 친구가 남는다). 읽는 쪽은 전부 `state = 'friends'`이고, 그 조건을 빠뜨릴 자리를 없애려 저장소가 "친구 집합"만 답한다. `removed` tombstone은 `friends.tombstone_ttl_days` 뒤 정리. 요청 시 bourbon-api 조회·TTL 캐시는 쓰지 않는다. `visible_topic_rows`와 같은 저장소에 두어 후보 조회 쿼리가 배열로 받거나 조인한다 |
 | `popularity` | `owner_user_id` | 시간 감쇠 카운트(계산 시점에 전체 최대로 나눈 값이라 저장된 값이 곧 §7의 0~1 feature), `computed_at` | **주기적으로 다시 만든다**(`popularity.refresh_minutes`): `interactions` ⋈ `room_turns`를 `popularity.window_days` 창으로 읽어 집계 SQL 한 문장으로 덮어쓴다. 대화 시작 이벤트마다 더하는 방식이 아니다 — R29의 가중은 `1 + α·log(1 + turns)`이고 대화가 시작되는 순간의 `turns`는 1이라 그 대화의 최종 무게를 아직 모르며, 30일 창은 아무 일도 일어나지 않는 동안에도 움직이는 경계다(1-7에서 확인). 대화가 0건인 소유자는 행이 없고, `popularity.new_agent_prior`는 랭커가 그 자리에 넣는 값이다 — 저장소에 넣으면 대화 없는 agent 전부가 같은 점수로 묶여 인기도 소스가 무작위 agent 생성기가 된다 |
@@ -405,15 +405,17 @@ class Ranker(Protocol):
 |---|---|---|---|
 | `bourbon.friendship_changed` | **있음** (bourbon-api) | `user_low, user_high, action, occurred_at` | `friends` 미러 갱신: `accepted` 삽입, `removed` 삭제 (R17) |
 | `bourbon.topics_updated` | **있음** (topic-api 워커, persona 동기화가 움직인 topic마다) | `user_id, topic_id, persona_revision, topic_revision` | 힌트. 유저 단위 debounce 뒤 내부 route `GET /users/{id}/topics?visibility=public&visibility=friends`(반복 파라미터)를 읽어 공개된 row를 통째로 교체. 상세 `agent_discovery_events.md` §2-1 |
-| visibility 변경 신호 (R48) | topic-api에 "필요"만 요청 — 형태는 topic-api가 정한다(기존 `topics_updated` 확장 또는 새 타입). 그 프로세스에 AMQP 연결 필요. 우리 미러의 임시 이름은 `bourbon.user_topic_settings_updated` | `user_id`(가능하면 `topic_id`) | 같은 debounce → 같은 재조회. **비공개 전환은 이 경로로만 오므로 핵심**. 정의서 §2-2 |
-| `bourbon.personal_agent_visibility_changed` | 우리가 정의, bourbon-api에 요청 (새 필드 `discoverable`, 기본 false — R23) | `owner_user_id, agent_id, discoverable, occurred_at` | `false` → 그 소유자 row 전부 삭제 |
+| `bourbon.topic_visibility_changed` | **있음** (topic-api #68 — settings 쓰기 다섯 지점, 움직인 topic마다) | `user_id, topic_id`(계정 삭제는 `topic_id` 없음) | 같은 debounce → 같은 재조회. **비공개 전환은 이 경로로만 오므로 핵심**. revision이 없어 재조회는 `consistent=true`로 읽는다(R55·R56). 정의서 §2-2 |
+| ~~`bourbon.personal_agent_visibility_changed`~~ | **요청 철회**(R57). bourbon-api가 만든 것은 `discoverable`이 아니라 파생 상태 `agents.public`이고, 그 변화를 알리는 이벤트는 없다 | — | 재조회가 같은 사실을 파생한다 — 읽어 온 집합에 `public` row가 있으면 `discoverable = true`. 정의서 §2-3 |
 | `bourbon.agent_maturity_changed` | 정의해 요청 (성숙도 컴포넌트, 예정) | `owner_user_id, maturity, maturity_version, occurred_at` | `agents` 갱신 |
 | ~~`bourbon.room_created`~~ | **요청 철회**(R51). bourbon-api가 기각하고 내부 route `GET /api/internal/rooms/{id}/agent-context`를 대안으로 줬는데, 우리에게 필요한 소유자 하나를 얻자고 이용자들의 메시지 본문을 받게 된다. 대신 추천 시점에 room id를 계산해 둔다 | — | `message_created`가 이 자리를 대신한다 |
 | `bourbon.message_created` | **있음** (bourbon-api) | `room_id, message_id, sender_id, sender_type, type, room_type` | `room_type == agent_dm`인 유저 메시지마다 `room_turns[room_id]` +1(R49 — `room_created`와 순서 무관). 읽을 때 `interactions`와 `room_id`로 조인. 새 turn 이벤트 불필요 |
-| `bourbon.user_registered` | **있음** (bourbon-api, 활성화 전이) | `user_id, email` | `agents` row 생성(`discoverable=false`). `email`은 읽지 않는다. 탈퇴 뒤 재가입도 같은 경로 — 신규로 본다(R38) |
+| `bourbon.user_registered` | **있음** (bourbon-api, 활성화 전이) | `user_id, email` | `agents` row 생성(`discoverable=false` — 첫 재조회가 뒤집는다). `email`은 읽지 않는다. 탈퇴 뒤 재가입도 같은 경로 — 신규로 본다(R38) |
 | `bourbon.user_deactivated` | **있음** (bourbon-api) | `user_id` | 그 유저의 모든 데이터 삭제. `interactions`의 actor 쪽만 익명화 |
 
 진행 방식은 우리가 먼저 미러·발행·테스트하고 그 뒤 요청한다. 재조회 tier 범위는 정해져 있다 — 타인 row는 `public`·`friends`(위 표), 요청자 자신의 프로필은 `public`·`friends`·`private`(R22). 요청자 프로필은 요청 시 topic-api 내부 route로 읽는다(R27).
+
+**두 읽기는 일관성 수준이 다르다**(R56): 워커의 재조회는 `consistent=true`(DynamoDB 강한 읽기)로 읽는다 — 남의 row를 저장할지 정하는 읽기라 "바꾸기 전" 스냅샷 하나가 불변식 1을 깨고 다음 재조회까지 남는다. 요청 시 요청자 프로필은 약한 읽기 그대로다 — 남의 노출을 정하지 않고 응답 지연에 직접 올라탄다.
 
 ### 9-2. 우리가 내는 것
 
