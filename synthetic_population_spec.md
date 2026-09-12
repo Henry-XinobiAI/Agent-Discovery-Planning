@@ -128,7 +128,7 @@ LLM 확장은 비용이 있으므로 검증에서는 **쿼리 200개만** 실제
 | ② | 섹션 topic마다 그 topic을 요청자에게 공개해 둔 agent를 같은 가중 파일의 점수 desc | 섹션별 recall@`per_section`, 순서 일치율(같은 가중 파일일 때만) |
 | ③ CF | 요청자 `u`에 대해 `affinity[cluster(u)][cluster(owner(a))] × pop[a]`가 큰 순, 공개된 것만, 이미 대화한 것 제외(R28) | recall@10, NDCG@10 |
 | ③ content | `u`의 topic 집합과 겹침이 큰 소유자의 agent — R25의 IDF·계층 감쇠(생성기는 실물 카탈로그 파일을 읽으므로 parent edge를 함께 적재한다, R26) | recall@10, 같은 군집 비율. **"content만" 단독 행**을 인기도만·CF만과 같은 표에 둔다 |
-| ③ 콜드스타트 | 대화 0건인 유저에 대해 위 ③ 정답 | 같은 지표, 별도 집계 |
+| ③ 콜드스타트 | 대화 0건인 유저에 대해 위 ③ 정답 | 같은 지표, 별도 집계. **지금 파라미터에서는 잴 것이 거의 없다** — `conversation_rate` 기본값에서 유저당 대화가 평균 열 건 가까이 나와 2만 유저에 대화 0건인 사람이 **한 명**이다(1-7 실측). 생성기는 그런 사람을 최대 100명까지 표본에 일부러 넣고 `cold`로 표시하지만, 있는 만큼만 들어간다. 이 행을 실제로 재려면 `conversation_rate`가 0을 많이 내는 값이 따로 필요하다 — 지어낸 콜드스타트는 아무것도 재지 않는다 |
 | 필터 | friends tier row가 친구 아닌 요청자에게 나온 건수 | **0건** (하나라도 있으면 실패) |
 | 비공개 전환 | `close_rate` 이벤트 뒤 그 row가 결과에 나온 건수 | 0건 (재조회 지연 시간 안에서는 허용, 지연 시간 기록) |
 | 탈퇴 | 탈퇴 유저의 agent가 결과에 나온 건수 | 0건 |
@@ -153,7 +153,7 @@ LLM 확장은 비용이 있으므로 검증에서는 **쿼리 200개만** 실제
 | `conversations.parquet` | U × λ ≈ 30만 | `room_id, actor_user_id, owner_user_id, agent_id, started_at, turns, reopened` |
 | `events.jsonl` | 10만·λ=10에서 실측 **920만 건**: registered 10만 + topics_updated ≈100만 + visibility 변경 신호 ≈44만 + agent 공개 여부 ≈5만 + friendship ≈366만 + message_created ≈290만(turn 평균 4) + deactivated 1천. **`room_created`는 없다** — §3-5의 표와 R46이 그 방의 첫 `message_created`로 대체했다 | 시간순. 이벤트 이름과 payload는 `agent_discovery_events.md` 그대로 |
 | `queries.parquet` | 2,000 | `query_id, requester, lang, text, topic_ids` |
-| `truth_*.parquet` | 타입별 | §4 |
+| `truth_*.parquet` | 타입별 | §4. 넷이다 — `truth_explicit`, `truth_by_topic`, `truth_for_you`(③ CF), `truth_content`(③ content). 앞의 둘은 질문마다·섹션마다 한 묶음이고, 뒤의 둘은 **같은 표본**에 대한 답이라 한 표의 두 행으로 비교된다(§4의 ablation). 뒤의 둘에는 `cold` 열이 있다 — §4가 콜드스타트를 따로 집계하라고 하므로 |
 | `topic_api_stub/` | — | 재조회 목 서버가 읽는 유저별 현재 row 스냅샷. 구현에서는 목 서버가 실제로 읽는 자리(`data/topic_api_mock/users/`)에 시드 스크립트가 직접 쓴다 — run 디렉터리에 두고 10만 개 파일을 복사할 이유가 없다. **모든 tier를 담는다**(R22·R27: 요청자 자기 프로필은 private까지 읽는다). 10만에서 약 900 MB |
 
 100만에서는 위 행 수가 10배. 생성 시간 목표는 10만 5분 이내, 100만 1시간 이내(단일 프로세스, numpy 벡터화) — 10만 실측은 생성·적재·픽스처까지 합쳐 66초다.
