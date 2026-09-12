@@ -75,9 +75,9 @@ R이 지금까지 대화를 시작한 상대: **A**(12 turn, 다시 방을 연 �
 | photography | public | G | .9 | .7 | … |
 | board_game | public | H | .5 | .3 | … |
 
-D의 row는 없다(전부 private). F의 row도 없다(agent가 private이면 소유자 row 전부 삭제). 이 두 "없음"이 불변식 1이다. R 자신의 `camping`(public)·`hand_drip`(friends) row도 실제로는 있다(다른 사람이 R을 찾을 때 쓰인다) — 위 표는 R의 요청에 관여하는 row만 적었고, R의 요청에서 본인은 제외다.
+D의 row는 없다(전부 private). F의 row도 없다 — F는 아무것도 공개하지 않았고, 그래서 `discoverable`도 false다(R57: 플래그가 공개한 row에서 파생되므로 이 둘은 한 사실의 두 얼굴이다). 이 두 "없음"이 불변식 1이다. R 자신의 `camping`(public)·`hand_drip`(friends) row도 실제로는 있다(다른 사람이 R을 찾을 때 쓰인다) — 위 표는 R의 요청에 관여하는 row만 적었고, R의 요청에서 본인은 제외다.
 
-**`agents`** — 추천 대상 풀. `bourbon.user_registered`가 만들고(`discoverable=false`로 시작), 공개 여부·성숙도 이벤트가 갱신한다. `last_active_at`(R19)은 그 유저가 우리 API를 호출했을 때, 대화를 시작했을 때(그 방의 첫 `message_created`, R51), `topics_updated`가 왔을 때 갱신된다. `cf_candidates_computed_at`(R19)은 그 유저의 top-K를 마지막으로 만든 시각이다. R은 `cf_candidates_computed_at`이 9/05(H와의 대화 뒤 스윕)이고, 오늘 for-you 요청으로 `last_active_at`이 갱신됐으니 TTL 조건으로 다음 스윕의 갱신 대상이다.
+**`agents`** — 추천 대상 풀. `bourbon.user_registered`가 만들고(`discoverable=false`로 시작), **재조회가 `discoverable`을 파생하고**(R57 — 읽어 온 집합에 `public` row가 있나, row 교체와 같은 트랜잭션), 성숙도 이벤트가 성숙도를 갱신한다. `last_active_at`(R19)은 그 유저가 우리 API를 호출했을 때, 대화를 시작했을 때(그 방의 첫 `message_created`, R51), `topics_updated`가 왔을 때 갱신된다. `cf_candidates_computed_at`(R19)은 그 유저의 top-K를 마지막으로 만든 시각이다. R은 `cf_candidates_computed_at`이 9/05(H와의 대화 뒤 스윕)이고, 오늘 for-you 요청으로 `last_active_at`이 갱신됐으니 TTL 조건으로 다음 스윕의 갱신 대상이다.
 
 | owner_user_id | agent_id | discoverable | agent_maturity | last_active_at | cf_candidates_computed_at |
 |---|---|---|---|---|---|
@@ -121,15 +121,14 @@ PK user_id=R → {computed_at, model_version, candidates: [{owner_user_id: G, sc
 
 ```
 topic-api ──bourbon.topics_updated {user_id, topic_id, …}──▶ 워커
-topic-api ──visibility 변경 신호 (요청 예정, 형태는 topic-api 선택 — R48)──▶ 워커
+topic-api ──topic_visibility_changed {user_id, topic_id} (R55)──▶ 워커
               │ user_id 단위 debounce (수 초, 상한 1분)
               ▼
-     GET /api/internal/svc/topic/users/{id}/topics?visibility=public&visibility=friends
+     GET /api/internal/svc/topic/users/{id}/topics?visibility=public&visibility=friends&consistent=true  (R56)
               │
               ▼
-     그 유저의 visible_topic_rows를 통째로 교체 (없어진 row 삭제, 새 row upsert)
-
-bourbon-api ──personal_agent_visibility_changed {discoverable:false}──▶ 그 소유자 row 전부 삭제, agents.discoverable=false
+     한 트랜잭션: visible_topic_rows를 통째로 교체 (없어진 row 삭제, 새 row upsert)
+                + agents.discoverable = (교체한 집합에 public row가 있나)   (R57)
 클라이언트 ──POST /attributions {recommendation_id, owner_user_id, entry}──▶ attributions insert (R47)
 bourbon-api ──message_created {room_id, sender_id, room_type=agent_dm}──▶ room_turns +1, 첫 turn이면 ROOM#{room_id} 조회 ──▶ interactions insert (attributions와 (actor, owner)로 조인), popularity 증가
 bourbon-api ──message_created {room_id, room_type=agent_dm, sender_type=user}──▶ interactions.turns += 1
@@ -137,7 +136,7 @@ bourbon-api ──friendship_changed {user_low, user_high, action}──▶ frie
 bourbon-api ──user_registered {user_id}──▶ agents row 생성 (email은 읽지 않음)
 ```
 
-예: B가 `hand_drip`를 friends → private로 되돌리면, topic-api api 프로세스가 visibility 변경 신호를 내고(요청 예정, R48), 워커가 B의 공개된 집합을 재조회해 `(hand_drip, friends, B)` row를 **지운다**. 갱신이 아니라 삭제다. 이벤트를 놓쳤다면 B의 다음 힌트에서 재조회가 고친다.
+예: B가 `hand_drip`를 friends → private로 되돌리면, topic-api가 `topic_visibility_changed`를 내고 워커가 B의 공개된 집합을 재조회해 `(hand_drip, friends, B)` row를 **지운다**. 갱신이 아니라 삭제다. 같은 트랜잭션에서 `discoverable`도 다시 계산되므로, 그것이 B의 마지막 public topic이었다면 플래그도 같이 내려간다. 이벤트를 놓쳤다면 B의 다음 힌트에서 재조회가 고친다.
 
 ### 2-3. A안만 갖는 저장소 (기록 — OpenSearch·Gorse는 R33·R34로 쓰지 않는다)
 
@@ -286,7 +285,7 @@ R의 topic 목록을 요청 시 topic-api 내부 route로 읽는다(R27). prefer
 
 | 섹션 | 후보 (필터 뒤) | 빠진 것 |
 |---|---|---|
-| `camping` | A(.8), B(.6) | C(friends, 친구 아님), D(private), F(agent private) |
+| `camping` | A(.8), B(.6) | C(friends, 친구 아님), D(private), F(공개한 것이 없음) |
 | `hand_drip` | A(.9), B(.9, friends 통과) | D(private) |
 | `hiking` | E(.8) | — |
 
@@ -337,7 +336,7 @@ WHERE p.owner_user_id <> 'R'
 ORDER BY p.score DESC LIMIT 20;
 ```
 
-F(agent private, row 없음)와 C(friends row만, 친구 아님)는 여기서 이미 나오지 않는다. hit에는 `tier`가 붙어 나간다. Redis sorted set에 두지 않는 이유가 이것이다(R18): sorted set은 tier를 모르고 조건을 붙일 수 없어 넉넉히 읽고 뒤에서 걸러야 한다.
+F(공개한 것이 없어 row도 없다)와 C(friends row만, 친구 아님)는 여기서 이미 나오지 않는다. hit에는 `tier`가 붙어 나간다. Redis sorted set에 두지 않는 이유가 이것이다(R18): sorted set은 tier를 모르고 조건을 붙일 수 없어 넉넉히 읽고 뒤에서 걸러야 한다.
 
 ### 5-2. 소스 2 `content_similarity` — 내 topic과 겹치는 소유자 (A/B 같음)
 
@@ -446,7 +445,7 @@ DynamoDB 쓰기는 유저 수가 아니라 그날 읽혔거나 활동한 유저 
 | A (popularity .22, sim 1.35) | public row 있음 | 통과하지만 **이미 대화한 상대라 for-you에서 제외**(R28) |
 | H (popularity .01) | `board_game public` | 통과하지만 **이미 대화한 상대라 제외** — A와 같은 규칙 |
 | B (sim 1.17, cf .44) | `camping public`, `hand_drip friends` | 통과 (public row가 있으니 친구 여부와 무관) |
-| F (인기가 있어도) | row 없음 | **버림** — agent private |
+| F (인기가 있어도) | row 없음 | **버림** — 공개한 row가 없다 |
 | C (누가 추천해도) | friends row만, R은 친구 아님 | **버림** |
 
 "엔진이 F를 1위로 줬다"는 아무 힘이 없다. row가 없으면 없다.
