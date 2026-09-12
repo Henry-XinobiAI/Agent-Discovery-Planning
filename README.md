@@ -13,7 +13,7 @@
 | 5 | [`synthetic_population_spec.md`](synthetic_population_spec.md) | 검증(소스별 ablation·부하·CF 게이트)의 정답 데이터를 만드는 생성기: 파라미터·순서·출력·정답·검증. §8은 서비스가 돌기 시작한 뒤 이벤트에서 파라미터를 자동으로 갈아 끼우는 절차 | 초안 |
 | 6 | [`library_verification.md`](library_verification.md) | 재설계 §5-1 후보(Gorse·`implicit`·LightFM·OpenSearch)와 B안(PostgreSQL·동시 출현)을 같은 10만 합성 유저로 실측. O8·O11(→ R33·R34)의 근거. 재현은 `spikes/` | 실측 2026-09-08 |
 | 7 | [`agent_discovery_walkthrough.md`](agent_discovery_walkthrough.md) | 1~6을 읽고도 "요청 하나가 실제로 어떻게 흐르나"가 안 그려질 때. 예제 하나(요청자 R, 소유자 A~H)로 세 타입·저장소를 끝까지 따라간다. `implicit`이 무엇을 읽고 쓰는지 포함. Gorse·동시 출현 CF 절은 R34 이전 비교 기록 | 설명 (결정 없음) |
-| 8 | [`agent_discovery_settings.md`](agent_discovery_settings.md) | 설정 레지스터(R39): 모든 설정값의 이름·기본값·뜻·올리고 내릴 때의 효과·출처 결정. 다른 문서는 값을 쓰지 않고 여기를 가리킨다 | 초안 |
+| 8 | [`agent_discovery_settings.md`](agent_discovery_settings.md) | 설정 레지스터(R39·R54): 모든 설정값의 이름·뜻·올리고 내릴 때의 효과·출처 결정. **값은 코드(`agent_discovery/settings.py`)에 있다**(R54). 다른 문서는 값을 쓰지 않고 여기를 가리킨다 | 초안 |
 | 9 | [`implementation_plan.md`](implementation_plan.md) | 구현 단계와 완료 조건(R43): 갭 정리 → 로컬 스택 → 설정·계약 → 저장·적재 → 타입 ①② → 생성기·시드 스크립트·CLI → 타입 ③ → CF → 검증 → 배포 준비. 순서의 이유와 열린 구현 판단 | 계획 |
 | 9-1 | [`implementation_progress.md`](implementation_progress.md) | PR 단위 체크리스트 — 끝난 것·남은 것·작은 모델로 진행 가능한 PR 표시(🟢/🟡/🔴). PR이 머지되면 체크하고 번호를 적는다 | 진행 중 |
 | 10 | [`requests/`](requests/README.md) | 받는 곳별 요청서(인프라·bourbon-api·클라이언트·bourbon-agent·topic-api). 이벤트 정의서 §6의 묶음을 그대로 붙여 넣을 수 있는 문장으로. 보내는 시점은 1차 배포 즈음 | 초안 |
@@ -25,4 +25,4 @@
 
 1. 코드 repo에서 워커의 이벤트 미러를 실제 이름(`bourbon.topics_updated`)으로 고치고, 새 이벤트 셋을 선언하고, CLI 발행 명령을 만든다.
 2. 합성 모집단 생성기 구현, 10만 유저 생성.
-3. 단일 구현(R34) → 합성 모집단으로 검증(재설계 §6, 소스별 ablation) → 설정 초기값 확정(`agent_discovery_settings.md`).
+3. 단일 구현(R34) → 합성 모집단으로 검증(재설계 §6, 소스별 ablation) → 설정 초기값 확정(값은 코드의 `agent_discovery/settings.py`, 뜻은 `agent_discovery_settings.md`).
