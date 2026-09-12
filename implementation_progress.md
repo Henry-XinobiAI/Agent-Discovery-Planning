@@ -112,7 +112,7 @@
   **알아낸 것**: 레지스터 §9의 두 행(`attribution.predicted_room_ttl_hours`, `friends.tombstone_ttl_days`)에 출처 칸이 아예 없었다 — 71개 필드에 출처를 달다가 `decisions.md`까지 가서 R51·R50을 찾아 채웠다.
   PR: #34 (머지 2026-09-12) · 기획 #79
 
-- [ ] **13-2. 친구 게이트가 내려갔다 — `discoverable`에 출처가 생긴다(R55·R56·R57)** 🔴
+- [x] **13-2. 친구 게이트가 내려갔다 — `discoverable`에 출처가 생긴다(R55·R56·R57·R58)** 🔴
   계획에 없던 항목이고, 1-9보다 **앞에** 와야 한다 — 지금 코드로는 운영에서 모든 답이 빈 답이라, 그 상태로 잰 숫자는 아무 뜻이 없다.
   **왜**: bourbon-api #325가 `_agent_reachable`(친구 or `agents.public`)로 게이트를 내렸고, #326이 `agents.public`을 topic visibility에서 파생시킨다. 그런데 R23이 요청한 `discoverable`은 **만들어지지 않았고** `personal_agent_visibility_changed`도 없다. 우리 컬럼은 `false`로 태어나 아무도 뒤집지 않는데 후보 조회·CF 스윕·IDF가 전부 그것을 조인하므로, 운영에서 **모든 추천이 조용히 빈 답**이 된다. 같은 날 topic-api #68·#69가 R48에 답했다 — `bourbon.topic_visibility_changed`(revision 없음)와 `consistent=true`.
   **할 것**: 재조회가 `consistent=true`로 읽고(R56), row를 교체하는 **같은 트랜잭션에서** `discoverable`을 파생한다(R57 — 읽어 온 집합에 `public` row가 있나). `personal_agent_visibility_changed` 미러·리스너·흐름과 `agents.visibility_changed_at`을 지운다. 플래그는 후보 조회의 `public` 갈래에만 붙인다 — friends 갈래까지 막으면 public topic 없이 친구에게만 공개한 소유자가 자기 친구에게도 안 보이는데 게이트는 그 사람을 통과시킨다.
@@ -123,7 +123,7 @@
   **그리고 R58이 여기서 나왔다**: 플래그를 `public` 갈래로 옮겼는데 **소유자 단위로 세는 세 곳**이 아직 소유자 단위 하나로 답하고 있었다 — IDF(`holders`가 inner join이라 friends-only 소유자만 가진 topic의 row가 통째로 사라졌다), CF 게이트의 개인화 대리 지표, 합성 생성기의 인기 가중치(이게 제일 아팠다 — friends-only 소유자가 대화 상대가 못 돼서 **1-9가 이번 변경을 측정할 대상을 만들지 못했다**). 셋 다 `rows_visible_to_somebody`(요청자를 뺀 같은 조건) 하나를 읽게 했고, `_eligible`과 그 관계는 `_showable` 한 식에서 나온다 — 두 갈래 규칙을 두 번 적는 것이 이번 항목이 없애려던 바로 그 모양이라서.
   **감수한 것 하나, 그리고 재봤다**: R58의 새 IDF 분모는 타입 ③ 요청 경로에서 **12배 비싸다** — 19,811 agents / 65,229 row에서 9.9~14.1 ms, 예전 것은 0.78~0.84 ms. 쿼리당 한 번이고 상관 서브쿼리는 아니다(InitPlan). **쿼리 모양은 답이 아니다**: semi-join 형태도 9.0~9.2 ms로 10%만 줄고 둘 다 row 테이블 전체를 읽는다. 진짜 문제는 요청마다 센다는 것이고 R58 전에도 그랬다 — 예전 것이 싸서 안 보였다. **1-7로 넘겼다**: 모집단을 `popularity`와 같은 모양의 주기 스냅샷(`population_stats`)으로 옮긴다.
   **테스트**: 1,574 유닛 / 1,706 라이브(항목 13-1 뒤 1,564 / 1,695).
-  PR: —
+  PR: #35 (머지 2026-09-13) · 기획 #81
 
 - [ ] **14. 1-9 검증** 🔴
   합성 10만 유저로 품질·지연 시간·불변식 위반 0건 측정, 결과를 이 저장소 검증 문서에 기록. `topic_api.timeout_ms` 값 확정.
