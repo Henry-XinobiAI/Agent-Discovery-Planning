@@ -49,7 +49,7 @@
 | `score_dist` | 베타(5, 2) × 100 | topic `score`. 실제 샘플이 76.4 같은 높은 값이라 위로 치우침 |
 | `opener_rate` | 0.6 | 하나 이상의 topic을 공개한 유저 비율 |
 | `tier_mix_of_opened` | public 0.4 / friends 0.2 / private 0.35 / hidden 0.05 | 공개한 유저의 topic별 tier 비율 (private = 공개하지 않은 것, hidden = 숨김). hidden이 있어야 hidden → 삭제 경로가 테스트된다 |
-| `agent_discoverable_rule` | "public topic ≥ 1" + 예외 2% | agent 공개 여부. 예외는 규칙이 분리될 수 있음을 테스트 |
+| `agent_discoverable_rule` | "public topic ≥ 1" — **예외 없음**(R57) | agent 공개 여부. 2026-09-13까지는 예외 2%를 뒀는데, 규칙이 언젠가 분리될 수 있다는 전제였다. R57이 그 플래그를 재조회의 **파생값**으로 만들면서 예외가 표현 불가능해졌다 — 두 적재 경로가 같은 규칙을 돌리므로 예외를 넣으면 §6 검증 1의 row diff가 0이 아니게 된다 |
 | `friend_degree` | 로그정규 median 25, σ 0.9, 상한 5,000 | 유저별 친구 수 |
 | `friend_homophily` | 0.7 | 친구 중 같은 주 군집인 비율 |
 | `affinity` | K×K 행렬: 대각 1.0, 부 군집 관계 0.5, 무작위 0.05, 노이즈 N(0, 0.1) | 요청자 군집 × agent 소유자 군집의 잠재 친화도 — **CF의 정답** |
@@ -81,7 +81,7 @@
 2. topic 수를 뽑고, `off_cluster_topic_rate`만 무작위, 나머지는 (주 군집 0.7, 부 군집 0.3 — 부 군집이 없으면 주 군집 1.0)의 선호에서 Zipf 샘플링. 중복 제거.
 3. topic마다 `score`, `updated_at`, `revision=1`.
 4. `opener_rate`로 "공개하는 유저"를 정하고, 그 유저의 topic마다 `tier_mix_of_opened`로 tier. 나머지 유저는 전부 private.
-5. `agent_id` = uuid5(NS, f"personal_agent:{user_id}"). `discoverable`은 규칙 + 예외.
+5. `agent_id` = uuid5(NS, f"personal_agent:{user_id}"). `discoverable`은 규칙 그대로 — 그 유저에게 `public` tier topic이 하나라도 있나(R57).
 
 ### 3-3. friend
 
@@ -103,14 +103,14 @@
 |---|---|---|
 | 가입 | `bourbon.user_registered` | 전 유저 |
 | topic 동기화 | `bourbon.topics_updated` × 움직인 topic | 전 유저, topic마다 |
-| tier 공개·비공개 전환 | visibility 변경 신호(임시 이름 `bourbon.user_topic_settings_updated`, R48) | 공개한 topic 전부 + `close_rate` |
-| agent 공개 여부 | `bourbon.personal_agent_visibility_changed` | 규칙이 바뀌는 시점마다 |
+| tier 공개·비공개 전환 | `bourbon.topic_visibility_changed`(R55) | 공개한 topic 전부 + `close_rate` |
+| ~~agent 공개 여부~~ | ~~`bourbon.personal_agent_visibility_changed`~~ — **없앴다**(R57). 그 이벤트는 존재하지 않고, `discoverable`은 재조회가 파생하므로 위 두 이벤트가 이미 그 자리를 덮는다 | — |
 | 친구 수락 | `bourbon.friendship_changed(accepted)` | 전 쌍 |
 | 대화 시작 | 그 방의 첫 `bourbon.message_created`(`room_type=agent_dm`, R51) | 추천으로 시작된 대화만(R52) |
 | turn | `bourbon.message_created` | 전 turn |
 | 탈퇴 | `bourbon.user_deactivated` | `deactivate_rate` |
 
-`topics_updated`와 `settings_updated`는 **힌트**이므로 생성기는 재조회에 답할 **topic-api 목(mock) 서버**(`GET /users/{id}/topics?visibility=…`)도 같이 제공한다 — 파일에서 그 유저의 현재 row를 돌려주는 작은 HTTP 서버. 이벤트 시각 이후 상태를 답하도록 시각을 인자로 받는다.
+`topics_updated`와 `topic_visibility_changed`는 **힌트**이므로 생성기는 재조회에 답할 **topic-api 목(mock) 서버**(`GET /users/{id}/topics?visibility=…`)도 같이 제공한다 — 파일에서 그 유저의 현재 row를 돌려주는 작은 HTTP 서버. 이벤트 시각 이후 상태를 답하도록 시각을 인자로 받는다.
 
 ### 3-6. 타입 ① 쿼리
 
@@ -166,7 +166,9 @@ LLM 확장은 비용이 있으므로 검증에서는 **쿼리 200개만** 실제
 
 1. **두 적재 경로의 결과 일치**: (가) 이벤트 리플레이 뒤 저장소 상태 == (나) 직접 적재 상태. **row 단위 diff 0, 단 시각 컬럼은 뺀다.** `bourbon.message_created`와 `bourbon.user_registered`는 payload에 자기 시각이 없어서 워커가 발행 시각으로 대체한다(`worker/flows.py`) — 리플레이는 `agents.registered_at`·`last_active_at`과 `room_turns.last_turn_at`을 리플레이한 시계로 찍는다. payload는 bourbon-api의 모양이므로 필드를 더해서 해결할 일이 아니다. 1-6 실측(150 유저): `visible_topic_rows` 520행 차이 0, `agents` 150행 차이 0(`discoverable` 포함), `friends` 2,189행 동일. `interactions`는 직접 적재 927 대 리플레이 0이고 **둘 다 맞다** — 이벤트 경로는 추천이 예측한 방에 메시지가 들어와야 기록하는데(R51) 이 모집단은 추천이 없던 세상이다(§3-4.3).
 2. **불변식**: 저장소에 private/hidden row 없음, 탈퇴 유저 row 없음. 직접 적재 (나)도 같은 조건으로 걸러 넣는다: `user_topics.parquet`에서 visibility ∈ {public, friends}이고 소유자의 `deactivated_at`이 null인 행만 `visible_topic_rows`로.
-   **`discoverable=false` 소유자의 row는 조건이 아니다** (1-6에서 정정). topic 재조회는 그 플래그를 보지 않는다 — 기본값이 false이고 R23 이벤트를 아직 아무도 발행하지 않으므로, 플래그를 지키는 재조회는 아무에게도 row를 만들지 않는다. 답변에서 불변식 1을 참으로 만드는 것은 읽기 쪽의 `agents.discoverable` 조인이다(1-5). 직접 적재가 그걸로 거르면 이벤트 경로가 절대 재현할 수 없는 저장소가 되어 검증 1이 성립하지 않는다.
+   **`discoverable=false` 소유자의 row는 여전히 조건이 아니다**(1-6에서 정정, R57에서 이유가 바뀌었다). 재조회는 그 플래그를 **쓰지만 읽지 않는다** — 읽어 온 집합을 그대로 저장하고 같은 트랜잭션에서 플래그를 파생할 뿐이다. 그래서 friends tier만 공개한 소유자는 `discoverable=false`인 채로 row를 갖는다. 답변에서 불변식 1을 참으로 만드는 것은 읽기 쪽이고, 그 조인은 이제 `public` 갈래에만 붙는다(R57). 직접 적재가 플래그로 row를 거르면 이벤트 경로가 재현할 수 없는 저장소가 되어 검증 1이 성립하지 않는다.
+
+   **새 불변식 하나**(R57): `discoverable`이 참인데 `public` row가 하나도 없는 소유자는 **없다**. 파생이 row 교체와 같은 트랜잭션에서 일어나므로 둘이 어긋날 자리가 없고, 어긋났다면 그 트랜잭션이 깨진 것이다. §7에서 재던 "예외율"이 이 줄로 바뀐다.
 3. **분포 재현**: 생성된 topic 수·degree·대화 수의 분포가 파라미터와 일치(KS 검정 또는 퍼센타일 비교). 1-6은 세 번째 방법으로 했다 — §2의 행마다 값을 배열에서 되재서 파라미터와 비교하고, 허용 오차는 테스트가 감당할 크기에서의 표집 오차로 잡는다(`synthetic/checks.py`, 측정 37개). **성질 테스트로는 안 된다**: "중복 없음/범위 안/떠난 뒤 아무 일 없음"으로 짠 첫 판은 변이 12개 중 9개를 통과시켰다(뒤집힌 Beta, 납작해진 Zipf, 무시된 tier 비율, 50배가 된 비율). 성질은 row 하나에 대한 말이고 분포는 100만 개의 모양에 대한 말이라, 모양이 틀렸을 때 어느 row도 틀리지 않는다.
    검사는 **규모에 흔들리지 않아야** 자리를 얻는다 — 기댓값이 파라미터 자체이거나 모집단에서 계산되는 값이어야 한다. `friend_degree`가 빠진 이유가 그것이고(§2 값은 유저가 *고르는* 수, §7이 대칭화를 말한다), 출력에서 되잴 수 없는 파라미터는 생성기가 기록해 둔다(`off_cluster_topic_rate`를 위한 "이 row가 어느 소스에서 왔나" 컬럼). 검사 자체는 **파라미터를 고정하고 코드를 변이시켜** 확인한다 — 파라미터를 흔들면 양쪽이 같이 움직여 아무것도 증명하지 않는다.
 4. **민감도**: `opener_rate`, `affinity` 노이즈, `off_cluster_topic_rate`를 ±50% 흔들어 §4 지표가 어떻게 움직이는지 표로 남긴다. 가정이 결과를 지배하는 파라미터를 알아 두어야 베타 뒤 어느 실측을 먼저 넣을지 정할 수 있다.
@@ -202,7 +204,7 @@ LLM 확장은 비용이 있으므로 검증에서는 **쿼리 200개만** 실제
 | `popularity_skew` | agent별 대화 시작 횟수의 순위-빈도 기울기 | 같은 테이블을 owner로 집계 |
 | `topics_per_user`, `opener_rate`, `tier_mix_of_opened` | 유저별 공개된 row 수, 공개한 유저 비율, tier 비율 | `visible_topic_rows` — 단, private/hidden은 우리 저장소에 없으므로 `topics_per_user` 전체는 topic-api 내부 read로만 잴 수 있다 |
 | `friend_degree`, `friend_homophily` | degree 분포 (homophily는 군집 라벨이 없어 실측 불가 — 유지) | `friends` 미러에서(R17) |
-| `agent_discoverable_rule` 예외율 | discoverable인데 public row 없는 agent 비율 | `agents` × `visible_topic_rows` |
+| ~~`agent_discoverable_rule` 예외율~~ | **재는 값이 아니라 불변식이 됐다**(R57): `discoverable`인데 `public` row가 없는 agent는 0이어야 한다. 0이 아니면 파생 트랜잭션이 깨진 것이다 — §6 불변식 | `agents` × `visible_topic_rows` |
 | `deactivate_rate` | 기간 내 탈퇴 / 등록 | `user_deactivated`, `user_registered` |
 | `activity` (R19 갱신 비용의 입력) | `last_active_at` 기준 1·7·30일 활성 유저 비율(하루에 읽는 유저 비율이 스윕 쓰기 비용을 정한다)과 "마지막 활동 이후 경과일" 분포. TTL·스윕 상한(R36, 설정 레지스터)을 조정하는 재료 | `agents.last_active_at`, `agents.cf_candidates_computed_at` |
 

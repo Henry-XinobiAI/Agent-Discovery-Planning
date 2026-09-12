@@ -38,7 +38,7 @@ user ──대화──▶ personal agent (bourbon-agent)
 - **topic별 visibility**는 topic-api가 유저에게 직접 노출해 관리한다. 값은 네 가지다: `public`, `friends`, `private`, `hidden`. `hidden`은 삭제 대신 숨기기로, 본인 외 어느 목록에도 나오지 않는다. 타인이 이 유저의 agent와 대화할 때, agent는 두 사람의 관계와 topic의 visibility로 기억과 preference의 접근을 제어한다.
 - **friend 관계**는 요청과 수락으로 성립한다. bourbon-api가 관리하고, 성립·해제 시 `bourbon.friendship_changed` 이벤트를 **이미 발행한다** (`accepted` / `removed`, 두 user id를 정렬한 canonical pair). 친구 목록 조회 route도 있고, 한 유저의 친구 상한은 5,000이다.
 - **default는 private다.** 새로 생긴 topic도, agent 자체도 private로 시작하고, 유저가 명시적으로 `public`이나 `friends`로 바꾼다. **다시 private로 돌아갈 수도 있다.** 그러므로 추천 대상은 "유저가 공개한 것"뿐이고, 비공개로 되돌리면 즉시 빠져야 한다(§3-2).
-- **agent 공개 여부**(추천에 나올 수 있는가)는 bourbon-api의 새 필드 `discoverable`(기본 false, R23)이다. agent가 동작하는가(`enabled`)와 다른 축이다 — 쓰되 목록에는 안 올리는 선택이 있다. topic의 공개 여부에서 유도하지 말고 **받은 값을 그대로 저장**한다(R06: default private, 되돌릴 수 있다).
+- **agent 공개 여부**(추천에 나올 수 있는가)는 `agents.discoverable`이고, **재조회가 파생한다** — 그 소유자에게 `public` tier topic이 하나라도 있나(R57, R23 개정). bourbon-api에 새 필드를 요청했었으나 만들어지지 않았고, 그쪽이 게이트에 쓰는 `agents.public`이 같은 술어의 파생 상태다. "쓰되 목록에는 안 올린다"는 선택은 지금 없다 — 되살릴지는 O22. topic의 공개 여부에서 유도하지 말고 **받은 값을 그대로 저장**한다(R06: default private, 되돌릴 수 있다).
 - **성숙도**는 topic 단위와 agent 단위 둘이 있다. 둘 다 전용 컴포넌트가 아직 없다. topic 성숙도는 topic-api가 임시로 단순 계산해 넣고 있고, agent 성숙도는 곧 들어올 예정이다. 추천에서는 **랭커 feature 하나**로 두고, 값의 출처가 바뀌어도 자리는 유지되게 설계한다.
 
 ### 1-2. 코드에서 확인한 사실 (2026-09-08, 2026-09-10 추가)
@@ -56,7 +56,7 @@ user ──대화──▶ personal agent (bourbon-agent)
 | bourbon-agent가 **발행하는 이벤트는 `bourbon.persona_updated` 하나**다. payload의 `changes[].topics`는 preferences 마크다운의 헤딩 텍스트이고 topic id는 없다. 추출은 소유자가 말한 모든 방을 5분 debounce(상한 30분) 뒤 LLM 1회로 처리하며 bio·traits(HEXACO)·preferences를 한 번에 낸다. preferences만 두 번째 LLM 호출로 "평가가 담긴 문장"만 남긴다 | bourbon-agent `bourbon_agent/events.py`, `persona_extractor/pipeline.py`, `persona_extractor/detail_filter.py` (2026-09-10) |
 | topic-api 워커는 bourbon-agent의 persona 테이블 sharable slot을 **복호화 키를 공유해 직접 읽고** `preferences` 레이어만 문서로 만든다. `bio`·`traits`는 의도적으로 제외한다(traits 섹션을 신호로 읽었더니 잘못된 interest topic이 생긴 사례가 코드 주석에 있다) | topic-api `topic/agent_persona/persona.py`, `topic/storage/agent_persona.py` (2026-09-10) |
 | HEXACO 추정치(25 facet, 1.0~5.0, confidence, 관측 수)는 persona slot이 아니라 **추출 노트**(`PERSONA_EXTRACTION#note`)에 있고 visibility 구분이 없다. persona slot의 `traits`는 서술형 텍스트다. persona 텍스트는 대화 언어와 무관하게 영어다 | bourbon-agent `bourbon_agent/user_persona/extraction_note.py`, `persona_extractor/prompt/system.py` (2026-09-10) |
-| 타인 agent와의 대화는 `AGENT_DM` room(`A:B'`, 방향성). main에서는 두 사람이 친구여야 열 수 있고, 임시 브랜치가 그 게이트를 내린다. **오너(2026-09-08): 친구가 아니어도 열 수 있게 할 것이며 방법은 bourbon-api의 몫.** 추천은 public agent가 누구에게나 열린다고 전제한다 | bourbon-api `rooms/models.py` `RoomType`, `rooms/service.py` `ensure_agent_dm_room` |
+| 타인 agent와의 대화는 `AGENT_DM` room(`A:B'`, 방향성). **2026-09-13부터 친구이거나 상대 agent가 public이면 열린다**(bourbon-api #325 `_agent_reachable`; 여기서 public = "public topic ≥ 1"의 파생). 방 생성·재입장·쓰기 모두에 같은 조건이 걸리고 거절은 403 `agent_not_accessible`이다. 오너가 2026-09-08에 정한 전제가 실제가 됐다 | bourbon-api `rooms/models.py` `RoomType`, `rooms/service.py` `ensure_agent_dm_room` |
 
 ### 1-3. 호출 API
 
@@ -186,7 +186,7 @@ CF·인기도 신호(§2-3)에도 같은 조건이 걸린다. "비슷한 사람�
 |---|---|
 | user topic 변경(공개·점수) | 있음 — `bourbon.topics_updated`를 힌트로 재조회 → 이벤트 정의서 §2-1 |
 | user topic 비공개 전환(visibility 편집) | topic-api에 필요만 요청, 형태는 topic-api 선택(R48) → 정의서 §2-2 |
-| agent 공개 여부 | 우리가 정의 — 새 필드 `discoverable`(R23) → 정의서 §2-3 |
+| agent 공개 여부 | 재조회가 파생한다(R57) — 요청은 철회, 정의서 §2-3 |
 | 대화 시작 | **그 방의 첫 `bourbon.message_created`**(R51 — `room_created` 요청은 철회했다) → 정의서 §2-4. 소유자는 추천을 낼 때 계산해 둔 room id로 찾고, 귀속 키는 클라이언트가 우리 route에 직접 보고한 것이 우선한다(R47·R53) |
 | 대화 진행(turn) | 있음 — `bourbon.message_created` 조인 → 정의서 §2-5 |
 | agent 성숙도 | 컴포넌트 생기면 → 정의서 §2-6 |

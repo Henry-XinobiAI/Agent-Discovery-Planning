@@ -57,7 +57,7 @@
 PostgreSQL: `visible_topic_rows`(+ `descriptions` JSON, hydration용), `agents`, `friends`, `interactions`, `room_turns`(R49), `attributions`(R47), `catalog_edges`, `population_stats`. 인기도는 `interactions`에서 요청 시 계산(30일 창이라 작다) — 별도 테이블은 p95가 나빠지면.
 DynamoDB(계약 §6-1): `USER#…/CF_CANDIDATES`, `REC#…/LOG`, `EVT#…`, `CONFIG/CF_GATE`.
 
-리스너(전부 `worker/`에 한 흐름씩): `topics_updated`·visibility 변경 신호(임시 이름 `user_topic_settings_updated`, R48) → 같은 debounce → 재조회 task(row 통째 교체, `agents` 없으면 생성, `topic_revision` 복제 지연 시 재시도); `personal_agent_visibility_changed`; 그 방의 첫 `message_created`(→ `interactions`, 소유자는 추천 시점에 계산해 둔 room id로, `attributions` 보고가 예측보다 우선, `agents.last_active_at` — R51·R53); `message_created`(`room_type`·`sender_type` 필터 → `room_turns[room_id]` +1, `room_created`와 순서 무관 — R49); `friendship_changed`; `user_registered`(agent id 결정론적 계산, `email` 읽지 않음); `user_deactivated`. 모든 리스너가 `event_log`에 append. 어트리뷰션 보고 route `POST /attributions`(계약 §2-5, R47)는 이 단계에서 같이 만든다 — `room_created` 리스너가 조인하는 상대다.
+리스너(전부 `worker/`에 한 흐름씩): `topics_updated`·`topic_visibility_changed`(R55) → 같은 debounce → 재조회 task(`consistent=true`로 읽고 row 통째 교체, `agents` 없으면 생성, **같은 트랜잭션에서 `discoverable` 파생** — R57); 그 방의 첫 `message_created`(→ `interactions`, 소유자는 추천 시점에 계산해 둔 room id로, `attributions` 보고가 예측보다 우선, `agents.last_active_at` — R51·R53); `message_created`(`room_type`·`sender_type` 필터 → `room_turns[room_id]` +1, `room_created`와 순서 무관 — R49); `friendship_changed`; `user_registered`(agent id 결정론적 계산, `email` 읽지 않음); `user_deactivated`. 모든 리스너가 `event_log`에 append. 어트리뷰션 보고 route `POST /attributions`(계약 §2-5, R47)는 이 단계에서 같이 만든다 — `room_created` 리스너가 조인하는 상대다.
 
 CLI: `python -m cli publish <event> …` 이벤트마다 하나.
 
@@ -88,6 +88,7 @@ CLI: `python -m cli publish <event> …` 이벤트마다 하나.
 
 - `popularity` 소스(R29: 30일, 반감기 7일, confidence 가중, 신규 항목 prior, 최대값으로 정규화).
 - `content_similarity` 소스(R25: IDF × `0.6^hop`, 양방향 최단 hop ≤ 3, 경로당 가장 구체적인 일치 하나, drawer 통과, `catalog_edges`로). 모르는 topic id → 정확 일치 + 지표.
+- **IDF 모집단을 주기 스냅샷으로 옮긴다**(R58에서 넘어온 항목). 지금은 요청마다 센다 — 19,811 agents / 65,229 row에서 실측 **9.9~14.1 ms**이고, 예전 `count(*) FROM agents WHERE discoverable`는 **0.78~0.84 ms**였다. 12배다. 목표 규모(10만 유저 × topic 8개 ≈ 80만 행)로 선형 외삽하면 요청마다 ~120 ms짜리 스칼라가 된다. **쿼리 모양을 바꾸는 건 답이 아니다**: `agents` + `EXISTS` semi-join도 9.0~9.2 ms로 10%만 줄고, 셋 중 둘은 어차피 row 테이블 전체를 읽는다. (참고로 정렬은 하지 않는다 — 플래너가 두 인덱스를 merge join해서 이미 정렬된 입력을 받는다.) **진짜 문제는 요청마다 계산한다는 것**이고 R58 전에도 그랬다; 예전 것이 싸서 안 보였을 뿐이다. 모집단은 사람들이 공개/비공개를 바꿀 때만 움직이는 통계이고, R25가 요구하는 것은 *요청자 무관*이지 최신성이 아니다. 그래서 `popularity`의 주기 재계산과 **같은 모양의 일**로 묶는다: 집계 SQL 한 문장을 주기적으로 `population_stats`(마이그레이션 0001, 아직 writer가 없다)에 덮어쓰고 읽는 쪽은 단건으로 읽는다. 설정 행은 `popularity.refresh_minutes` 옆에 하나. 즉석 캐시를 따로 만들면 같은 일이 두 모양이 된다.
 - `UserQuery`, 이미 대화한 상대 제외와 후보 소진 뒤 재노출(R28, `talked_before`는 로그만), 구간 섞기(R20, seed = `recommendation_id`), `cf_candidates` 없으면 콜드스타트 경로.
 - `/discover/for-you` + 커서.
 
@@ -108,6 +109,7 @@ CLI: `python -m cli publish <event> …` 이벤트마다 하나.
 
 - `cli validate`: 스펙 §4 정답으로 인기도만·content만·CF만·합친 랭커의 recall@10·NDCG@10·군집 비율·위반 수 표, λ∈{3,10,30} 세 값, 같은 `params.json` 스냅샷.
 - 부하: 타입 ①② p50/p95(목표: 실측 스파이크 자릿수), 타입 ③ 콜드스타트·`cf_candidates` 있는 경우.
+- **IDF 분모의 비율**: 1-7이 모집단을 스냅샷으로 옮기고 나면 이 항이 p50/p95에서 얼마를 차지하는지 확인만 한다(측정은 1-7에서 이미 했다).
 - 결과 문서 `validation_results.md`(기획 저장소). "분석"으로 정해 둔 초기값을 측정값으로 갱신하는 것은 **코드의 `settings.py`**이고(R54), 근거는 그 결과 문서에 남는다.
 
 **완료 조건**: 표가 있고, 레지스터의 가중치가 측정 근거를 가리킨다.
@@ -116,7 +118,7 @@ CLI: `python -m cli publish <event> …` 이벤트마다 하나.
 
 - 요청서 발송(`requests/README.md`의 순서). 인프라 답 → configmap/secret 갱신, dev 테이블·GSI 생성, alembic 적용.
 - 실측 보정 작업(R37, 스펙 §8)은 배포 뒤 첫 주기부터.
-- go-live 전제 확인: bourbon-api `discoverable`과 **친구 게이트 해제**(그 전에는 비친구 추천이 채택되지 않는다), bourbon-api 경로 레지스트리에 공개 prefix `/api/svc/agent-discovery/` 등록(요청서 §2-2 — 없으면 공개 route가 밖에서 닿지 않는다), 클라이언트 `POST /attributions` 호출, topic-api api AMQP + visibility 변경 신호, prod topic-api 워커.
+- go-live 전제 확인: ~~bourbon-api `discoverable`~~(철회 — R57), ~~**친구 게이트 해제**~~·~~topic-api api AMQP + visibility 변경 신호~~ **완료**(2026-09-13 — bourbon-api #325·#326, topic-api #68·#69). 남은 것: bourbon-api 경로 레지스트리에 공개 prefix `/api/svc/agent-discovery/` 등록(요청서 §2-2 — 없으면 공개 route가 밖에서 닿지 않는다), 클라이언트 `POST /attributions` 호출, prod topic-api 워커. 그리고 **bourbon-api의 `agents.public` 백필** — 우리 일정은 아니지만 없으면 우리 카드가 403을 받는다(요청서 §2-2).
 
 ## 2. 순서의 이유
 

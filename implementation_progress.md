@@ -41,6 +41,7 @@
 - [x] **5. 1-4a 이벤트 미러·CLI publish** 🟢
   `worker/events.py`를 실제 이벤트로 교체 — `topics_updated`, 임시 이름 `user_topic_settings_updated`(R48), `personal_agent_visibility_changed`, `room_created`(R46), `message_created`, `friendship_changed`, `user_registered`, `user_deactivated`(payload는 이벤트 정의서 §2). `touched` 필터 삭제(항상 재조회). `cli publish <event>` 이벤트별 서브커맨드. `tests/worker/test_user_topics.py`의 필터 테스트 4개 삭제, `test_app.py` import 한 줄.
   완료 조건: 이벤트 이름·필드가 정의서와 같고 CLI로 각 이벤트를 로컬 브로커에 넣을 수 있다.
+  **13-2에서 둘이 바뀐다**: 임시 이름 `user_topic_settings_updated`는 실제 이름 `topic_visibility_changed`가 됐고(R55), `personal_agent_visibility_changed`는 존재하지 않는 이벤트여서 미러째 지운다(R57).
   PR: #22 (머지 2026-09-10). 정의서 §2의 열 개 중 여덟 개를 미러(`agent_maturity_changed`는 컴포넌트 대기, `persona_updated`는 직접 쓰지 않음 — 둘 다 이유를 docstring에 적었다). 소비는 둘, 나머지 여섯은 리스너보다 먼저 선언만 — 큐는 리스너가 만드므로 비용 0. `touched` 필터는 최적화가 아니라 버그였다: `topics_updated`에는 그 필드가 없고 미러는 모르는 필드를 무시하므로 실제 이벤트의 **100%** 를 건너뛰었을 것이다. **미러의 세 규칙**은 근거가 하나다 — deferq는 역직렬화 실패도 ack하고(DLQ 없음) pydantic 에러를 `logger.exception`·Sentry로 보내는데, 그 에러는 거절한 값을, 필드 누락이면 **입력 문서 전체**를 인용한다. 그래서 모르는 필드 무시·필수 필드 없음(`null`도 부재)·식별자는 `str`이다. 못 쓰는 값은 플로우가 digest와 함께 떨군다. `discoverable`은 `bool | None`(false = 그 소유자 공개 row 전부 삭제라, 잘린 payload와 의도적 철회가 구별돼야 한다), `user_registered`의 `email`은 읽을 attribute 자체가 없다. `cli publish <event>` 여덟 서브커맨드. 리스너 rename이 버리는 큐는 **binding을 유지한 채 사본을 모은다** — 로컬에서 실제로 관찰(compose worker가 소스를 bind-mount하고 `.py`마다 재시작해 편집 중간 이름이 큐를 선언, 메시지 2건 적재). 배포 브로커에서 `deferq.arm_refresh_on_user_topic_updated`를 손으로 지워야 한다. 검증: 두 종류 3건 → `refresh.armed` ×3 → `refresh.delivered` ×1, 잘못된 user_id → 경고 1건(값 없이 digest·길이). 1014 tests. 리뷰 2회 지적 22건 전부 반영.
 
 - [x] **6. 1-4b 저장 모델** 🟢
@@ -111,12 +112,26 @@
   **알아낸 것**: 레지스터 §9의 두 행(`attribution.predicted_room_ttl_hours`, `friends.tombstone_ttl_days`)에 출처 칸이 아예 없었다 — 71개 필드에 출처를 달다가 `decisions.md`까지 가서 R51·R50을 찾아 채웠다.
   PR: #34 (머지 2026-09-12) · 기획 #79
 
+- [ ] **13-2. 친구 게이트가 내려갔다 — `discoverable`에 출처가 생긴다(R55·R56·R57)** 🔴
+  계획에 없던 항목이고, 1-9보다 **앞에** 와야 한다 — 지금 코드로는 운영에서 모든 답이 빈 답이라, 그 상태로 잰 숫자는 아무 뜻이 없다.
+  **왜**: bourbon-api #325가 `_agent_reachable`(친구 or `agents.public`)로 게이트를 내렸고, #326이 `agents.public`을 topic visibility에서 파생시킨다. 그런데 R23이 요청한 `discoverable`은 **만들어지지 않았고** `personal_agent_visibility_changed`도 없다. 우리 컬럼은 `false`로 태어나 아무도 뒤집지 않는데 후보 조회·CF 스윕·IDF가 전부 그것을 조인하므로, 운영에서 **모든 추천이 조용히 빈 답**이 된다. 같은 날 topic-api #68·#69가 R48에 답했다 — `bourbon.topic_visibility_changed`(revision 없음)와 `consistent=true`.
+  **할 것**: 재조회가 `consistent=true`로 읽고(R56), row를 교체하는 **같은 트랜잭션에서** `discoverable`을 파생한다(R57 — 읽어 온 집합에 `public` row가 있나). `personal_agent_visibility_changed` 미러·리스너·흐름과 `agents.visibility_changed_at`을 지운다. 플래그는 후보 조회의 `public` 갈래에만 붙인다 — friends 갈래까지 막으면 public topic 없이 친구에게만 공개한 소유자가 자기 친구에게도 안 보이는데 게이트는 그 사람을 통과시킨다.
+  **남기는 것**: `public` 갈래의 `discoverable` 조건은 이제 row의 존재가 함의해 중복이다. 그래도 남긴다 — O22(추천 목록 옵트인)가 생기는 날 일을 하게 되고, 그날 다시 넣는 것은 조용한 노출 버그가 되는 방향이다. 코드 주석에 그 이유를 적는다.
+  **한 것**: 커밋 여섯. (1) 재조회 읽기에 `consistent=true`, 요청자 조회에는 넣지 않음 — 두 메서드가 이미 갈라져 있어 비용 0. (2) 미러를 `topic_visibility_changed`로, `topic_revision` 제거, 계정 삭제(`topic_id` 없음) 경로 테스트. (3) `touch_agent`가 `discoverable`을 **받는다**(주지 않으면 안 건드린다) — row 교체와 같은 문장·같은 잠금·같은 트랜잭션. (4) `worker/visibility.py`·미러·두 문장·테스트와 `visibility_changed_at`(마이그레이션 0007) 삭제. (5) 플래그를 `public` 갈래로, `published_by`도 tier별로. (6) 옛 배치를 설명하던 문서 여섯 곳.
+  **알아낸 것 둘**: (a) 합성 생성기의 `agent_discoverable_rule` 예외 2%가 **표현 불가능**해졌다 — 두 적재 경로가 같은 규칙을 돌리므로 예외가 있으면 §6-1의 row diff가 0이 될 수 없다. 재던 값이 불변식으로 바뀌었다. (b) 정답 모델(`synthetic/truth.py`)도 tier별 두 갈래로 다시 썼다 — 생성기 규칙상 public row의 소유자는 반드시 discoverable이라 한 갈래로 접어도 통과하지만, 그러면 정답이 서비스와 **규칙이 아니라 우연**에 대해 합의하게 된다.
+  **리뷰가 잡은 것**(커밋 뒤 리뷰 패스, 2026-09-13): 초록 테스트로는 하나도 안 잡히는 것들이었다 — `touch_agent` 문장 테스트가 `True`만 검사했고(위험한 건 `False`다), 정답 모델의 전수 검사를 40건 표본으로 좁혀놨고, README가 **없어진 CLI 서브커맨드를 실행하라고** 안내하고 있었고, 계정 삭제가 `agents` row를 되살렸다(빈 재조회는 INSERT 없이 UPDATE만 하게 고쳤다).
+  **그리고 R58이 여기서 나왔다**: 플래그를 `public` 갈래로 옮겼는데 **소유자 단위로 세는 세 곳**이 아직 소유자 단위 하나로 답하고 있었다 — IDF(`holders`가 inner join이라 friends-only 소유자만 가진 topic의 row가 통째로 사라졌다), CF 게이트의 개인화 대리 지표, 합성 생성기의 인기 가중치(이게 제일 아팠다 — friends-only 소유자가 대화 상대가 못 돼서 **1-9가 이번 변경을 측정할 대상을 만들지 못했다**). 셋 다 `rows_visible_to_somebody`(요청자를 뺀 같은 조건) 하나를 읽게 했고, `_eligible`과 그 관계는 `_showable` 한 식에서 나온다 — 두 갈래 규칙을 두 번 적는 것이 이번 항목이 없애려던 바로 그 모양이라서.
+  **감수한 것 하나, 그리고 재봤다**: R58의 새 IDF 분모는 타입 ③ 요청 경로에서 **12배 비싸다** — 19,811 agents / 65,229 row에서 9.9~14.1 ms, 예전 것은 0.78~0.84 ms. 쿼리당 한 번이고 상관 서브쿼리는 아니다(InitPlan). **쿼리 모양은 답이 아니다**: semi-join 형태도 9.0~9.2 ms로 10%만 줄고 둘 다 row 테이블 전체를 읽는다. 진짜 문제는 요청마다 센다는 것이고 R58 전에도 그랬다 — 예전 것이 싸서 안 보였다. **1-7로 넘겼다**: 모집단을 `popularity`와 같은 모양의 주기 스냅샷(`population_stats`)으로 옮긴다.
+  **테스트**: 1,574 유닛 / 1,706 라이브(항목 13-1 뒤 1,564 / 1,695).
+  PR: —
+
 - [ ] **14. 1-9 검증** 🔴
   합성 10만 유저로 품질·지연 시간·불변식 위반 0건 측정, 결과를 이 저장소 검증 문서에 기록. `topic_api.timeout_ms` 값 확정.
   PR: —
 
 - [ ] **15. 1-10 배포 준비** 🟢
   요청서 발송(`requests/`), `DATABASE_URL`의 `optional: true` 제거, Redis DB 번호 반영, `INGEST_BASE_URL` 등 잔여 키 정리, go-live 차단 항목 해소.
+  **브로커에서 손으로 지울 큐 둘**: `deferq.arm_refresh_on_user_topic_updated`(항목 5)와 `deferq.arm_refresh_on_topic_visibility_changed`가 대체한 `deferq.arm_refresh_on_user_topic_settings_updated`(항목 13-2). 둘 다 아무도 발행한 적 없는 이름이라 비어 있지만, 버려진 큐는 binding을 유지한 채 사본을 모은다.
   PR: —
 
 ## 미룬 소소한 것 (해당 PR에서 되짚기)
@@ -132,10 +147,10 @@
 - `interactions`는 계약이 정한 `(actor, owner, room_id)` PK를 그대로 둔다 — `started_at` 월 파티셔닝을 하려면 그 컬럼이 키에 들어가야 하고, #23에서 더한 `UNIQUE (room_id)`가 그 자리를 대신 맡을 수 있다. 계약 편집이라 오너 판단.
 - 완료 조건의 "`topic_revision` 복제 지연 시 재시도"는 하지 않았다 — topic-api의 목록 응답에 revision이 없고, 디바운스는 이벤트의 revision을 **설계상** 버린다(유저당 uid 하나짜리 슬롯을 upsert하므로 최댓값을 합칠 자리가 없다). 코드로 흉내 내는 대신 topic-api에 대한 요청으로 남긴다.
 - 오버레이가 `SETTINGS_OVERRIDES_PATH`에 파일을 마운트하는 날 `test_the_worker_pod_outlives_the_delivery_it_may_be_draining`이 조용히 무의미해진다 — 테스트는 레지스터의 **코드 기본값**을 읽고 `worker/app.py`는 `get_settings()`를 읽는다. 테스트 docstring에 적어뒀고, 오버레이가 실제로 마운트하는 PR에서 고친다.
-- `agents`에 `visibility_changed_at`을 더했다(마이그레이션 0003) — 계약 §6 `agents` 값 목록에 한 줄 추가이고 읽는 쪽은 그대로다. 순서 없는 이벤트 둘을 비교할 자리가 필요해서지 새 의미가 아니다.
+- ~~`agents`에 `visibility_changed_at`을 더했다(마이그레이션 0003)~~ — **13-2에서 지운다**(R57): 플래그가 재조회의 파생값이 되면서 비교할 이벤트 둘이 없어졌다. 원래 이유는 아래 그대로 둔다. 순서 없는 이벤트 둘을 비교할 자리가 필요해서지 새 의미가 아니다.
 - ~~**읽기가 `agents.discoverable`을 조인해야 한다**(1-5)~~ — **했다**(항목 10). 계약 §6의 후보 조회 쿼리에는 그 조인이 없지만, 플래그가 false로 시작하고 topic 이벤트가 그보다 먼저 row를 만들므로 `visible_topic_rows`에는 비공개 소유자의 row가 정상적으로 존재한다. 후보 조회와 응답 직전 재확인 둘 다 `agents`를 INNER JOIN 하고 `discoverable`을 조건에 넣으며(`agents` row 자체가 없으면 "말 안 한" 것이지 허락한 것이 아니다), 공개 row를 가진 비공개 소유자(walkthrough의 F)로 라이브 테스트가 그것을 지킨다. 타입 ③ 소스도 같은 조건을 써야 한다(1-7).
 - **`rank.w_recency`는 지금 아무 효과가 없다.** 레지스터 §2에 가중치 행은 있는데 감쇠 스케일 행이 없다 — "얼마나 최근이면 1인가"를 정하지 않으면 0~1로 만들 수 없고, 코드에 반감기를 지어내면 R39가 "설정은 한 곳"이라고 한 그 한 곳이 둘이 된다. 입력(`visible_topic_rows.updated_at`)은 이미 있으므로 행 하나면 켜진다. 1-7에서 `popularity`(소스가 그때 생긴다)와 같이 본다 — 둘 다 지금은 `present`에 없고 가중합이 0을 곱한다.
 - **walkthrough §3-1의 "점수 상위 3개"는 코드가 그대로 할 수 없다.** grounding은 그룹당 topic 하나를 확정하거나 못 하거나이고 그룹에 점수가 없다. 구현은 그룹 순서로 앞에서 `explicit.topic_max`개를 자른다 — 0번이 verbatim 그룹이라 무엇이 잘리든 이용자가 실제로 친 말은 검색된다. 그룹에 confidence가 생기는 날 다시 볼 문장.
 - **API 프로세스가 DynamoDB 클라이언트가 됐다**(항목 10). 결정 로그와 예측 room 인덱스를 답할 때마다 쓴다. 워커와 달리 부팅 때 테이블을 확인하지 않는다 — 그 두 쓰기는 이미 맞는 답에 대한 증거라 실패해도 답이 나가야 하고, 확인을 넣으면 "지금 DynamoDB가 닿나"가 모든 추천 앞에 서기 때문이다. dev·prod 파드가 그 테이블에 쓸 수 있는지는 배포 전 확인 항목이다.
 - **코드 상수 둘이 레지스터 행 후보다**: 저널 쓰기 예산(3 s — 답이 나간 뒤의 쓰기가 요청을 붙잡는 상한)과 DynamoDB 전송 타임아웃(connect 2 s / read 3 s / 2회). 둘 다 "실패가 얼마나 비싼가"를 정할 뿐 답의 모양을 정하지 않아 지금은 코드에 뒀다. 1-9에서 실측하며 레지스터로 올릴지 본다.
-- bourbon-api의 `ensure_agent_dm_room`이 아직 **친구가 아니면 방 생성을 거부**한다(`FriendshipRequiredError`). 오늘 기준으로 비친구에게 추천이 나가도 채택 자체가 불가능하다 — R46이 "친구 게이트를 풀면서"라고 적어둔 그 게이트다. 우리 일정이 아니라 플랫폼 일정 항목.
+- ~~bourbon-api의 `ensure_agent_dm_room`이 친구가 아니면 방 생성을 거부한다~~ — **해결**(2026-09-13, #325). 대신 남은 것 셋은 우리가 손댈 수 없는 것들이다(요청서 bourbon-api §2-2): `agents.public`에 **백필이 없고** 참조된 일회성 스크립트가 그 repo에 없다(기존 유저는 topic visibility를 한 번 건드릴 때까지 403), 리컨사일이 실패하면 deferq에 재시도가 없어 플래그가 낡은 채로 남는다, 그리고 게이트가 보는 `agent.enabled`·소유자 활성 상태·agent row 존재를 우리는 못 본다. 셋 다 노출이 아니라 **눌리지 않는 카드**로 나타난다.
