@@ -52,6 +52,7 @@
 | `rank.for_you.w_agent_maturity` | 0.1 | ③: agent 성숙도 | 올리면 신규 agent가 for-you에서 뒤로 밀린다. walkthrough §5-5 예시는 이 항을 0으로 두고 계산했다 | 분석 |
 | `rank.for_you.w_cf_max` | 0.2 | 게이트가 `w_cf`를 올릴 때의 상한 | 올리면 CF가 이길 때 개인화가 강해지고, 로그가 얇은 유저에게는 노이즈가 커진다 | walkthrough §5-5 예시 |
 | `rank.for_you.w_persona` | 0 | ③: `persona_similarity`(계약 §7, **R42 예약**). 요청자와 소유자의 HEXACO 성향 벡터 유사도. **시작값 0.** 입력 경로가 열리고(O20) 올리는 규칙이 정해질 때까지 0이다 | 올리면 topic이 달라도 성향이 맞는 소유자가 앞선다. 입력 경로가 없는 동안은 어떤 값이어도 효과가 없다(feature가 0). 사람이 임의로 올리는 값이 아니다 — 규칙은 O20 | R42 |
+| `rank.recency_half_life_days` | 30 | `recency` feature의 반감기. 소유자의 마지막 topic 갱신이 이만큼 지나면 0.5, 그 두 배면 0.25다 (`0.5^(경과일/반감기)`) | 내리면 최근에 topic을 손본 소유자만 이 항의 값을 갖고 나머지는 빠르게 0에 수렴한다. 올리면 이 항이 거의 모두에게 1에 가까워져 `rank.w_recency`가 순서를 바꾸지 못한다. **이 행이 없으면 `rank.w_recency`는 아무 효과가 없다** — "얼마나 최근이면 1인가"를 정하지 않으면 `updated_at`을 0~1로 만들 수 없고, 코드에 반감기를 지어내면 설정의 집이 둘이 된다 | R19·R31, 값은 분석(확정은 1-9) |
 | `rank.w_recency` | 0.05 | 모두: 소유자의 마지막 topic 갱신이 최근인가 | 올리면 오래 활동하지 않은 소유자의 agent가 더 내려간다. 하드 제외는 하지 않는다(R31) — 이 값이 그 대신이다 | R19·R31 |
 | `rank.w_tier_is_friends` | 0.05 | 모두: 근거 row가 friends tier인가 | 올리면 친구에게만 공개한 topic으로 매칭된 agent가 앞선다. 측정 뒤 조정 | R32 |
 
@@ -84,6 +85,7 @@
 | `popularity.window_days` | 30 | 세는 기간 | 올리면 옛 인기가 오래 남는다 | R29 |
 | `popularity.half_life_days` | 7 | 시간 감쇠 반감기 | 내리면 최근 며칠의 대화가 지배한다(유행에 민감) | R29 |
 | `popularity.use_confidence` | true | 대화 시작을 1로 세지 않고 `cf.confidence_*`와 같은 식으로 가중 | 끄면 짧은 대화 여러 번이 긴 대화 한 번을 이긴다 | R29 |
+| `popularity.refresh_minutes` | 30 | 워커가 `popularity` 표를 다시 만드는 주기. 한 사이클은 `interactions` ⋈ `room_turns` 집계 SQL 한 문장이다 | 내리면 새 대화가 인기도에 빨리 반영되고 그만큼 집계가 자주 돈다. 반감기가 7일이라 30분의 지연은 점수를 눈에 띄게 바꾸지 않는다 | R29, 값은 분석 |
 | `popularity.new_agent_prior` | 0.05 | 대화 0건 agent에게 주는 사전값(정규화 뒤 0~1 기준) | 올리면 신규 agent가 인기 목록에 섞여 들어간다(콜드스타트 완화, 품질 노이즈 증가) | R29(부스트 있음), 값은 분석 |
 
 ## 6. 타입 ③ 갱신 (R19·R36)
