@@ -225,6 +225,8 @@ LLM 확장은 비용이 있으므로 검증에서는 **쿼리 200개만** 실제
 
 `population_stats(snapshot_date, window_days, param, value_json)` 한 테이블. 하루 한 번 worker의 주기 작업이 `window_days=90`으로 §8-1의 값을 계산해 한 줄씩 넣는다. `value_json`은 평균 하나가 아니라 **퍼센타일(p10/p50/p90/p99)과 샘플 수**를 함께 담아, 생성기가 Poisson 대신 경험 분포를 직접 쓸 수 있게 한다. 개인 식별자는 요약에 들어가지 않는다.
 
+**이 표는 서로 무관한 writer 둘이 `param`으로 나눠 쓴다.** 위의 보정 배치가 `window_days=90`으로 하루 한 번, 그리고 IDF의 모집단이 `param='content.idf_population'`·`window_days=0`·`value_json={"owners": n}`으로 `content.population_refresh_minutes`마다(R59). **`window_days=0`은 "지난 며칠"이 아니라 "지금 서 있는 것의 수"라는 뜻**이고, 읽는 쪽이 키의 그 자리를 조건에 넣으므로 같은 param을 다른 window로 적으면 조용히 안 읽힌다.
+
 같은 작업이 `params_measured.json`(§5 출력 형식의 `params.json`과 같은 스키마)을 낸다. 생성기는 `--params params_measured.json`으로 받고, 검증 프로토콜(재설계 §6)은 실측 파일로 다시 돈다. 실측이 없는 파라미터는 §2의 기본값이 남고 파일에 `source: "default"`로 표시된다.
 
 ### 8-4. 자동으로 바뀌면 안 되는 것

@@ -140,7 +140,7 @@
 | `content.decay_per_hop` | 카탈로그 계층에서 1 hop 떨어진 일치의 가중 | 올리면 넓은 상위 topic만 겹쳐도 점수가 커진다(정밀도 하락). topic-api 검색 설정과 같은 값에서 시작 | R25 |
 | `content.max_hops` | 이 hop을 넘는 관계는 0 | 올리면 거의 모든 topic이 서로 관련 있게 되어 content가 인기도처럼 된다 | R25 |
 | `content.idf` | 흔한 topic의 겹침을 `log(답에 나올 수 있는 소유자 수 / 그 topic을 가진 소유자 수)`로 낮춘다 | 끄면 모두가 가진 topic이 점수를 지배한다 | R25, 분모는 R58 |
-| `content.population_refresh_minutes` | 워커가 그 분모(답에 나올 수 있는 소유자 수)를 세어 `population_stats`에 한 줄 쓰는 주기 | 올리면 분모가 세계보다 더 뒤처지고, 내리면 공개된 row 전체 위의 집계가 그만큼 자주 돈다. 점수에 로그로 들어가므로 사이클 사이에 몇 %가 움직여도 순위는 바뀌지 않는다. `popularity.refresh_minutes` 옆이 아니라 이것을 읽는 소스 옆에 두었다 | R59, 값은 분석 |
+| `content.population_refresh_minutes` | 워커가 그 모집단(답에 나올 수 있는 소유자 수, 나누는 쪽)을 세어 `population_stats`에 한 줄 쓰는 주기 | 올리면 분모가 세계보다 더 뒤처지고, 내리면 공개된 row 전체 위의 집계가 그만큼 자주 돈다. 점수에 로그로 들어가므로 사이클 사이에 몇 %가 움직여도 순위는 바뀌지 않는다. `popularity.refresh_minutes` 옆이 아니라 이것을 읽는 소스 옆에 두었다 | R59, 값은 분석 |
 | `catalog.path` | 빌드 때 topic-api repo에서 같은 경로로 복사한 카탈로그 파일. `built_at`을 결정 로그에 기록 | 파일이 바뀌면 재배포. 모르는 topic_id가 오면 정확 일치만 적용하고 `catalog.unknown_topic_count` 지표로 남긴다 | R26 |
 
 ## 9. 워커·적재
