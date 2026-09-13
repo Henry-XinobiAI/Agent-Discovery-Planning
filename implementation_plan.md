@@ -88,7 +88,7 @@ CLI: `python -m cli publish <event> …` 이벤트마다 하나.
 
 - `popularity` 소스(R29: 30일, 반감기 7일, confidence 가중, 신규 항목 prior, 최대값으로 정규화).
 - `content_similarity` 소스(R25: IDF × `0.6^hop`, 양방향 최단 hop ≤ 3, 경로당 가장 구체적인 일치 하나, drawer 통과, `catalog_edges`로). 모르는 topic id → 정확 일치 + 지표.
-- ~~IDF 모집단을 주기 스냅샷으로 옮긴다~~ — 이 절이 끝난 **뒤에** R58이 더한 항목이라 여기가 아니라 진행표 **13-3**이다. 1-7이 만든 주기 job이 그 자리를 이미 갖고 있다.
+- ~~IDF 모집단을 주기 스냅샷으로 옮긴다~~ — 이 절이 끝난 **뒤에** R58이 더한 항목이라 여기가 아니라 진행표 **13-3**이고, 거기서 끝났다. 1-7이 만든 `popularity` 사이클에 얹지 않고 **별도 루프**로 뒀다(R59): 하나의 `try`가 사이클 전체를 삼키므로 인기도 집계가 실패하면 모집단까지 멈춘다.
 - `UserQuery`, 이미 대화한 상대 제외와 후보 소진 뒤 재노출(R28, `talked_before`는 로그만), 구간 섞기(R20, seed = `recommendation_id`), `cf_candidates` 없으면 콜드스타트 경로.
 - `/discover/for-you` + 커서.
 

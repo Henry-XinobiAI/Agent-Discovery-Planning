@@ -534,6 +534,7 @@ score = w_pop·popularity + w_content·content_similarity(정규화) + w_cf·cf_
 ```
 interactions + turn 카운터 + visible_topic_rows + agents + friends
    ──▶ 하루 1회 배치 ──▶ population_stats (snapshot_date, window_days, param, value_json: 퍼센타일 + 샘플 수)
+                            └ 같은 표를 IDF 모집단도 쓴다: param='content.idf_population', window_days=0 (R59, 스펙 §8-3)
    ──▶ params_measured.json (합성 생성기 params.json과 같은 스키마, 측정 안 된 값은 source: "default")
    ──▶ 합성 검증을 실측 파라미터로 다시 돈다
 
