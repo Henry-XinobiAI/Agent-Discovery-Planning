@@ -141,7 +141,18 @@
 - [ ] **15. 1-10 배포 준비** 🟢
   요청서 발송(`requests/`), `DATABASE_URL`의 `optional: true` 제거, Redis DB 번호 반영, `INGEST_BASE_URL` 등 잔여 키 정리, go-live 차단 항목 해소.
   **브로커에서 손으로 지울 큐 둘**: `deferq.arm_refresh_on_user_topic_updated`(항목 5)와 `deferq.arm_refresh_on_topic_visibility_changed`가 대체한 `deferq.arm_refresh_on_user_topic_settings_updated`(항목 13-2). 둘 다 아무도 발행한 적 없는 이름이라 비어 있지만, 버려진 큐는 binding을 유지한 채 사본을 모은다.
-  PR: —
+
+  **2026-09-14에 앞당겨 끝낸 것 셋** (1-9보다 먼저 해야 dev에서 아무것도 못 돌린다):
+  - DynamoDB **dev 테이블 생성**. 다른 서비스들에 변동이 남아 있어 iac 대신 콘솔로 만들기로 했다(모두 확정되면 옮긴다). `bourbon-agent-discovery-tokyo-dev`, 콘솔 상태를 `table_definition()`과 대조해 전부 일치. dev IAM은 `bourbon-*-tokyo-dev` 와일드카드라 추가 작업이 없었다.
+  - **`serviceAccountName: bourbon-app`** 두 Deployment에. 없으면 pod가 네임스페이스 `default` SA로 떠서 **역할을 아예 안 맡는다** — 권한이 열려 있어도 테이블에 닿지 못한다. 코드 PR #37.
+  - 인프라 요청서 §1을 **구두 요청용으로** 재작성. 인스턴스 크기를 정하는 건 데이터가 아니라 커넥션이다(prod HPA 상한 90, 롤링 중 ~135 → `db.t4g.micro` 불가). 미리 물어야 할 것 둘: `rds.force_ssl`, 역할 `statement_timeout`. 기획 PR #86.
+
+  **새로 드러난 것 넷**:
+  - **prod IAM.** dev와 달리 prod의 `bourbon-app`은 테이블 ARN 하나(bourbon-agent 것)만 갖는다. prod 배포 전에 넓혀야 하고, GSI를 쓰므로 `<table>/index/*`도 있어야 한다(요청서 §5).
+  - **우리 자신의 첫 적재가 없다.** 저장소는 이벤트로만 찬다 — bourbon-api 클라이언트도 백필 스크립트도 없어서, go-live 시 기존 유저 전원이 우리에게 없다. **1-10의 go-live 전제 목록에 이 항목이 빠져 있었다**(남의 `agents.public` 백필은 적혀 있는데 우리 것은 없었다). bourbon-api의 배치 재색인 API(2026-09-14)가 유저 열거를 준다 — 여섯 번째 주기 잡 + 일회성 스크립트로 설계한다. 친구 관계는 그 API가 주지 않으므로 `friends` 미러는 별도 요청이 필요하다.
+  - `items.py`의 예측 룸 항목이 `served_at`을 **리터럴 문자열로** 쓴다. 그 이름이 GSI 키 속성(S)이라, 자연스러운 개선(epoch 정수)을 하는 순간 예측 룸 `PutItem`이 전부 `ValidationException`이 된다. 어떤 테스트도 지나지 않는 조합이다.
+  - `scripts/create_dynamodb_table.py`의 docstring이 "dynamodb-local과 dev 계정"을 말하는데, dev를 콘솔로 만든 지금 뒤쪽은 거짓이다. `DYNAMODB_ENDPOINT_URL`이 있을 때만 돌게 좁히면 테이블 모양의 두 번째 정의가 사라진다.
+  PR: #37 (부분) · 기획 #86
 
 ## 미룬 소소한 것 (해당 PR에서 되짚기)
 
@@ -160,6 +171,7 @@
 - ~~**읽기가 `agents.discoverable`을 조인해야 한다**(1-5)~~ — **했다**(항목 10). 계약 §6의 후보 조회 쿼리에는 그 조인이 없지만, 플래그가 false로 시작하고 topic 이벤트가 그보다 먼저 row를 만들므로 `visible_topic_rows`에는 비공개 소유자의 row가 정상적으로 존재한다. 후보 조회와 응답 직전 재확인 둘 다 `agents`를 INNER JOIN 하고 `discoverable`을 조건에 넣으며(`agents` row 자체가 없으면 "말 안 한" 것이지 허락한 것이 아니다), 공개 row를 가진 비공개 소유자(walkthrough의 F)로 라이브 테스트가 그것을 지킨다. 타입 ③ 소스도 같은 조건을 써야 한다(1-7).
 - **`rank.w_recency`는 지금 아무 효과가 없다.** 레지스터 §2에 가중치 행은 있는데 감쇠 스케일 행이 없다 — "얼마나 최근이면 1인가"를 정하지 않으면 0~1로 만들 수 없고, 코드에 반감기를 지어내면 R39가 "설정은 한 곳"이라고 한 그 한 곳이 둘이 된다. 입력(`visible_topic_rows.updated_at`)은 이미 있으므로 행 하나면 켜진다. 1-7에서 `popularity`(소스가 그때 생긴다)와 같이 본다 — 둘 다 지금은 `present`에 없고 가중합이 0을 곱한다.
 - **walkthrough §3-1의 "점수 상위 3개"는 코드가 그대로 할 수 없다.** grounding은 그룹당 topic 하나를 확정하거나 못 하거나이고 그룹에 점수가 없다. 구현은 그룹 순서로 앞에서 `explicit.topic_max`개를 자른다 — 0번이 verbatim 그룹이라 무엇이 잘리든 이용자가 실제로 친 말은 검색된다. 그룹에 confidence가 생기는 날 다시 볼 문장.
-- **API 프로세스가 DynamoDB 클라이언트가 됐다**(항목 10). 결정 로그와 예측 room 인덱스를 답할 때마다 쓴다. 워커와 달리 부팅 때 테이블을 확인하지 않는다 — 그 두 쓰기는 이미 맞는 답에 대한 증거라 실패해도 답이 나가야 하고, 확인을 넣으면 "지금 DynamoDB가 닿나"가 모든 추천 앞에 서기 때문이다. dev·prod 파드가 그 테이블에 쓸 수 있는지는 배포 전 확인 항목이다.
+- **API 프로세스가 DynamoDB 클라이언트가 됐다**(항목 10). 결정 로그와 예측 room 인덱스를 답할 때마다 쓰고, **읽기도 한다** — 타입 ③이 CF 풀을, 게이트가 `w_cf`를 읽는다(`composition.py`의 주석이 "reads none"이라고 말하고 있었다. 항목 15에서 고쳤다). 워커와 달리 부팅 때 테이블을 확인하지 않는다 — 확인을 넣으면 "지금 DynamoDB가 닿나"가 모든 추천 앞에 서기 때문이고, 실제로 걸린 것은 그보다 좁다: 두 쓰기는 저널이 로그로 떨구고, 게이트 읽기는 직전 값을 쥐고, **CF 풀 읽기만 그 요청을 500으로 만든다**(일부러 안 잡는다 — 계약이 정의한 `degraded` 값은 "낡은 pool"뿐이라 "못 읽은 pool"의 정책을 소스가 지어낼 수 없다). ~~dev·prod 파드가 그 테이블에 쓸 수 있는지는 배포 전 확인 항목이다~~ — **dev는 됐다**(항목 15: 테이블 생성 + `serviceAccountName`). prod는 IAM이 남았다.
 - **코드 상수 둘이 레지스터 행 후보다**: 저널 쓰기 예산(3 s — 답이 나간 뒤의 쓰기가 요청을 붙잡는 상한)과 DynamoDB 전송 타임아웃(connect 2 s / read 3 s / 2회). 둘 다 "실패가 얼마나 비싼가"를 정할 뿐 답의 모양을 정하지 않아 지금은 코드에 뒀다. 1-9에서 실측하며 레지스터로 올릴지 본다.
 - ~~bourbon-api의 `ensure_agent_dm_room`이 친구가 아니면 방 생성을 거부한다~~ — **해결**(2026-09-13, #325). 대신 남은 것 셋은 우리가 손댈 수 없는 것들이다(요청서 bourbon-api §2-2): `agents.public`에 **백필이 없고** 참조된 일회성 스크립트가 그 repo에 없다(기존 유저는 topic visibility를 한 번 건드릴 때까지 403), 리컨사일이 실패하면 deferq에 재시도가 없어 플래그가 낡은 채로 남는다, 그리고 게이트가 보는 `agent.enabled`·소유자 활성 상태·agent row 존재를 우리는 못 본다. 셋 다 노출이 아니라 **눌리지 않는 카드**로 나타난다.
+  **2026-09-14 갱신**: bourbon-api가 공통 배치 재색인 API(`?ids=` 또는 `?after=&limit=`)를 열었다. `users`가 `status`를, `agents`가 `public`·`enabled`를 실어 주므로 **"우리는 못 본다"던 셋이 모두 관측 가능해졌고**, `agents.public`의 낡은 값도 대조로 잡힌다. 요청서 bourbon-api §2-2 (1)의 "우리 쪽에는 이걸 알 방법이 없다"는 문장이 이제 거짓이다. 요청 경로가 아니라 주기 잡으로 쓴다(항목 15). 주의: 정렬이 id 순인데 `agents`는 uuidv7·uuidv5 혼재라 생성 순서가 아니다 — 증분은 `created_at` 기준. `next_cursor`는 한 순회 안에서만 유효.
