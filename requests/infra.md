@@ -99,7 +99,15 @@ topic-api에 주신 두 피드백을 처음부터 반영했다: 주 읽기 패�
 
 ## 4. RabbitMQ — 워커 계정 정보
 
-**요청**: 우리 워커가 이벤트 exchange를 구독할 AMQP 계정 정보(bourbon-agent와 같은 형태, Secret `DEFERQ_AMQP_URL`). 우리는 지금 발행하는 이벤트가 없다(계약 §9-2) — 소비(consume) 권한만 필요하다. dev에 이미 있다면 그대로 쓴다 — 워커 Deployment가 지금도 그 Secret으로 시작한다.
+**요청 1 — 계정**: 우리 워커가 이벤트 exchange를 구독할 AMQP 계정 정보(bourbon-agent와 같은 형태, Secret `DEFERQ_AMQP_URL`). 우리는 지금 발행하는 이벤트가 없다(계약 §9-2) — 소비(consume) 권한만 필요하다. dev에 이미 있다면 그대로 쓴다 — 워커 Deployment가 지금도 그 Secret으로 시작한다.
+
+**요청 2 — `deferq.*` 큐의 깊이 상한과 알람** (2026-09-16 추가, R61). 우리 워커는 **데이터베이스에 닿지 못하면 뜨지 않는다**. deferq가 raise한 리스너의 메시지를 ack하고 재전달도 DLQ도 하지 않아서, 뜬 채로 소비하면 그 이벤트는 영구 손실이고 안 뜨면 큐에 남기 때문이다. 그 선택의 대가를 우리가 혼자 지지 않는다는 것이 문제다 — 지금 우리 큐에는 `x-max-length`도 `x-message-ttl`도 없고, 브로커(`bourbon-rabbitmq-tokyo-*`)는 `SINGLE_INSTANCE`이며 deferq의 이벤트 exchange를 쓰는 서비스들이 같은 vhost를 공유하고, **큐 깊이를 보는 알람이 없다.** 장기 장애의 첫 신호는 RabbitMQ 자신의 메모리·디스크 알람인데 그것은 이미 **퍼블리셔가 막힌 뒤**에 울린다(모듈의 알람 설명 자체가 그렇게 적고 있다).
+
+덧붙여 **워커가 처음 뜨기 전에는 이 보존이 성립하지 않는다**: 큐와 바인딩을 컨슈머가 선언하므로, 우리 워커가 한 번도 뜬 적 없는 환경에서는 그 사이 발행된 이벤트가 라우팅되지 않아 브로커가 버린다(퍼블리셔에게는 성공으로 답한다). 그래서 이 §4는 계정 요청이기도 하다 — 자격 증명을 받아 워커가 한 번 뜨고 나면 그때부터 위의 이야기가 성립한다.
+
+구체적으로 둘을 부탁드린다. **(가)** 우리 여섯 큐에 `x-max-length`(또는 `x-max-length-bytes`)와 overflow 동작을 정책으로 걸어 주시고, 어느 값이 적절한지 — 며칠치 백로그를 감당할 수 있는 브로커인지 — 알려 주시면 우리 쪽 보존 기대치를 거기에 맞추겠다. **패턴을 `deferq.*`로 잡지는 말아 주시기 바란다**: deferq는 모든 서비스의 컨슈머 큐를 그 접두어로 짓기 때문에, 그 패턴의 정책은 메시지를 버리는 데 동의한 적 없는 다른 팀의 큐까지 같이 건드린다. 우리 것은 `deferq.count_turn_on_message_created`, `deferq.mirror_friends_on_friendship_changed`, `deferq.erase_on_user_deactivated`, `deferq.create_agent_on_user_registered`, `deferq.arm_refresh_on_topics_updated`, `deferq.arm_refresh_on_topic_visibility_changed` 여섯이다(이름이 바뀐 옛 큐 둘은 배포 때 우리가 손으로 지운다).
+
+**(나)** `MessageCount` 또는 그에 준하는 큐 깊이 알람. **임계는 브로커 용량 쪽에서 정해 주시는 편이 정확하다** — 우리 쪽 실측은 합성 모집단의 이벤트 건수뿐이고(합성 스펙 §6, 10만 유저·λ=10에서 총 920만 건, 그중 `friendship_changed` ≈366만 · `message_created` ≈290만) 실서비스 발생률은 아직 없다. 앞의 것은 그래프를 처음 채우는 성격이라 정상 상태의 비율과 다를 수 있다.
 
 ## 5. 필요 없는 것
 
@@ -115,3 +123,4 @@ topic-api에 주신 두 피드백을 처음부터 반영했다: 주 읽기 패�
 2. §1-3 — `rds.force_ssl`이 켜져 있는지, 역할에 `statement_timeout` 기본값이 걸리는지.
 3. §3 — Redis DB 번호.
 4. prod terraform 코드화 시점. 그 전에 dev 테이블·GSI 정의를 최종 확인해 드리고, §5의 prod IAM도 같이 처리하면 된다.
+5. §4 — `deferq.*` 큐에 걸 수 있는 깊이 상한과, 우리가 기대해도 되는 백로그 기간. 알람 임계도 브로커 용량 쪽에서 정해 주시는 편이 정확하다.
