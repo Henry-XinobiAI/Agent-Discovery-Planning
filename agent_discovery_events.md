@@ -16,7 +16,7 @@
 
 | 우리가 필요한 것 | 지금 있나 | 우리 처리 | 요청할 것 |
 |---|---|---|---|
-| 유저 topic이 바뀌었다는 힌트 | **있음** `bourbon.topics_updated` (topic-api 워커, persona 동기화로 변경된 topic마다 1건) | 힌트로 받고 그 유저의 공개된 집합을 **재조회한다** (§2-1) | 없음 |
+| 유저 topic이 바뀌었다는 힌트 | **있음** `bourbon.topics_updated` (topic-api 워커, persona 동기화 **1회당 1건** — 움직인 topic을 전부 싣는다, #76·2026-09-17) | 힌트로 받고 그 유저의 공개된 집합을 **재조회한다** (§2-1) | 없음 |
 | 유저가 visibility를 바꿨다는 힌트 | **있음** `bourbon.topic_visibility_changed` (topic-api #68 — 움직인 topic마다 1건. api 프로세스에 AMQP가 붙었다) | 같은 재조회 | 없음 — R48의 답이 왔다(§2-2, R55) |
 | 공개된 집합 조회 | **있음** `GET /api/internal/svc/topic/users/{id}/topics?visibility=public&visibility=friends&consistent=true` (반복 파라미터, 기본 `public`) — 항목마다 `score, visibility, revision, updated_at, support, descriptions` | 재조회의 실제 호출. `consistent`는 topic-api #69가 더한 DynamoDB 강한 읽기이고 재조회에만 켠다(R56) | 없음 |
 | 요청자 자신의 프로필 조회 | **있음** 같은 route, `visibility=public&visibility=friends&visibility=private` — `hidden`은 요청하지 않는다(R22) | 타입 ②의 섹션·타입 ③ content 입력 — 요청 시 조회(R27) | 없음 |
@@ -49,8 +49,10 @@
 bourbon-agent ──bourbon.persona_updated──▶ topic-api worker
                                             │ sync_user(): grounding, 쓰기
                                             ▼
-                                   bourbon.topics_updated  ×(변경된 topic 수)
-                                   {user_id, topic_id, persona_revision, topic_revision}
+                                   bourbon.topics_updated  ×1 (sync 1회당)
+                                   {user_id, persona_revision,
+                                    topics: [{topic_id, labels, change,
+                                              topic_revision, shown_on_profile}]}
 ```
 
 - `worker/listener.py` `on_persona_updated_sync_topics`: 동기화 뒤 `changed`가 비어 있지 않으면 `_announce`가 topic마다 `topics_updated`를 발행한다. best-effort — 발행 실패는 경고만 남긴다. docstring이 소비자 계약을 이렇게 적는다: **"a consumer that missed an event converges on its next read of the user's topics."** 즉 topic-api 스스로 이벤트를 **힌트**로 정의했다.
@@ -66,18 +68,47 @@ bourbon-agent ──bourbon.persona_updated──▶ topic-api worker
 ### 2-1. `bourbon.topics_updated` — 있는 것을 힌트로 소비
 
 ```python
-class TopicUpdatedPayload(BaseModel):     # topic-api worker/events.py 그대로 미러
-    user_id: UUID
-    topic_id: TopicId
-    persona_revision: PositiveInt
-    topic_revision: PositiveInt
+class ChangedTopic(_Mirror):              # topic-api runtime/events.py의 ChangedTopicEntry
+    topic_id: str = ""
+    topic_revision: int | None = None
+
+class TopicsUpdatedPayload(_Mirror):
+    user_id: str = ""
+    persona_revision: int | None = None
+    topics: list[ChangedTopic] = []
 ```
+
+**2026-09-17 정정 — 알갱이가 바뀌었다 (topic-api #76, `4ee8177`).** 위 블록은 새 모양이다. 옛 모양은
+`{user_id, topic_id, persona_revision, topic_revision}`이었고 **변경된 topic마다 1건**이었다. 지금은
+**sync 1회당 1건**이고 움직인 topic이 전부 `topics[]`에 실린다. `persona_revision`은 봉투로 올라갔고
+`topic_revision`은 항목 안에 남았다. 이어서 #79(`4d4e0bc`)가 항목에 `shown_on_profile`을 더했다.
+
+**우리 흐름은 바뀌지 않는다** — 리스너는 여전히 `user_id`만 읽고 유저 단위로 재조회를 건다. 이벤트 10건이
+1건이 되어도 재조회는 원래 1회였다. 미러가 `extra="ignore"`에 전 필드 optional이라 갱신 전에도 이벤트가
+유실되지 않았다(확인함: 새 payload가 `topic_id=""`로 파싱된다).
+
+**바뀐 것은 힌트의 중복도다 — 크기를 정확히 적어 둔다.** 옛 코드도 AMQP 연결을 루프 **밖에서 한 번** 열고
+전체가 하나의 30초 타임아웃 안에 있었으므로(`4ee8177^:worker/announce.py`), 브로커가 막히면 예전에도 10건이
+다 사라졌다. 옛 알갱이가 견뎌 준 것은 **메시지 한 건의 실패**다 — 10건 중 9건이 나가면 그 9건 중 아무거나
+하나가 그 유저 전체를 재조회시켰다. 지금은 메시지가 하나뿐이라, 문장이 "**발행이 전부 실패해야** 그 유저가
+수렴하지 못한다"에서 "**그 발행이 실패하면** 수렴하지 못한다"로 바뀐다. 발행은 여전히 쓰기 뒤 best-effort고
+deferq에는 재시도도 DLQ도 없으므로, 그러면 우리 row는 다음 sync나 `topic_visibility_changed`까지 낡은 채로
+남는다. topic-api 자신의 주석이 이것을 적는다(`worker/announce.py`: "this loses every topic's announcement
+rather than one"). 요청할 것은 없고 — 그쪽에서는 정상적인 트레이드다 — **우리 쪽 백필/주기 스윕의 근거가
+하나 늘었다**(항목 15).
+
+**미러하지 않는 필드 셋.** `labels`(3개 국어 이름)는 우리 라벨이 이미지에 실린 카탈로그에서 오고(R26),
+미러하면 "추천에 나온 topic"이 아니라 "움직인 topic"의 라벨을 갖게 되어 집합이 어긋난다 — 게다가 sync마다
+카탈로그 한 줄이 이벤트 로그(§6-1)에 쌓인다. `change`(`added`/`evicted`/`moved`)는 집합을 통째로 교체하는
+재조회가 쓸 수 없는 전이다. `shown_on_profile`은 프로필이 어떤 카드를 자기 이름으로 그리는가에 대한
+**그쪽 제품 규칙**이고(카탈로그 그래프에서 파생 — root이며 virtual이 아닐 것), 프라이버시 통제가 아니다.
+셋 다 도착하고 무시된다.
 
 **우리 처리**: 리스너는 `user_id`만 꺼내 유저 단위 debounce(수 초, 상한 1분)를 걸고 끝. task가 `GET /api/internal/svc/topic/users/{id}/topics?visibility=public&visibility=friends`를 호출해 그 유저의 공개된 row를 **통째로 교체**한다(없어진 것 삭제, 새것 upsert). 한 동기화가 topic 10개를 변경해 이벤트 10건이 와도 재조회는 1회다.
 
 **왜 스냅샷 이벤트를 요청하지 않나**: topic-api가 이미 "힌트 + 재조회"를 계약으로 정했고, 조회 route가 스냅샷 그 자체다. 우리가 필요한 스냅샷을 이벤트에 실어 달라고 하면 topic-api가 같은 조회를 발행 시점에 대신 하는 것뿐이다. 놓친 비공개 전환은 다음 힌트의 재조회가 고친다. 재조회가 하루에 한 번도 일어나지 않는 유저(비활성)는 어차피 바뀐 것이 없다.
 
-**topic_revision 활용**: 재조회 결과의 row `revision`이 이벤트의 `topic_revision`보다 작으면(복제 지연) 잠시 뒤 한 번 더 조회한다. 그 이상이면 정상.
+**topic_revision 활용**: 재조회 결과의 row `revision`이 이벤트의 `topic_revision`(이제 `topics[]` 항목 안에 있다)보다 작으면(복제 지연) 잠시 뒤 한 번 더 조회한다. 그 이상이면 정상.
 
 ### 2-2. `bourbon.topic_visibility_changed` — R48의 답이 왔다(R55)
 

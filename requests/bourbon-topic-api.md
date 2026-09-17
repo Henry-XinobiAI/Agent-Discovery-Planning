@@ -40,11 +40,21 @@
 
 ## 3. 그대로 쓰는 것 (변경 요청 없음)
 
-- `bourbon.topics_updated` (`user_id, topic_id, persona_revision, topic_revision`) — 힌트로 받고 재조회한다. 스냅샷을 이벤트에 싣는 요청은 하지 않는다.
+- `bourbon.topics_updated` (`user_id, persona_revision, topics[]` — #76·#79로 바뀐 모양, §3-1) — 힌트로 받고 재조회한다. 스냅샷을 이벤트에 싣는 요청은 하지 않는다.
 - `GET /api/internal/svc/topic/users/{user_id}/topics?visibility=public&visibility=friends&consistent=true` — 타인 row 재조회. 응답 항목 중 우리가 읽는 필드는 `score, visibility, revision, updated_at, support, descriptions`다. `consistent`는 #69로 생긴 것이고 이 읽기에만 켠다(§1-1).
 - 같은 route에 `visibility=public&visibility=friends&visibility=private` — 요청자 자신의 프로필(R22·R27). `hidden`은 요청하지 않는다.
 - `GET /api/internal/svc/topic/search/topics` — 타입 ① free text → topic 확정(기존 코드).
 - `data/catalog_dist/catalog.json` — 우리 이미지에 빌드 시 복사한다(R26). 카탈로그가 바뀌면 재배포한다. **그래프 route는 요청하지 않는다**(보류). 우리가 모르는 topic id가 응답에 오면 정확 일치만 적용하고 건수를 지표로 남긴다.
+
+## 3-1. 알려 드릴 것 (2026-09-17, #76·#79) — 요청 아님
+
+**#76을 우리 쪽에 반영했다.** `bourbon.topics_updated`가 sync 1회당 1건이 되고 `topics[]`를 싣는 것, #79가 항목에 `shown_on_profile`을 더한 것 둘 다 우리 미러에 들어갔다. 우리 리스너는 예전처럼 `user_id`만 읽고 유저 단위로 재조회를 걸기 때문에 흐름은 바뀌지 않았다. 미러가 `extra="ignore"`에 전 필드 optional이라 갱신 전에도 이벤트가 유실되지는 않았다. **요청할 것은 없고**, 아래 셋은 우리가 본 것을 적어 두는 것이다.
+
+**(1) 힌트의 중복도가 줄었다 — 그리고 대비는 우리 일이다.** 크기를 정확히 적는다: 옛 코드도 연결을 루프 밖에서 한 번 열고 전체가 하나의 타임아웃 안에 있었으니, 브로커가 막히는 경우는 예전에도 10건이 다 사라졌다. 옛 알갱이가 견뎌 준 것은 **메시지 한 건의 실패**다 — 9건이 나가면 그중 아무거나 하나가 우리에게 그 유저 전체를 재조회시켰다. 이제 메시지가 하나뿐이라 "발행이 **전부** 실패해야 그 유저가 수렴하지 못한다"가 "**그** 발행이 실패하면 수렴하지 못한다"가 됐다 — `worker/announce.py`에 스스로 적어 두신 "this loses every topic's announcement rather than one" 그대로다. deferq에 재시도도 DLQ도 없으므로 그러면 우리 row는 다음 sync나 `topic_visibility_changed`까지 낡은 채로 남는다. **그쪽에서 고칠 일이 아니라고 본다** — 발행을 best-effort로 두신 것은 쓰기를 지키기 위한 정상적인 트레이드이고, 답은 우리 쪽의 주기 스윕이다(항목 15). 적어 두는 이유는 하나다: 우리가 "이벤트를 못 받았다"고 말할 때 그 말이 이제 유실 1건이 아니라 **sync 1회**를 뜻한다.
+
+**(2) 세 필드는 도착하지만 우리가 들고 있지 않는다.** `labels`는 고맙지만 쓰지 않는다 — 우리 라벨은 이미지에 실린 `catalog.json`에서 오고(R26), 이벤트의 라벨은 "추천에 나온 topic"이 아니라 "움직인 topic"의 것이라 집합이 어긋난다. 게다가 sync마다 카탈로그 한 줄이 우리 이벤트 로그(계약 §6-1)에 쌓인다. `change`는 재조회가 집합을 통째로 교체하므로 쓸 자리가 없다. `shown_on_profile`은 그쪽 제품 규칙이고, 복제하면 규칙이 두 곳에서 읽히게 된다 — `topic/catalog/exposure.py`에 "expected to change"라고 적어 두신 그 이유 그대로다. 셋 다 미러에 필드가 없어 도착한 자리에서 버려진다.
+
+**(3) 문서 두 줄이 아직 옛 알갱이를 말한다.** 우리가 읽다가 헷갈린 곳이라 적어 둔다 — `runtime/visibility.py`의 "the grain ``bourbon.topics_updated`` already publishes at"과 `docs/logs.md`의 "`topics_updated`처럼 움직인 topic 하나당 한 줄". 둘 다 2026-09-14에 쓰였고 #76보다 앞선다. `shown_on_profile`은 `docs/persona-topics.md`에도 README에도 아직 없다.
 
 ## 4. 확인 질문
 
