@@ -25,7 +25,7 @@
 
 topic-api와 같은 방식이다. 라우터는 하나씩이고, 앱이 두 prefix로 두 번 붙인다.
 
-- **클라이언트 API** `/api/svc/agent-discovery/…`: edge-auth 사이드카가 `x-user-id`를 덮어쓴다. 요청자는 그 헤더다. 헤더가 없거나 UUID가 아니면 "인증 안 됨"이 아니라 "검사를 우회했다"이므로 403.
+- **클라이언트 API** `/api/svc/agent-discovery/…`: edge-auth 사이드카가 `x-user-id`를 덮어쓴다. 요청자는 그 헤더다. **헤더가 없거나 UUID가 아니면 401 `authorization_error`**(R62, 2026-09-17). 사이드카는 토큰 없는 요청을 막지 않고 **`x-user-id`를 제거해서** 통과시키므로 헤더의 부재는 "로그인하지 않았다"이고, 그 답은 401이다. 이 surface의 모든 route는 요청자를 필요로 한다 — 익명을 받는 route는 없다.
 - **내부 API** `/api/internal/svc/agent-discovery/…`: 게이트웨이의 내부 게이트만 지난다. edge-auth가 없으므로 **어떤 route도 `x-user-id`를 읽지 않는다.** 요청자는 body나 경로의 `user_id`다.
 
 타입 ①은 내부 API에만 있다(호출자가 bourbon-agent). 타입 ②③은 클라이언트 API가 기본이고, 내부 미러는 테스트·운영 확인·다른 서비스 용이다.
@@ -185,7 +185,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 | 상태 | 언제 | 타입 |
 |---|---|---|
 | 200 + 빈 목록 | 요청자에게 보일 수 있는 agent가 없다. "없다"와 "있지만 가려졌다"를 구분하는 값은 없다(§5 불변식 5) | 모두 (①은 `empty: true`, ②는 빈 `agents`, ③은 빈 `agents`) |
-| 403 | 클라이언트 API에서 `x-user-id` 없음/비정상 | ②③ |
+| 401 | 클라이언트 API에서 `x-user-id` 없음/비정상 — 로그인한 호출자가 없다(R62). `error_code`는 플랫폼 철자인 `authorization_error` | ②③ |
 | 404 | `by-topic/{topic_id}`의 topic이 요청자 것이 아님 | ② |
 | 422 | `topic_text`에서 확정된 topic이 0개 (요청이 모호함) | ① |
 | 503 | topic 확정을 시도하지 못했다(LLM·topic-api 무응답), 또는 저장소 무응답 | 모두 |
