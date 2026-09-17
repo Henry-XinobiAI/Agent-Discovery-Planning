@@ -158,8 +158,9 @@
   - ~~**타입 ② 순서 일치율** — 지표 함수는 있고 채점기에 연결하지 않았다~~ — **2026-09-15 완료**(항목 16-D).
 
 - [ ] **15. 1-10 배포 준비** 🟢
-  요청서 발송(`requests/`), `DATABASE_URL`의 `optional: true` 제거, Redis DB 번호 반영, `INGEST_BASE_URL` 등 잔여 키 정리, go-live 차단 항목 해소.
-  **브로커에서 손으로 지울 큐 둘**: `deferq.arm_refresh_on_user_topic_updated`(항목 5)와 `deferq.arm_refresh_on_topic_visibility_changed`가 대체한 `deferq.arm_refresh_on_user_topic_settings_updated`(항목 13-2). 둘 다 아무도 발행한 적 없는 이름이라 비어 있지만, 버려진 큐는 binding을 유지한 채 사본을 모은다.
+  요청서 발송(`requests/`), ~~`DATABASE_URL`의 `optional: true` 제거~~(2026-09-17 완료 — 코드 #48), Redis DB 번호 반영, `INGEST_BASE_URL` 등 잔여 키 정리, go-live 차단 항목 해소.
+  ~~**브로커에서 손으로 지울 큐 둘**: `deferq.arm_refresh_on_user_topic_updated`(항목 5)와 `deferq.arm_refresh_on_topic_visibility_changed`가 대체한 `deferq.arm_refresh_on_user_topic_settings_updated`(항목 13-2).~~ **dev에는 지울 것이 없다**(2026-09-17): 큐를 선언하는 것은 컨슈머이고(`deferq/_worker.py`가 시작할 때 exchange·큐·binding을 만든다) 발행자는 exchange만 만드는데, **워커가 들어간 뒤로 dev에 배포한 적이 없다**. 그 이름들은 거기 존재한 적이 없다.
+  **남는 것은 항목이 아니라 규칙이다**: 리스너 이름을 바꾸면 옛 큐가 고아로 남고, 고아 큐는 binding을 유지한 채 아무도 안 읽는 사본을 모은다. 이름을 바꾼 배포를 한 번이라도 받은 브로커마다 손으로 지워야 한다. 위 목록이 그 증거이기도 하다 — **틀렸다**. 로컬 브로커를 실제로 세어 보니 현재 리스너 여섯 외에 고아가 **셋**이고(`apply_visibility_on_personal_agent_visibility_changed`, `arm_refresh_on_user_topic_settings_updated`, `record_interaction_on_room_created`), 목록의 첫 이름은 그중에 없다. `record_interaction_on_room_created`는 R51·R52에서 방 이벤트도 내부 route도 받지 않기로 하며 사라졌는데 어디에도 적히지 않았다. 배포한 브로커에서는 **이름을 미리 적어 두는 대신 그때 세는 것**이 맞다.
 
   **2026-09-14에 앞당겨 끝낸 것 셋** (1-9보다 먼저 해야 dev에서 아무것도 못 돌린다):
   - DynamoDB **dev 테이블 생성**. 다른 서비스들에 변동이 남아 있어 iac 대신 콘솔로 만들기로 했다(모두 확정되면 옮긴다). `bourbon-agent-discovery-tokyo-dev`, 콘솔 상태를 `table_definition()`과 대조해 전부 일치. dev IAM은 `bourbon-*-tokyo-dev` 와일드카드라 추가 작업이 없었다.
@@ -184,7 +185,7 @@
   - **백필이 채울 수 없는 표가 하나 있다.** `interactions`는 **우리가 방을 예측해 둔 대화에만** 생긴다(R52) — 열거 API로 방을 받아 와도 예측 항목이 없으면 기록되지 않는다. 그래서 dev에서 CF가 도는 것을 보려면 추천 → 대화를 실제로 한 바퀴 돌리거나 행을 직접 심어야 하고, `cf.fit`·`cf.sweep`은 그때까지 매 주기 `no_model`/0건으로 끝난다.
   - 내부 유저 카탈로그가 `created_at`·`status`도 준다 — `agents.registered_at`에 넣을 값이 생긴다. **계정의 나이지 `user_registered`가 발행된 시각이 아니라는 것**만 알고 쓰면 된다(콜드스타트 보정이 재는 것이 후자다).
 
-  **여기서 남은 것**: **보존 스윕 셋**(`friends` tombstone / `room_turns` 고아 / `attributions`) — 인덱스는 이미 다 있으므로 쿼리 셋과 주기 잡 하나이고, 지금 다섯 개 도는 옆에 붙는다(위의 백필 잡과 함께 여섯·일곱 번째가 된다). 배포 전 차단 항목은 아니다 — 셋 다 없는 쪽이 안전한 방향으로 틀리고 증가율이 작다. 다만 그 잡들이 읽을 인덱스는 **이미 쓰기마다 비용을 내고 있다**. 그리고 이 항목 첫 줄의 `DATABASE_URL` `optional: true`는 **워커 Deployment의 것만 남았다** — API 쪽은 1-4e에서 공개 표면이 생기면서 이미 빠졌다.
+  **여기서 남은 것**: **보존 스윕 셋**(`friends` tombstone / `room_turns` 고아 / `attributions`) — 인덱스는 이미 다 있으므로 쿼리 셋과 주기 잡 하나이고, 지금 다섯 개 도는 옆에 붙는다(위의 백필 잡과 함께 여섯·일곱 번째가 된다). 배포 전 차단 항목은 아니다 — 셋 다 없는 쪽이 안전한 방향으로 틀리고 증가율이 작다. 다만 그 잡들이 읽을 인덱스는 **이미 쓰기마다 비용을 내고 있다**. 그리고 `DATABASE_URL`의 `optional: true`는 **둘 다 빠졌다** — API 쪽은 1-4e에서 공개 표면이 생기면서(`17fec36`), 워커 쪽은 2026-09-17에. 워커가 R61 이후 닿지 못하는 DB에 대해 뜨기를 거부하므로 그 플래그가 사주던 것은 재시작 한 번과 덜 구체적인 이유뿐이었고, 대가는 키가 없는 네임스페이스가 배포 가능해 보이는 것이었다. **배포 전에 dev Secret에 그 키가 있는지 확인해야 한다** — 없으면 이제 pod가 `CreateContainerConfigError`로 멈추고 로그가 없다.
   PR: #37 (부분) · 기획 #86 · 코드 #45 · 코드 #46 · 코드 #47 · 기획 #101
 
 - [x] **16. 1-9 잔여 측정** ✅
