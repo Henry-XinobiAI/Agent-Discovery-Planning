@@ -69,7 +69,7 @@
 |---|---|---|
 | S0 요청자 agent가 자기 근거를 결정적으로 검색한다 | 그런 단계가 없다. recall은 모델의 tool 선택이다 | 트리거를 tool 결정으로 둔다(§6 T0) |
 | S1 경계선에서 LLM answerability judge | 존재하지 않고, 두면 discovery 앞에 LLM 1회가 추가된다 | 두지 않는다 |
-| consultable 필터는 memory-api가 강제한다 | memory-api에 동의 모델·인증이 없다 | 첫 슬라이스는 우리 `agents.discoverable`, opt-in은 bourbon-api에 요청(§10) |
+| consultable 필터는 memory-api가 강제한다 | memory-api에 동의 모델·인증이 없다 | 첫 슬라이스(§15의 1번)는 우리 `agents.discoverable`, opt-in은 bourbon-api에 요청(§10) |
 | Phase F에서 이벤트로 projection | memory-api는 이벤트를 발행하지 않는다 | 빌드 manifest 폴링(§7-2) |
 | topic-api 신호는 관심이라 knowledge에 못 쓴다 | `knowledge` facet이 `score_detail`에 있다 | 미러에 컬럼으로 추가해 첫 근거 소스로 쓴다(§7-1) |
 | grounding은 memory 쪽 QID 어댑터 | 카탈로그가 QID를 1:1로 들고 있다. 다만 memory는 개체·클래스 축, 카탈로그는 주제·큐레이션 축이라 등식으로는 자주 빈다 | 기존 S2 grounding 한 번 + `topic_qid_map`으로 두 소스를 조회한다(§6 T2, §7-4). 커버리지는 측정 항목이다(§16) |
@@ -452,9 +452,9 @@ POST /api/internal/svc/agent-discovery/recommend/knowledge
 
 ## 9. 도메인 확장
 
-1차 초안은 "기존 `TopicQuery`·`SourceHit`·`ExplicitRanker`에 끼워 넣지 말라"고 했다. 이 문서는 그것을 **슬라이스별로** 본다.
+1차 초안은 "기존 `TopicQuery`·`SourceHit`·`ExplicitRanker`에 끼워 넣지 말라"고 했다. 이 문서는 그것을 **슬라이스별로**(§15) 본다. 그 경고의 이유 셋 — topic visibility를 동의로 간주, `SourceHit.tier`에 memory 의미를 넣음, `topic_score`를 evidence sufficiency로 읽음 — 은 전부 **memory-api 파생 근거를 topic row의 모양에 담을 때** 생기는 문제다. 1차 초안에는 그 근거밖에 없었다.
 
-- **슬라이스 1(소스 A만)**: need 하나는 grounding된 `topic_id`이고, 그것은 곧 `TopicQuery`다. 새 것은 need 여러 개를 한 요청에서 돌리는 것, `knowledge_facet`을 읽는 랭커 feature, set-cover다. 기존 도메인 위에 얹는 것이 맞다.
+- **슬라이스 1(소스 A만)**: need 하나는 grounding된 `topic_id`이고, 그것은 곧 `TopicQuery`다. 데이터는 진짜 topic row라 tier는 진짜 topic visibility이고 `knowledge_facet`은 topic-api가 그 row에 붙인 값이다 — 억지로 넣는 의미가 없고, 동의는 tier가 아니라 `agents.discoverable`로 따로 건다(§10-2). 새 것은 need 여러 개를 한 요청에서 돌리는 orchestration, `knowledge_facet`·coverage를 읽는 랭커 feature, set-cover, envelope이다. 기존 도메인 위에 얹는 것이 맞다. 여기서 새 `CandidateSource`를 만들면 `visible_topic_rows`를 읽는 코드가 둘이 되어 조금씩 다르게 굴러간다.
 - **슬라이스 2(소스 B)**: QID로 조회하는 새 `CandidateSource`와 새 `SourceHit` 종류가 필요하다. 여기서부터 `SourceHit.tier`에 memory 의미를 억지로 넣지 않는다는 1차 초안의 경고가 유효하다.
 
 새 도메인 후보: `KnowledgeNeed`(ConceptGroup + importance + kind), `NeedCoverage`, `CapabilityHit`(소스 B), `GroupPlan`, `KnowledgeRecommendation`. 새 stage 후보: `GroupPlanning` 하나. 나머지는 기존 stage의 파라미터 확장이다.
@@ -598,9 +598,11 @@ offline 합성 데이터로는 실제 answerability를 검증할 수 없다. §1
 
 ## 15. 구현 슬라이스
 
+**슬라이스**는 혼자서 배포되어 동작하는 증분 하나다. 각 슬라이스는 route·데이터·랭킹을 끝까지 갖춘 채로 앞 슬라이스 위에 얹히고, 뒤 슬라이스가 없어도 그 자체로 추천을 낸다. 나누는 기준은 **새로 생기는 의존성**이다 — 다른 팀의 일정에 걸리는 것이 슬라이스 경계가 되도록 잘라서, 그쪽이 늦어도 앞 슬라이스는 배포된다. 문서 앞부분의 "첫 슬라이스"는 아래 표의 1번이다.
+
 | 슬라이스 | 새 의존성 | 새 LLM 호출 | 답하는 질문 | 완료 조건 |
 |---|---|---|---|---|
-| **1. 소스 A만** | 없음 | 0 (스키마 확장) | 이 주제에 깊은 관심과 지식을 드러낸 사람 | route·envelope, `knowledge_facet` 미러, need 다중 grounding, 결정적 랭킹, 합성 모집단 측정 |
+| **1. 소스 A만** | 없음 | 0 (스키마 확장) | 이 주제에 깊은 관심과 지식을 드러낸 사람. **"아는 사람"과 "해 본 사람"은 구분하지 못한다** — topic row에 statement 종류가 없어 `knowledge_kind`는 추출·journal만 하고 랭킹에 쓰이지 않는다 | route·envelope, `knowledge_facet` 미러, need 다중 grounding, 결정적 랭킹, 합성 모집단 측정 |
 | **2. 소스 B** | memory-api **폴링만** | 0 | 구체적 근거 statement를 가진 사람 | 커버리지 측정(§16 질문 2)이 먼저. 그 뒤 `topic_qid_map`, `knowledge_capabilities`, 일곱 번째 루프, 두 소스 합산 랭킹, `source_b_stale` |
 | **3. T3-2 재점수** | memory-api **evidence route**(그쪽 신설) | 0 | 질문의 조건까지 맞는 사람 | route 계약 합의, 클라이언트, timeout·fallback, `stage1_final_overlap_at_k` journal |
 | **4. group** | 없음 | 0 | 두 need를 두 사람이 나눠 덮는 경우 | set-cover, `mode: group`, 인원 2 |
