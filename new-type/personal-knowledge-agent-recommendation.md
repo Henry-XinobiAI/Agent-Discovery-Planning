@@ -17,8 +17,9 @@
 2. **discovery 경로의 LLM 호출은 타입 ①이 이미 내는 그 호출 하나다.** need 분해를 기존 expansion 프롬프트의 스키마 확장으로 처리하고, answerability judge는 두지 않는다. 최악 2회(모호할 때 batch disambiguation 1회 추가), 보통 1회.
 3. **topic-api의 카탈로그가 Wikidata QID를 들고 있어서**(3,190개 중 3,164개, 1:1) grounding 한 번으로 topic-api 파생 근거와 memory-api 파생 근거를 **같은 key space**에서 조회할 수 있다. 1차 초안은 이 조인을 쓰지 않았다. 단, id 체계는 같아도 **가리키는 층이 다르다** — memory-api는 개체(야마자키 증류소)에 QID를 붙이고 클래스 축으로 올라가며, 카탈로그는 주제(위스키)를 큐레이션한 계층이다. 그래서 등식 조인이 아니라 **topic이 덮는 QID 집합**(`topic_qid_map`)으로 조인하고, 그 커버리지는 실제 빌드 결과로 재야 한다(§6 T2, §7-4).
 4. **memory-api는 이벤트를 발행하지 않는다.** 그러므로 memory 파생 근거는 push 미러가 아니라 **빌드 manifest를 폴링하는 pull 파생본**이어야 하고, 그 파생본에는 statement·label·blurb가 없다 — owner×QID의 개수와 날짜만 있다. "모든 memory를 미러링"하는 것이 아니다.
+5. **후보 조회는 두 단계다.** 1단계는 우리 DB의 파생본으로 후보를 수십 명까지 좁힌다(topic과 근거 종류·양). 2단계는 그 후보만 memory-api에 넘겨 **질문 텍스트로 재점수**한다 — 점수와 개수만 돌아오고 statement 텍스트는 오지 않는다. 2단계가 답하지 않으면 **1단계 순위를 그대로 응답**하고 `degraded`에 남긴다. fallback이 장애 때만 도는 별도 경로가 아니라 매 요청 항상 도는 1단계라는 것이 요점이다.
 
-추천 시점의 런타임 의존성은 **topic-api 검색(지금 타입 ①과 같음)뿐**이고, memory-api에는 추천 경로에서 닿지 않는다.
+추천 시점의 런타임 의존성은 topic-api 검색(지금 타입 ①과 같음)과 **memory-api evidence route 1회**다. 후자가 없어도 추천은 나간다.
 
 ---
 
@@ -72,7 +73,7 @@
 | Phase F에서 이벤트로 projection | memory-api는 이벤트를 발행하지 않는다 | 빌드 manifest 폴링(§7-2) |
 | topic-api 신호는 관심이라 knowledge에 못 쓴다 | `knowledge` facet이 `score_detail`에 있다 | 미러에 컬럼으로 추가해 첫 근거 소스로 쓴다(§7-1) |
 | grounding은 memory 쪽 QID 어댑터 | 카탈로그가 QID를 1:1로 들고 있다. 다만 memory는 개체·클래스 축, 카탈로그는 주제·큐레이션 축이라 등식으로는 자주 빈다 | 기존 S2 grounding 한 번 + `topic_qid_map`으로 두 소스를 조회한다(§6 T2, §7-4). 커버리지는 측정 항목이다(§16) |
-| memory-api에 배치 capability API를 신설한다(Phase B) | `themes/{qid}/owners`가 이미 집계 한 번으로 답한다 | 첫 슬라이스에서는 신설 불필요. 필요해지는 것은 label 없는 owner-scoped 집계 route 하나(§16) |
+| memory-api에 배치 capability API를 신설한다(Phase B) | 있는 route는 전부 label·blurb·텍스트를 돌려준다 | 신설은 맞다. 다만 모양이 다르다 — tenant 전체 검색이 아니라 **우리가 넘긴 후보 목록 안에서** 질문 텍스트로 재점수하고 점수·개수만 돌려주는 route(§6 T3, §16) |
 
 ---
 
@@ -130,7 +131,9 @@ need는 셋으로 나뉜다 — ① 도쿄 근교 위스키 증류소(declarativ
 | need → topic_id/QID grounding | agent-discovery-api, 기존 S2 | 모호할 때만 batch 1회 |
 | owner × QID capability 집계 만들기 | memory-api 빌드, topic-api sync | 그쪽 배치(이미 지불) |
 | 집계를 우리 쪽에 파생본으로 유지 | agent-discovery-api 워커 | 없음 |
-| 후보 조회·calibration·랭킹 | agent-discovery-api | 없음 |
+| 1단계: 파생본으로 후보 좁히기 | agent-discovery-api | 없음 |
+| 2단계: 후보의 statement를 질문 텍스트로 재점수 | memory-api evidence route (BM25) | 없음 |
+| calibration·최종 랭킹 | agent-discovery-api | 없음 |
 | group 구성 | agent-discovery-api | 없음 |
 | 추천 이유 | agent-discovery-api, 템플릿 | 없음 |
 | discoverable / consultable 판정 | 첫 슬라이스는 우리 `agents.discoverable`, 이후 bourbon-api의 agent 설정 | 없음 |
@@ -139,7 +142,7 @@ need는 셋으로 나뉜다 — ① 도쿄 근교 위스키 증류소(declarativ
 
 ### 4-1. memory-api가 소유하는 것
 
-personal knowledge의 저장 의미와 검색 의미 — entity·statement, QID grounding(identity·broader), statement kind, active·invalidated, provenance, salience·competence, 빌드 manifest. **최종 추천 점수나 순위는 만들지 않는다.** 누가 전문가인지는 discovery의 제품 정책이다.
+personal knowledge의 저장 의미와 검색 의미 — entity·statement, QID grounding(identity·broader), statement kind, active·invalidated, provenance, salience·competence, 빌드 manifest, 그리고 **우리가 넘긴 후보 안에서 질문 텍스트와 statement의 매치 점수**. **최종 추천 점수나 순위는 만들지 않는다.** 누가 전문가인지는 discovery의 제품 정책이다.
 
 ### 4-2. discovery가 소유하는 것
 
@@ -164,7 +167,9 @@ Requester Personal Agent  (bourbon-agent, 이미 돌고 있는 턴)
 Agent Discovery  POST /recommend/knowledge
   ├─ T1 need 추출 = expansion 스키마 확장         LLM 1회
   ├─ T2 grounding → topic_id (+QID)             topic-api 검색, 모호할 때 batch LLM 1회
-  ├─ T3 근거 조회: 소스 A(topic 파생) + 소스 B(memory 파생)   우리 PostgreSQL
+  ├─ T3-1 후보 좁히기: 소스 A(topic 파생) + 소스 B(memory 파생)   우리 PostgreSQL, 수십 명
+  ├─ T3-2 재점수: 그 후보만 memory-api evidence route            질문 텍스트 BM25, 점수만 회신
+  │        └─ 답 없으면 T3-1 순위로 진행 + degraded
   ├─ T4 결정적 랭킹, T5 group planning
   └─ T6 조립 + decision log
                                               │ 추천
@@ -222,7 +227,18 @@ topic_id에서 QID는 우리가 커밋한 카탈로그로 읽는다(`source.qid`
 
 이 매핑이 잡지 못하는 것이 있다. "위스키 증류소 → 위스키" 같은 **시설↔제품** 관계는 P279·P31에도 memory-api의 typed_links 화이트리스트(author·director·manufacturer·genre 계열)에도 없다. 그래서 소스 B는 주제를 개체로 직접 언급한 사람("위스키 좋아해")은 잡고, 구체적 개체만 말한 사람("야마자키·하쿠슈 다녀왔어")은 extractor가 related grounding을 붙였을 때만 잡는다. 이 사각의 크기는 설계로 정할 수 없고 실제 빌드 결과로 재야 한다(§16 memory-api 질문 2).
 
-### T3. 근거 조회 — 두 소스, 한 테이블 구조
+### T3. 근거 조회 — 두 단계
+
+후보를 **좁히는 일**과 **고르는 일**을 나눈다. 좁히는 것은 우리 DB가 하고(T3-1), 고르는 것은 memory-api가 질문 텍스트로 한다(T3-2). T3-2가 답하지 않으면 T3-1의 순위가 그대로 답이다.
+
+```text
+T3-1  우리 PostgreSQL   topic + 근거 종류·양     10만 명 → 수십 명     "무엇에 대해"
+T3-2  memory-api       질문 텍스트 BM25         수십 명 재점수        "정확히 어떤 조건"
+```
+
+grounding에서 질문의 조건("압력이 너무 높을 때")은 topic으로 압축되며 사라진다. T3-1만으로는 에스프레소에 procedural 근거 8건을 가진 사람이 그 8건 모두 로스팅 이야기인지 구분하지 못한다. T3-2가 그 조건을 되찾는다. 두 단계는 다른 축(topic ↔ 텍스트)을 보므로 겹치지 않고 보완한다.
+
+#### T3-1. 후보 좁히기 — 두 소스, 우리 DB
 
 두 소스 모두 우리 PostgreSQL에 있고 조회는 SQL이다. 각 소스가 무엇을 답하는지가 다르다.
 
@@ -248,7 +264,59 @@ observed_build_at        timestamptz memory-api manifest의 built_at
 
 **들어가지 않는 것**: statement 텍스트, entity label, `personal_blurb`, message id, salience 원시값. 이 테이블은 "몇 개, 언제"만 안다. 크기는 owner당 entity 수(수백)로, `visible_topic_rows`의 유저당 상한 300과 같은 자릿수다. 10만 유저면 수천만 행이고 PostgreSQL이 감당하는 범위다.
 
-조회는 소스 A가 `topic_id`(+ `catalog_edges` 서브트리), 소스 B가 `qid IN (topic_qid_map의 그 topic 행)`이고, 두 소스를 owner로 합쳐 need별 coverage matrix를 만든다. 둘 다 인덱스 한 번 타는 SQL이다.
+조회는 소스 A가 `topic_id`(+ `catalog_edges` 서브트리), 소스 B가 `qid IN (topic_qid_map의 그 topic 행)`이고, `JOIN agents … WHERE discoverable`과 요청자 제외를 여기서 적용한다. 두 소스를 owner로 합쳐 need별 coverage matrix를 만들고, 1단계 점수로 정렬해 **상위 N명**(레지스터, 초기 50)을 남긴다. 둘 다 인덱스 한 번 타는 SQL이다.
+
+이 시점의 순위를 `stage1_ranking`으로 보관한다. T3-2가 실패하면 이것이 응답이 된다.
+
+#### T3-2. 재점수 — 후보만 memory-api에
+
+1단계의 N명 id와 need를 memory-api의 evidence route에 넘긴다. **`owners` 허용 목록이 요청의 일부**라는 것이 이 route의 핵심이다.
+
+```json
+POST /{tenant}/personal/evidence/search
+{
+  "needs": [
+    {"need_id": "n0", "text": "에스프레소 압력 높을 때 추출 조정",
+     "kind": "procedural", "qids": ["Q...", "Q..."]}
+  ],
+  "owners": ["<1단계 N명의 owner id>"],
+  "exclude_owner": "<requester>"
+}
+```
+
+```json
+{
+  "owners": [
+    {"owner_id": "…", "needs": [
+      {"need_id": "n0", "matched": 3, "max_score": 12.4,
+       "procedural": 2, "experiential": 1,
+       "last_seen": "2026-07-12", "has_provenance": true}
+    ]},
+    {"owner_id": "…", "needs": [{"need_id": "n0", "matched": 0}]}
+  ],
+  "searched_needs": ["n0"],
+  "truncated": false
+}
+```
+
+- memory-api는 `owners` 안의 statement만 BM25로 매치한다. **statement 텍스트·entity label·message id는 응답에 없다.** 점수와 개수와 날짜만 온다.
+- `owners`가 우리 `discoverable`을 이미 통과한 집합이라, 비동의 owner에 관한 데이터는 어떤 형태로도 우리 프로세스에 오지 않는다(§10). memory-api에 동의 모델이 없어도 이 경계는 우리 쪽에서 닫힌다.
+- 검색 범위가 N명이라 OpenSearch 비용도 tenant 전체 집계가 아니다.
+- timeout은 레지스터 행(`evidence_search.timeout_ms`, 초기 800)으로 두고, 재시도 사다리는 우리 쪽 하나만 갖는다(§12).
+
+T3-2의 점수가 T3-1의 순위를 다시 매긴다. 에스프레소 근거가 많아 1단계 상위였지만 압력 이야기가 없는 사람은 내려가고, 압력 조정을 3건 말한 사람은 올라간다.
+
+#### fallback — T3-2가 답하지 않을 때
+
+memory-api가 죽었거나 timeout 안에 답이 없으면 **`stage1_ranking`을 그대로 응답**하고 `degraded: ["evidence_search_unavailable"]`을 붙인다. 새로 계산하는 것이 없다 — 장애 때만 도는 별도 코드 경로가 아니라, 매 요청 항상 돌던 1단계의 결과다. `truncated: true`면 받은 것으로 순위를 매기고 `evidence_search_incomplete`를 붙인다.
+
+#### 부수 효과 — 매 요청이 실측
+
+정상 요청에서는 두 순위가 다 있다. `stage1_ranking` 상위 k와 최종 순위 상위 k의 겹침을 journal에 남기면(§13) **"topic만으로 얼마나 맞히는가"** 를 운영 중에 계속 잰다. 겹침이 높으면 fallback 때 품질 손실이 작고, 낮으면 fallback 때 `mode: none`을 더 쉽게 내도록 threshold를 올리는 근거가 된다.
+
+#### 한계
+
+T3-1이 찍지 못한 사람은 T3-2도 보지 못한다. `topic_qid_map`의 사각(§7-4)이 그대로 recall 상한이다. 사각이 크게 측정되면 `owners` 없이 tenant 전체를 치는 모드를 여는지 다시 논의하되, 그것은 memory-api 쪽에서 동의를 걸러 줄 수 있게 된 뒤의 이야기다(열린 항목 §17-11).
 
 ### T4. 단일 agent 랭킹 — 결정적
 
@@ -377,7 +445,7 @@ POST /api/internal/svc/agent-discovery/recommend/knowledge
 - `mode`: `single | group | none`
 - `agents[]`의 항목은 타입 ①의 `RecommendedAgent`를 재사용하고 `covers`만 더한다.
 - `confidence`는 **첫 슬라이스에서 외부 필드로 열지 않는다.** calibration 전의 숫자는 decision log에만 둔다(열린 항목 §17-5).
-- `degraded[]` 후보: `expansion_partial`(기존), `need_fields_defaulted`, `source_b_stale`, `source_b_unavailable`. `grounding_failed`·`grounding_ambiguous`는 타입 ①과 같이 422다.
+- `degraded[]` 후보: `expansion_partial`(기존), `need_fields_defaulted`, `source_b_stale`, `evidence_search_unavailable`, `evidence_search_incomplete`. `grounding_failed`·`grounding_ambiguous`는 타입 ①과 같이 422다.
 - 걸러진 후보 수, 숨은 후보의 존재를 추정할 수 있는 값은 응답에 없다(불변식 5).
 
 ---
@@ -443,11 +511,12 @@ SLA가 아니라 첫 구현의 예산을 잡기 위한 추정이다. 확인된 �
 | T1 need 추출 | 1회 | 0.8~1.8 s | 2.5~4.5 s | 타입 ① expansion과 같은 호출, 출력 필드 둘 추가 |
 | T2 grounding 검색 | 없음 | 30~100 ms | 150~400 ms | 그룹 3개 병렬 |
 | T2 disambiguation | 조건부 1회 | 0.5~1.5 s | 2~4 s | batch 1회 |
-| T3 두 소스 조회 | 없음 | 2~15 ms | 30~80 ms | `qid = ANY(...)`, 후보 상한 100 |
+| T3-1 두 소스 조회 | 없음 | 2~15 ms | 30~80 ms | SQL, 후보 상한 N=50 |
+| T3-2 evidence route | 없음 | 80~250 ms | 400~900 ms | 후보 N명 BM25, 1차 초안 추정 그대로, **구현 후 실측** |
 | T4·T5 랭킹·group | 없음 | < 10 ms | < 50 ms | |
 | T6 조립·journal | 없음 | 5~30 ms | 30~100 ms | |
 
-**end-to-end 추정: p50 1.5~2.5초, p95 3.5~6초.** 1차 초안의 3회 LLM(judge·decomposition·disambiguation) 대비 경로가 하나 줄었고, 남은 둘은 타입 ①이 이미 실측한 호출이다. bourbon-agent의 10초 예산 안에 든다.
+**end-to-end 추정: p50 1.6~2.8초, p95 4~7초.** 1차 초안의 3회 LLM(judge·decomposition·disambiguation) 대비 경로가 하나 줄었고, 남은 둘은 타입 ①이 이미 실측한 호출이다. T3-2가 더한 것은 네트워크 1홉이고 timeout 800 ms가 상한이다. bourbon-agent의 10초 예산 안에 든다.
 
 ### 11-3. 실행 경로 — 이 문서 범위 밖이지만 예산은 분리한다
 
@@ -468,13 +537,18 @@ SLA가 아니라 첫 구현의 예산을 잡기 위한 추정이다. 확인된 �
 | grounding 후보 없음 | 422 `grounding_failed` | 실행 안 함 |
 | grounding 모호 | required need면 422 `grounding_ambiguous`, optional이면 그 need 제외 + degraded | — |
 | topic-api 검색 불가 | 503(타입 ①과 같음) | — |
-| 소스 B 파생본이 오래됨 | 정상 응답 + `source_b_stale`(threshold는 레지스터) | — |
+| 소스 B 파생본이 오래됨 | 정상 응답 + `source_b_stale`(threshold는 레지스터). T3-2가 살아 있으면 조건 매치가 보정한다 | — |
 | 소스 B 폴링 실패 | 다음 사이클로, 추천은 소스 A로 계속 | — |
+| evidence route timeout·5xx | `stage1_ranking`으로 응답 + `evidence_search_unavailable` | — |
+| evidence route `truncated` | 받은 것으로 재점수 + `evidence_search_incomplete` | — |
+| evidence route가 `owners` 밖 owner를 돌려줌 | 그 항목은 버리고 로그. 계약 위반이라 알람 | — |
 | required need 하나를 아무도 못 덮음 | `mode: none`, `empty: true` | — |
 | 실행 시 agent가 `unsupported` | — | 다른 후보로 한 번 대체, 그래도 실패면 uncovered |
 | member timeout | — | 남은 member로 required coverage 재계산 |
 
-재시도는 한 계층만 갖는다. discovery가 topic-api를 재시도하면 topic-api는 자기 인덱스를 재시도하지 않고, LLM은 transport 재시도와 pipeline 재시도를 중첩하지 않는다.
+재시도는 한 계층만 갖는다. discovery가 topic-api나 evidence route를 재시도하면 그쪽은 자기 OpenSearch 요청을 다시 재시도하지 않고, LLM은 transport 재시도와 pipeline 재시도를 중첩하지 않는다.
+
+**calibration error는 모드별로 따로 잰다.** T3-2가 죽어 있던 시간대의 `unsupported` 비율이 평소보다 얼마나 높은지가 "fallback으로 버틸 만한가"의 답이다. 차이가 크면 fallback 때 `mode: none`을 더 자주 내도록 threshold를 올린다 — 틀린 추천보다 추천 없음이 나은 제품이라면.
 
 ---
 
@@ -487,18 +561,20 @@ question_digest, question_chars, context_chars
 needs_total, needs_required, needs_grounded, needs_ambiguous, need_fields_defaulted
 grounding_llm_calls
 candidates_source_a, candidates_source_b, candidates_both
-discoverable_candidates
+discoverable_candidates, stage1_candidates
+evidence_search_status         ok | unavailable | incomplete
+stage1_final_overlap_at_k      1단계 상위 k와 최종 상위 k의 겹침 — "topic만으로 얼마나 맞히는가"
 single_sufficient, group_size, covered_required, uncovered_required
 source_b_max_age_seconds
 degraded[]
-latency_ms.{expand, ground_search, ground_llm, retrieve, rank, group, assemble, total}
+latency_ms.{expand, ground_search, ground_llm, retrieve, evidence_search, rank, group, assemble, total}
 ```
 
 실행은 별도 journal이다(`recommendation_id`, `members_requested/answered/timed_out`, `needs_supported/unsupported`, `conflict_count`, latency).
 
 **핵심 지표**: 추천 당시 need coverage와 실행 당시 `supported/unsupported`의 calibration error. "잘 알 것이라고 추천했는데 실제 agent가 답하지 못한 비율"을 계속 잰다. 랭커 feature 가중치는 이 지표로 고친다.
 
-알람 후보: `source_b_stale` 비율, 폴링 사이클 실패, `grounding_ambiguous` 비율(타입 ①과 공유), 실행 단계 `unsupported` 비율.
+알람 후보: `evidence_search_status != ok` 비율, `source_b_stale` 비율, 폴링 사이클 실패, `grounding_ambiguous` 비율(타입 ①과 공유), 실행 단계 `unsupported` 비율(모드별).
 
 ---
 
@@ -526,11 +602,14 @@ offline 합성 데이터로는 실제 answerability를 검증할 수 없다. §1
 |---|---|---|---|---|
 | **1. 소스 A만** | 없음 | 0 (스키마 확장) | 이 주제에 깊은 관심과 지식을 드러낸 사람 | route·envelope, `knowledge_facet` 미러, need 다중 grounding, 결정적 랭킹, 합성 모집단 측정 |
 | **2. 소스 B** | memory-api **폴링만** | 0 | 구체적 근거 statement를 가진 사람 | 커버리지 측정(§16 질문 2)이 먼저. 그 뒤 `topic_qid_map`, `knowledge_capabilities`, 일곱 번째 루프, 두 소스 합산 랭킹, `source_b_stale` |
-| **3. group** | 없음 | 0 | 두 need를 두 사람이 나눠 덮는 경우 | set-cover, `mode: group`, 인원 2 |
-| **4. 트리거** | bourbon-agent 변경 | 0 | 실제로 불리는가 | tool 설명 변경 또는 두 번째 tool, 호출 빈도 로그 |
-| **5. 실행·종합** | bourbon-agent 소유 | agent당 1 + 종합 1 | 실제 답변 | 이 문서 범위 밖. `moderator/agent_recommender/` |
+| **3. T3-2 재점수** | memory-api **evidence route**(그쪽 신설) | 0 | 질문의 조건까지 맞는 사람 | route 계약 합의, 클라이언트, timeout·fallback, `stage1_final_overlap_at_k` journal |
+| **4. group** | 없음 | 0 | 두 need를 두 사람이 나눠 덮는 경우 | set-cover, `mode: group`, 인원 2 |
+| **5. 트리거** | bourbon-agent 변경 | 0 | 실제로 불리는가 | tool 설명 변경 또는 두 번째 tool, 호출 빈도 로그 |
+| **6. 실행·종합** | bourbon-agent 소유 | agent당 1 + 종합 1 | 실제 답변 | 이 문서 범위 밖. `moderator/agent_recommender/` |
 
-슬라이스 1은 타입 ① 위에 "need 여러 개 + knowledge 가중 랭커"를 얹는 것이라 새 도메인이 거의 없다. 슬라이스 4는 1과 동시에 시작할 수 있다 — discovery 쪽이 준비되기 전에는 지금 `recommend_agents`가 하는 일과 같으니 사용자에게 보이는 변화가 없다.
+슬라이스 1·2는 memory-api route 없이 동작하는 형태라 그쪽 일정과 무관하게 배포할 수 있다. 슬라이스 3이 들어가는 날부터 fallback이 곧 그 전날까지의 동작이다 — 새 경로가 아니다.
+
+슬라이스 1은 타입 ① 위에 "need 여러 개 + knowledge 가중 랭커"를 얹는 것이라 새 도메인이 거의 없다. 슬라이스 5는 1과 동시에 시작할 수 있다 — discovery 쪽이 준비되기 전에는 지금 `recommend_agents`가 하는 일과 같으니 사용자에게 보이는 변화가 없다.
 
 ---
 
@@ -542,17 +621,18 @@ offline 합성 데이터로는 실제 answerability를 검증할 수 없다. §1
 1. `bourbon-v2` tenant에 personal build가 실제로 돌고 있는지, 몇 owner인지, 주기는 어떻게 되는지. 소스 B의 가치가 이 숫자에 달려 있다.
 2. 그 빌드 결과에서 **`knowledge_qid`·`broader_qids`의 상위 분포**를 받아 볼 수 있는지(QID와 개수만, owner·label 없이). 우리 카탈로그 QID와 `topic_qid_map`(§7-4)의 교집합이 얼마인지가 소스 B 커버리지의 첫 측정이다. 이것을 모르면 소스 B를 만들어도 얼마나 잡히는지 말할 수 없다.
 3. label·blurb 없이 `(qid, match, statement kind별 count, has_provenance, last_seen)`만 주는 owner-scoped 집계 route를 추가해 주실 수 있는지. 없어도 `GET /users/{id}/personal/entities`로 읽고 버리면 되지만, 있으면 private 텍스트가 우리 프로세스에 들어오지 않는다.
-4. `GET /{tenant}/admin/personal/build`를 폴링 피드로 써도 되는지, 페이지 크기와 부하 상한. 그리고 `POST /knowledge/expand`를 카탈로그 갱신 때마다 100회 안쪽으로 호출해도 되는지.
+4. **evidence route**(§6 T3-2) — `POST /{tenant}/personal/evidence/search`. 조건은 셋이다. (가) `owners` 허용 목록이 필수이고 그 밖의 owner는 어떤 형태로도 응답에 없다. (나) 응답에 statement 텍스트·entity label·message id가 없고 점수·개수·날짜만 있다. (다) 그쪽에서 OpenSearch 재시도를 중첩하지 않는다(우리가 사다리를 갖는다). 요청자의 질문 텍스트가 그쪽으로 가므로, 이 route와 함께 내부 호출 인증이 들어가야 한다. 1차 초안이 Phase B로 제안했던 것의 축소판이다.
+5. `GET /{tenant}/admin/personal/build`를 폴링 피드로 써도 되는지, 페이지 크기와 부하 상한. 그리고 `POST /knowledge/expand`를 카탈로그 갱신 때마다 100회 안쪽으로 호출해도 되는지.
 
 **topic-api**
-5. `GET /users/{id}/topics`(우리가 재조회하는 route)의 응답에 `score_detail.facets`·`confidence`가 포함되는지. 없으면 포함을 요청한다.
-6. 소스 B 커버리지 측정에서 시설↔제품처럼 Wikidata 관계로 못 건너는 구멍이 크게 나오면, 카탈로그 편집으로 메울 수 있는지(예: "위스키 증류소"를 위스키의 자식 topic으로). 편집 정책에 맞는지는 그쪽 판단이다.
+6. `GET /users/{id}/topics`(우리가 재조회하는 route)의 응답에 `score_detail.facets`·`confidence`가 포함되는지. 없으면 포함을 요청한다.
+7. 소스 B 커버리지 측정에서 시설↔제품처럼 Wikidata 관계로 못 건너는 구멍이 크게 나오면, 카탈로그 편집으로 메울 수 있는지(예: "위스키 증류소"를 위스키의 자식 topic으로). 편집 정책에 맞는지는 그쪽 판단이다.
 
 **bourbon-api**
-7. agent 설정에 `consultable`(다른 사용자의 질문에 내 agent가 대신 답해도 되는가) opt-in 필드를 둘 수 있는지, 그리고 그 변경을 이벤트로 낼 수 있는지. `personal_agent_visibility_changed`가 만들어지지 않았던 것과 같은 이유로 이벤트 대신 재조회가 될 수도 있다.
+8. agent 설정에 `consultable`(다른 사용자의 질문에 내 agent가 대신 답해도 되는가) opt-in 필드를 둘 수 있는지, 그리고 그 변경을 이벤트로 낼 수 있는지. `personal_agent_visibility_changed`가 만들어지지 않았던 것과 같은 이유로 이벤트 대신 재조회가 될 수도 있다.
 
 **bourbon-agent**
-8. `recommend_agents`의 트리거를 넓히는 것과 두 번째 tool을 두는 것 중 어느 쪽이 프롬프트 설계상 맞는지. `moderator/agent_recommender/`의 계획이 이 기능과 같은 것인지.
+9. `recommend_agents`의 트리거를 넓히는 것과 두 번째 tool을 두는 것 중 어느 쪽이 프롬프트 설계상 맞는지. `moderator/agent_recommender/`의 계획이 이 기능과 같은 것인지.
 
 ---
 
@@ -568,3 +648,5 @@ offline 합성 데이터로는 실제 answerability를 검증할 수 없다. §1
 8. 슬라이스 1을 타입 ① 도메인 위에 얹는 것을 슬라이스 2에서 새 소스로 나누는 시점의 기준.
 9. `topic_qid_map`에 `typed` 관계를 넣을지, `narrower`만으로 시작할지 — 커버리지 측정 결과로 정한다.
 10. 소스 B 커버리지가 낮을 때 조인 키를 memory-api의 `classes` 인덱스(그쪽이 theme으로 판정한 클래스)로 바꾸는 대안을 열어 둘지. tenant별로 동적이라 매핑 테이블이 어차피 필요하고, 첫 슬라이스에서는 `expand` 쪽이 단순하다고 본다.
+11. evidence route에 `owners` 없이 tenant 전체를 치는 모드를 열 것인가. T3-1의 사각을 피할 수 있지만, 비동의 owner의 count가 우리에게 오는 문제를 memory-api 쪽 `consultable` 필터로 풀 수 있게 된 뒤에만 가능하다. 커버리지 측정 결과를 보고 정한다.
+12. 1단계 후보 상한 N의 초기값(50)과, fallback 모드에서 `mode: none`을 내는 threshold를 평소보다 올릴지.
