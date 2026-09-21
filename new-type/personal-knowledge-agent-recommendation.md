@@ -1,495 +1,310 @@
-# Personal Knowledge 기반 답변 가능 Agent·Agent Group 추천
+# Personal knowledge 기반 답변 가능 agent 추천
 
-> 상태: 설계 초안  
-> 작성일: 2026-09-18  
-> 범위: `bourbon-agent`, `bourbon-agent-discovery-api`, `bourbon-memory-api-v2` 사이의 새 추천 타입  
-> 비범위: 기존 타입 ① 명시 추천, 타입 ② topic별 discovery, 타입 ③ for-you의 계약 변경
+> 상태: **설계 초안, 결정 아님** — 2026-09-18 초안을 2026-09-21에 세 서비스의 코드를 읽고 전면 재작성했다
+> 범위: `bourbon-agent` · `bourbon-agent-discovery-api` · `bourbon-memory-api-v2` · `bourbon-topic-api` 사이의 새 추천 타입(타입 ④ 후보)
+> 비범위: 타입 ①·②·③의 계약 변경, 선택된 agent들의 실제 답변 실행과 종합(이 문서는 경계만 정한다)
+> 이 문서의 "현재"는 각 repo의 HEAD 기준이다 — bourbon-agent `80d81bf`(09-10), memory-api-v2 `6c0ae52`(09-15), topic-api `ae09a28`(09-19), agent-discovery-api `339a99f`(09-21)
 
 ---
 
 ## 0. 요약
 
-사용자의 personal agent가 질문에 답할 충분한 근거를 자신의 personal knowledge에서 찾지 못했을 때, 그 질문에 답할 근거를 가진 다른 사용자의 personal agent를 추천한다. 한 agent가 질문 전체를 커버하지 못하면 질문을 여러 `knowledge need`로 나누고, 서로 보완하는 두세 agent를 group으로 추천한다. group을 실제로 실행할 때는 각 agent가 자기 근거로 담당 부분만 답하고 coordinator가 답변을 종합한다.
+사용자의 personal agent가 자기 지식으로 답할 수 없는 질문을 받았을 때, **그 질문에 답할 근거를 가진 다른 사용자의 personal agent**를 추천한다. 질문이 여러 knowledge need로 나뉘고 한 사람이 전부 덮지 못하면 서로 보완하는 두 명을 group으로 추천한다.
 
-이 기능의 핵심 경계는 다음과 같다.
+1차 초안과 달라진 결론은 넷이다.
 
-- `bourbon-memory-api-v2`는 **누가 어떤 근거를 얼마나 보유하는지** 검색한다.
-- `bourbon-agent-discovery-api`는 **누구를 추천하고 어떤 group을 만들지** 결정한다.
-- 각 personal agent는 **자기 private memory만 사용해 담당 질문에 답한다.**
-- coordination 계층은 **여러 답변을 종합하고 충돌과 빈 부분을 보존한다.**
-- discovery와 coordinator는 다른 사용자의 원본 message·statement·provenance id를 읽거나 노출하지 않는다.
+1. **"유저 X가 질문 Q에 답할 수 있는가"를 (X, Q) 쌍마다 판단하지 않는다.** 그렇게 하면 LLM 호출이 유저 수에 비례한다. 대신 owner별·QID별 capability 집계를 **오프라인**에 두고, 온라인에서는 질문을 QID 몇 개로 grounding한 뒤 그 집계를 조회해 **결정적으로** 랭킹한다. 유저가 몇 명이든 온라인 비용은 후보 수에만 비례한다.
+2. **discovery 경로의 LLM 호출은 타입 ①이 이미 내는 그 호출 하나다.** need 분해를 기존 expansion 프롬프트의 스키마 확장으로 처리하고, answerability judge는 두지 않는다. 최악 2회(모호할 때 batch disambiguation 1회 추가), 보통 1회.
+3. **topic-api의 카탈로그가 Wikidata QID를 들고 있어서**(3,190개 중 3,164개, 1:1) grounding 한 번으로 topic-api 파생 근거와 memory-api 파생 근거를 **같은 key space**에서 조회할 수 있다. 1차 초안은 이 조인을 쓰지 않았다.
+4. **memory-api는 이벤트를 발행하지 않는다.** 그러므로 memory 파생 근거는 push 미러가 아니라 **빌드 manifest를 폴링하는 pull 파생본**이어야 하고, 그 파생본에는 statement·label·blurb가 없다 — owner×QID의 개수와 날짜만 있다. "모든 memory를 미러링"하는 것이 아니다.
 
-운영용 후보 검색은 memory-api에 배치형 capability/evidence 검색 계약을 추가하는 방향을 권고한다. 기존 단건 API 조합은 PoC에는 쓸 수 있지만, production에서는 N+1 호출, 부분 실패 판정, 저장 구조 결합, private data 과다 조회 문제가 있다.
-
-권고 route 이름은 다음 중 하나다.
-
-```http
-POST /{tenant}/internal/personal/capabilities/search
-```
-
-또는:
-
-```http
-POST /{tenant}/internal/personal/evidence/search
-```
-
-`expertise/search`는 memory-api가 최종 전문가 판정과 추천 점수를 소유하는 것처럼 읽히므로 피한다.
+추천 시점의 런타임 의존성은 **topic-api 검색(지금 타입 ①과 같음)뿐**이고, memory-api에는 추천 경로에서 닿지 않는다.
 
 ---
 
-## 1. 제품 시나리오
+## 1. 세 서비스의 현재
 
-### 1-1. 단일 agent 추천
+이 절은 코드에서 읽은 사실만 적는다. 1차 초안이 전제로 두었던 것과 어긋나는 부분은 §1-5에 모았다.
 
-사용자가 자기 agent에게 질문한다.
+### 1-1. bourbon-agent — recall은 tool이고, gate는 없다
+
+- **memory recall은 prefetch가 아니라 LLM이 고르는 tool**이다. `search_conversations` tool이 BM25 키워드 쿼리 1~5개를 모델이 직접 써서 `POST /{tenant}/search`로 **원문 대화**를 검색한다. personal knowledge의 `POST /{tenant}/users/{user_id}/personal/context`는 어디서도 호출하지 않는다. scope(clearance·참가자 그룹)는 서버가 정하고 모델이 고르지 않는다.
+- **answerability gate가 없다.** 빈 recall 검사도, 확신도도, "모르겠다" 분기도 없다. 프롬프트가 "추측하거나 모른다고 하지 말고 tool을 써라"고 유도하는 것이 전부다.
+- **`recommend_agents` tool이 이미 있다.** 모델이 짧은 topic 하나와 context를 뽑아 `POST /api/internal/svc/agent-discovery/recommend`를 부른다(예산 10초, `max_results=1` 고정). 결과는 모델에 돌려주고, 부수 효과로 `agent_profiles_v1` 카드를 방에 게시한다. 트리거는 **"소유자나 방의 누군가가 추천을 요청할 때"** 로 한정돼 있다.
+- **agent가 agent에게 묻고 답을 합치는 코드는 없다.** 발화자는 moderator가 정하고(DM은 규칙, 그 외 방은 moderator LLM), agent들은 각자 독립 task로 답하며 서로의 답은 다음 턴의 transcript로만 본다. `moderator/agent_recommender/`가 "계획됨"으로 적혀 있고 비어 있다.
+- 예산: 턴 120초, 보이는 스트림 60초 상한(bourbon-api 쪽), memory 읽기 15초, discovery 10초, tool loop 최대 5회.
+- memory 적재는 이 repo가 `message_created`를 받아 메시지를 재조회해 memory-api에 upsert한다. **LLM 단계 없음.** 유일한 LLM 추출은 `persona_extractor`이고 그 결과는 memory-api가 아니라 DynamoDB의 persona 문서로 간다.
+
+### 1-2. memory-api-v2 — 읽기는 LLM 없이, 빌드는 LLM으로
+
+- 저장소는 **OpenSearch만**. tenant당 인덱스 다섯(`entities`·`statements`·`links`·`build`·`classes`), owner 구분은 인덱스 경계가 아니라 `owner_id` 필터다.
+- **personal knowledge 빌드는 LLM을 여섯 단계에서 부른다**(extract·grounding scoring·judge·dedup·competence·classes). 배치이고 `BackgroundTasks`로 돈다. **읽기 경로는 LLM 0회**, BM25와 필터만 쓴다. embedding·kNN은 없다. "LLM을 안 쓴다"는 읽기에 대해 맞고, 빌드에 대해서는 틀리다 — 다만 빌드 비용은 owner당 한 번 내는 것이고 질문마다 내지 않는다.
+- entity에는 `grounding.knowledge_qid`(Wikidata), `grounding.broader_qids[]`, `salience`, `competence_score`, `hands_on_statements`, `grounding.last_seen`이 있다. statement에는 `statement_kind`(declarative·procedural·experiential·preference·intention), `epistemic`(fact·opinion), `status`(active·invalidated), `provenance_message_ids`가 있다.
+- **cross-owner route가 이미 있다.** `GET /{tenant}/personal/themes/{qid}/owners`는 QID 하나에 대해 **OpenSearch 집계 한 번**으로 owner별 `count`·`last_seen`과 샘플 entity를 준다(정렬 `count|recent|pagerank`, `limit≤100`). `GET /{tenant}/personal/grounded/{qid}/entities`는 owner_id가 붙은 entity 목록을 준다. 둘 다 entity label·`personal_blurb`·salience를 그대로 노출한다.
+- **이벤트 발행 없음. 인증 없음. personal 데이터에 visibility·동의 모델 없음.** 접근 제어는 tenant 경로 세그먼트뿐이다("wire authentication in before exposing this service externally"). 변경 피드에 가장 가까운 것은 빌드 manifest의 `last_build_delta.changed_entity_ids`다.
+- owner당 규모 힌트: context 조립의 entity pool 상한 500, provenance entity 상한 200. 명시적 유저 수·statement 수 목표는 없다.
+
+### 1-3. topic-api — persona에서 관심을 뽑고, QID를 들고 있다
+
+- topic_id는 opaque 32-hex이지만 **각 항목이 `source.qid`를 갖는다.** 3,190개 중 3,164개가 Wikidata QID(중복 없음), 26개는 `N-…` 가상 축 노드다.
+- 유저 topic은 **메시지가 아니라 bourbon-agent의 persona 문서 중 preferences 레이어**에서 LLM 두 단계로 추출된다(`persona_updated` → 신호 추출 → 카탈로그 lexical 검색으로 grounding → 마킹). persona의 `expertise` 레이어는 **의도적으로 제외**한다. 집합은 persona 텍스트의 sha256이 바뀔 때만 움직이고, 유저당 상한 300, recency 반감기 180일.
+- `score`(0~100)는 **관심 강도**다. 여섯 facet(`knowledge`·`engagement`·`affinity`·`duration`·`recency` LLM 판정 + `volume` 측정)의 가중 평균에 coverage·confidence를 곱한다. **`knowledge` facet은 `score_detail.facets` 안에만 남고** 인덱스·정렬·필터 대상이 아니다. 사용자 간 비교는 설계상 가능하다(같은 범위, 같은 식, 같은 파이프라인).
+- `bourbon.topics_updated`는 sync 한 번당 한 건(batch)이고 payload에 score가 없어 소비자가 재조회한다 — 우리 워커가 지금 하는 그대로다.
+- memory-api와는 독립이다. 첨부물(이미지·노트·링크)만 memory-api에서 가져오고 statement는 읽지 않는다. `ExtractedTopic.extras`가 "memory-API theme payload 예약"으로 비어 있다.
+
+### 1-4. agent-discovery-api — 우리가 이미 가진 것
+
+- 타입 ① 파이프라인: S1 expansion(LLM 1회, 개념 그룹 0~3개 + probe) → S2 grounding(topic-api 이름 검색 + 모호할 때 batch disambiguation 1회) → S3 retrieval(`visible_topic_rows`) → S4 merge → S5 ordering → S6 assembly. 실측 p50 1.77초 / p95 3.11초(disambiguation 켠 조건, `validation_results.md` §11-4), 그중 약 98%가 모델 호출.
+- 미러: `visible_topic_rows(topic_id, tier, owner_user_id, topic_score, topic_maturity, descriptions, updated_at)`, `agents(owner_user_id, agent_id, discoverable, agent_maturity, …)`. `discoverable`은 "공개 topic이 하나 이상"에서 **우리가 파생**한다(bourbon-api는 그 이벤트를 만들지 않았다).
+- 카탈로그 복사본(`data/catalog_dist/catalog.json`, 3,190 / 3,136 edges)을 커밋해 두고 있고, `evaluation/search.py`에 topic-api 이름 검색의 검증된 in-process 복사본이 있다(2,775 probe로 원본과 대조).
+- 워커는 여섯 주기 루프를 돌리고(`popularity-rebuild`·`cf-fit`·`cf-sweep`·`cf-gate`·`population-count`·`retention-sweep`), 이벤트 여섯을 받는다. `message_created`는 id만 싣는다.
+
+### 1-5. 1차 초안의 전제와 어긋나는 것
+
+| 1차 초안 | 코드의 현재 | 이 문서의 대응 |
+|---|---|---|
+| S0 요청자 agent가 자기 근거를 결정적으로 검색한다 | 그런 단계가 없다. recall은 모델의 tool 선택이다 | 트리거를 tool 결정으로 둔다(§6 T0) |
+| S1 경계선에서 LLM answerability judge | 존재하지 않고, 두면 discovery 앞에 LLM 1회가 추가된다 | 두지 않는다 |
+| consultable 필터는 memory-api가 강제한다 | memory-api에 동의 모델·인증이 없다 | 첫 슬라이스는 우리 `agents.discoverable`, opt-in은 bourbon-api에 요청(§10) |
+| Phase F에서 이벤트로 projection | memory-api는 이벤트를 발행하지 않는다 | 빌드 manifest 폴링(§7-2) |
+| topic-api 신호는 관심이라 knowledge에 못 쓴다 | `knowledge` facet이 `score_detail`에 있다 | 미러에 컬럼으로 추가해 첫 근거 소스로 쓴다(§7-1) |
+| grounding은 memory 쪽 QID 어댑터 | 카탈로그가 QID를 1:1로 들고 있다 | 기존 S2 grounding 한 번으로 두 소스를 조회한다(§6 T2) |
+| memory-api에 배치 capability API를 신설한다(Phase B) | `themes/{qid}/owners`가 이미 집계 한 번으로 답한다 | 첫 슬라이스에서는 신설 불필요. 필요해지는 것은 label 없는 owner-scoped 집계 route 하나(§16) |
+
+---
+
+## 2. 문제의 재정의
+
+핵심 질문은 "수많은 유저 중 누가 이 질문에 답할 수 있는가"다. 이것을 유저마다 LLM에게 물으면 비용과 지연 시간이 유저 수에 비례하므로 애초에 설계에 넣을 수 없다. 대신 셋으로 나눈다.
+
+```text
+오프라인  owner × QID capability 집계        memory-api 빌드가 이미 만든다 / topic-api sync가 이미 만든다
+온라인    질문 → QID 몇 개 → 집계 조회 → 랭킹   LLM 1회(타입 ①과 같은 호출), 나머지는 SQL과 산술
+실행 시   선택된 1~2명이 자기 recall로 답한다     agent가 매 턴 이미 하는 일, discovery 비용 아님
+```
+
+"진짜 답할 수 있는지"는 온라인에서 확정하지 않는다. 추천은 **근거를 가졌을 가능성**의 순위이고, 확정은 선택된 agent가 실행 시점에 자기 memory를 검색해서 한다. 그래서 이 기능의 핵심 품질 지표는 "추천 당시 coverage와 실행 당시 실제 answerability 사이의 calibration error"이고(§13), 랭커는 그 지표로 고친다.
+
+이 구조는 타입 ①과 같다. 타입 ①이 10만 합성 유저에서 후보 조회를 한 자릿수 ms로 끝낸 이유가 그대로 적용된다 — 온라인 비용은 유저 수가 아니라 grounding된 topic의 보유자 수에 비례한다.
+
+---
+
+## 3. 제품 시나리오
+
+### 3-1. 단일 agent
 
 > 홈 에스프레소 머신에서 압력이 너무 높을 때 추출을 어떻게 조정해야 해?
 
-요청자의 agent는 자기 personal knowledge를 검색하지만 관련 절차·경험 근거가 부족하다. discovery는 질문을 분석하고, espresso extraction과 pressure adjustment에 관한 procedural 또는 experiential statement를 충분히 가진 다른 agent를 찾는다.
+요청자의 agent가 자기 recall에서 근거를 찾지 못한다. discovery는 질문을 need 하나(espresso 추출 조정, procedural)로 읽고, 그 topic/QID 아래에 procedural·experiential 근거를 가진 소유자를 찾는다.
 
-응답은 다음 의미를 가져야 한다.
+> 이 질문은 제가 가진 근거로 답하기 어렵습니다. 에스프레소 추출 조정 경험이 있는 agent를 연결할 수 있습니다.
 
-> 이 질문은 내가 가진 근거만으로 답하기 어렵습니다. 에스프레소 추출 조정에 관한 경험 근거가 있는 agent를 연결할 수 있습니다.
+추천 이유는 공개 가능한 것에만 근거한다. 타인의 statement·메시지 내용은 이유에 들어가지 않는다.
 
-추천 이유는 공개 가능한 capability metadata에만 근거한다. 타인의 private statement나 메시지 내용은 이유에 포함하지 않는다.
-
-### 1-2. agent group 추천
-
-사용자가 복합 질문을 한다.
+### 3-2. agent group
 
 > 도쿄에서 아이와 갈 만한 위스키 증류소 여행을 어떻게 계획할까?
 
-질문은 최소 다음 need로 나뉠 수 있다.
+need는 셋으로 나뉜다 — ① 도쿄 근교 위스키 증류소(declarative), ② 어린이 입장 조건·가족 방문 경험(experiential), ③ 도쿄에서 증류소까지 이동(procedural). 한 사람이 셋을 다 덮으면 단일 추천이 group보다 우선한다. 아니면 A(①②)와 B(③)처럼 **required need 전체를 최소 인원으로 덮는** 조합을 고른다. group은 상위 N명 목록이 아니라 제한된 set-cover다.
 
-1. 도쿄 근교 위스키 증류소
-2. 어린이 입장 조건과 가족 방문 경험
-3. 도쿄에서 증류소까지 이동 방법
+### 3-3. 추천하지 않는 경우
 
-한 agent가 세 need 모두에 충분한 근거를 가지면 단일 agent를 추천한다. 그렇지 않으면 예를 들어 다음 group을 구성한다.
+- required need 중 하나를 아무도 덮지 못한다
+- grounding이 실패했거나 모호하게 끝났다
+- discoverable(나중에는 consultable) 후보가 없다
+- 근거 소스 조회가 일부 실패해 완전한 추천이라고 말할 수 없다
 
-- Agent A: 일본 위스키·증류소 경험, `n1`과 `n2` 담당
-- Agent B: 도쿄 가족 여행·교통 경험, `n3` 담당
-
-group 추천은 단순 상위 N명 목록이 아니다. required need 전체를 최소 인원으로 덮는 제한된 set-cover 문제다.
-
-### 1-3. 추천하지 않는 경우
-
-다음 경우에는 억지로 agent 또는 group을 만들지 않는다.
-
-- required need 중 핵심 하나를 아무도 커버하지 못함
-- grounding confidence가 임계값보다 낮음
-- provenance가 없는 추론성 statement만 존재함
-- consultable 동의를 한 후보가 없음
-- 후보 검색이 일부 실패해 완전한 추천이라고 말할 수 없음
-- 한 후보의 높은 owner-internal salience만으로 전문성이 있다고 오판할 위험이 큼
-
-이 경우 결과는 `insufficient_coverage`, `no_consultable_agents`, `grounding_ambiguous`, `search_incomplete`처럼 서비스 상태와 지식 부족을 구분해야 한다. 외부 응답에서 숨은 후보의 존재를 누설하지 않는 규칙은 기존 discovery 불변식과 동일하게 유지한다.
+결과는 `insufficient_coverage`·`no_consultable_agents`·`grounding_ambiguous`·`source_incomplete`처럼 **지식 부족과 서비스 상태를 구분**한다. 숨은 후보의 존재를 응답에서 유출하지 않는 규칙은 기존 불변식 5와 같다.
 
 ---
 
-## 2. 서비스 책임
+## 4. 서비스 책임
 
-| 책임 | 소유 서비스 | LLM |
+| 책임 | 소유 | LLM |
 |---|---|---|
-| 요청자 자신의 근거 검색 | requester personal agent + memory-api | 없음 |
-| 답변 가능성 1차 gate | requester personal agent | 없음 |
-| 경계선 answerability 판정 | requester personal agent | 조건부 |
-| 질문의 knowledge need 분해 | agent-discovery-api | 필요 |
-| QID/공개 지식 후보 검색 | memory/public knowledge adapter | 없음 |
-| 모호한 grounding 결정 | agent-discovery-api | 조건부 |
-| cross-owner capability/evidence 검색 | memory-api | 없음 |
-| consent·consultable 필터 | memory-api | 없음 |
-| 단일 후보 랭킹 | agent-discovery-api | 없음 |
+| "내 근거로 못 답한다"는 판단과 discovery 호출 | requester agent(bourbon-agent), tool 결정 | 추가 호출 없음 — 이미 돌고 있는 턴의 tool call |
+| 질문 → knowledge need(개념 그룹 + 중요도 + 지식 종류) | agent-discovery-api, 기존 expansion 확장 | 1회 |
+| need → topic_id/QID grounding | agent-discovery-api, 기존 S2 | 모호할 때만 batch 1회 |
+| owner × QID capability 집계 만들기 | memory-api 빌드, topic-api sync | 그쪽 배치(이미 지불) |
+| 집계를 우리 쪽에 파생본으로 유지 | agent-discovery-api 워커 | 없음 |
+| 후보 조회·calibration·랭킹 | agent-discovery-api | 없음 |
 | group 구성 | agent-discovery-api | 없음 |
-| 추천 이유 | agent-discovery-api | 기본은 템플릿, LLM 불필요 |
-| 각 agent의 담당 답변 | 선택된 personal agent | 필요 |
-| 답변 종합과 충돌 표현 | coordination 계층 | 필요 |
+| 추천 이유 | agent-discovery-api, 템플릿 | 없음 |
+| discoverable / consultable 판정 | 첫 슬라이스는 우리 `agents.discoverable`, 이후 bourbon-api의 agent 설정 | 없음 |
+| 선택된 agent의 답변 | 그 agent(bourbon-agent) | agent당 1회 이상 |
+| 답변 종합·충돌 보존 | moderator 계열(bourbon-agent) | 1회 |
 
-### 2-1. memory-api가 소유하는 것
+### 4-1. memory-api가 소유하는 것
 
-memory-api는 personal knowledge의 저장 의미와 검색 의미를 소유한다.
+personal knowledge의 저장 의미와 검색 의미 — entity·statement, QID grounding(identity·broader), statement kind, active·invalidated, provenance, salience·competence, 빌드 manifest. **최종 추천 점수나 순위는 만들지 않는다.** 누가 전문가인지는 discovery의 제품 정책이다.
 
-- entity와 statement 검색
-- QID identity/broader 매칭
-- owner별 evidence 집계
-- declarative/procedural/experiential/preference/intention 분류
-- active·invalidated·superseded 상태
-- grounding confidence와 last seen
-- provenance 존재 여부
-- 결과 truncation과 search completeness
-- agent-consultable 정책 강제
+### 4-2. discovery가 소유하는 것
 
-memory-api는 최종 `expertise_score`나 agent 추천 순위를 만들지 않는다. 전문성을 무엇으로 볼지와 어떤 사용자를 추천할지는 discovery의 제품 정책이다.
+need와 중요도, coverage matrix, cross-owner 신호의 calibration, 단일 충분성 threshold, group set-cover와 인원 상한, 요청자 제외, 응답과 decision log, degradation의 의미, **그리고 근거 파생본의 스키마와 갱신 주기.**
 
-### 2-2. discovery-api가 소유하는 것
+### 4-3. bourbon-agent가 소유하는 것
 
-- 질문 분해 결과인 knowledge need
-- need 중요도와 required/optional 구분
-- 후보별 coverage matrix
-- cross-owner 신호의 calibration
-- 단일 agent sufficiency threshold
-- group set-cover와 group size 제한
-- 요청자 본인 제외
-- 추천 응답과 decision journal
-- degradation·empty 결과 의미
-
-### 2-3. agent/coordinator가 소유하는 것
-
-discovery는 답변을 실행하지 않는다.
-
-- requester agent는 자기 근거로 직접 답할지 discovery를 호출할지 결정한다.
-- 선택된 agent는 자기 memory만 조회해 자신에게 할당된 질문을 답한다.
-- coordinator는 선택된 agent의 공개 가능한 답변만 받아 종합한다.
-- coordinator는 원본 private memory를 직접 조회하지 않는다.
+discovery를 부를지의 판단, 선택된 agent의 실행, 종합. discovery는 답변을 실행하지 않는다. 종합 계층의 자연스러운 자리는 이미 "계획됨"으로 적힌 `moderator/agent_recommender/`다 — moderator는 방 전체를 보고 발화자를 고르는 유일한 자리다.
 
 ---
 
-## 3. 전체 요청 흐름
+## 5. 요청 흐름
 
 ```text
 User
-  │ question
+  │ 질문
   ▼
-Requester Personal Agent
-  ├─ local personal evidence search
-  ├─ deterministic answerability gate
-  └─ optional LLM answerability judge
-         │ insufficient
-         ▼
-Agent Discovery
-  ├─ LLM: knowledge need decomposition
-  ├─ search: QID candidate grounding
-  ├─ optional LLM: ambiguous grounding decision
-  ├─ Memory API: batch capability/evidence search
-  ├─ deterministic single-agent ranking
-  └─ deterministic group planning
-         │ recommendation plan
-         ▼
-Coordinator / Bourbon Agent
-  ├─ selected agents called in parallel
-  ├─ each agent retrieves only its own evidence
-  ├─ each agent returns structured claims
-  └─ LLM synthesizes claims, conflicts and gaps
-         │
-         ▼
-Final Answer
+Requester Personal Agent  (bourbon-agent, 이미 돌고 있는 턴)
+  ├─ search_conversations 등 자기 recall (모델의 선택, 지금과 같음)
+  └─ 근거가 없다고 판단하면 tool 호출  ──────────┐   추가 LLM 0회
+                                              ▼
+Agent Discovery  POST /recommend/knowledge
+  ├─ T1 need 추출 = expansion 스키마 확장         LLM 1회
+  ├─ T2 grounding → topic_id (+QID)             topic-api 검색, 모호할 때 batch LLM 1회
+  ├─ T3 근거 조회: 소스 A(topic 파생) + 소스 B(memory 파생)   우리 PostgreSQL
+  ├─ T4 결정적 랭킹, T5 group planning
+  └─ T6 조립 + decision log
+                                              │ 추천
+                                              ▼
+Requester Agent → 사용자에게 제시 (카드), 수락 시 실행은 별도 경로
 ```
 
-추천만 보여주는 UX라면 discovery 결과에서 멈춘다. 사용자가 추천을 수락하거나 제품이 자동 협업을 허용하면 그 뒤의 agent 실행과 종합이 시작된다. 이 둘은 별도 latency budget과 실패 계약을 가져야 한다.
+추천만 보여 주는 UX는 discovery 결과에서 끝난다. 실행과 종합은 **별도 예산과 별도 실패 계약**을 갖는다(§11-3).
 
 ---
 
-## 4. 단계별 상세 설계와 LLM 경계
+## 6. 단계별 설계
 
-### S0. 요청자 자신의 근거 검색
+### T0. 트리거 — judge를 두지 않고 tool 결정으로 한다
 
-요청자의 personal agent는 먼저 자기 personal knowledge를 검색한다.
+bourbon-agent의 `recommend_agents` tool은 지금 "누군가 추천을 요청할 때"만 불린다. 이 조건을 **"소유자의 질문에 내 recall로 답할 근거가 없을 때"** 로 넓히거나, 같은 클라이언트를 쓰는 두 번째 tool을 둔다. 어느 쪽이든:
 
-확인 신호:
+- 추가 LLM 호출이 없다. 모델은 이미 턴 안에서 돌고 있고 tool call은 그 턴의 일부다.
+- 새 route가 memory-api에 필요하지 않다. 요청자의 근거 검색은 지금 하는 `search_conversations`다.
+- 1차 초안이 걱정한 "모델이 사전학습 지식으로 충분하다고 오판"은 방향이 반대다 — 여기서 오판은 **도움을 청하는 쪽**이라 비용이 추천 한 번이다.
 
-- 질문과 일치하는 entity·statement가 있는가
-- statement가 active인가
-- provenance가 존재하는가
-- required concept를 얼마나 커버하는가
-- procedural/experiential 지식이 필요한 질문에 해당 종류의 statement가 있는가
-- 근거가 지나치게 오래되지 않았는가
+단점은 결정적이지 않다는 것이다. 얼마나 자주 불리는지, 불렸을 때 실제로 근거가 없었는지는 decision log로 잰다(§13). 결정적 gate가 필요해지면 그 자리는 `moderator/agent_recommender/`이고, 그때도 discovery 계약은 바뀌지 않는다.
 
-명확한 충분/부족은 규칙으로 판정한다. 이 단계에 LLM을 기본 호출로 넣지 않는다.
+### T1. need 추출 — expansion 스키마 확장
 
-### S1. 경계선 answerability 판정
-
-검색 결과가 경계선일 때만 LLM을 쓴다. 모델은 자기 일반 지식이 아니라 검색된 근거가 질문을 지지하는지를 판단한다.
+타입 ①의 S1 expansion은 이미 "개념 그룹 0~3개, 그룹마다 probe"를 낸다(`ConceptGroup{index, probes}`). knowledge need는 개념 그룹에 두 필드를 더한 것이다.
 
 ```json
 {
-  "can_answer": false,
-  "coverage": 0.35,
-  "missing_needs": [
-    "증류소별 어린이 입장 정책",
-    "도쿄에서의 이동 방법"
-  ],
-  "reason_code": "missing_required_evidence"
-}
-```
-
-규칙:
-
-- 모델 입력에는 요청자의 근거만 들어간다.
-- `can_answer=true`는 입력으로 받은 evidence id 집합과 연결되어야 한다.
-- 모델의 사전학습 지식만으로 충분 판정을 내려서는 안 된다.
-- 결과 schema validation 실패는 부족 판정 또는 안전한 재시도로 수렴한다.
-
-### S2. knowledge need 분해
-
-discovery가 질문과 선택적 context를 구조화된 need로 변환한다. 이 단계는 LLM이 필요하다.
-
-```json
-{
-  "needs": [
-    {
-      "need_id": "n1",
-      "query": "도쿄 근교 위스키 증류소",
-      "importance": "required",
-      "knowledge_kind": "declarative"
-    },
-    {
-      "need_id": "n2",
-      "query": "증류소 어린이 입장과 가족 방문 경험",
-      "importance": "required",
-      "knowledge_kind": "experiential"
-    },
-    {
-      "need_id": "n3",
-      "query": "도쿄에서 증류소까지 이동 방법",
-      "importance": "required",
-      "knowledge_kind": "procedural"
-    }
+  "groups": [
+    {"index": 0, "probes": ["도쿄 위스키 증류소", "Tokyo whisky distillery"],
+     "importance": "required", "knowledge_kind": "declarative"},
+    {"index": 1, "probes": ["증류소 어린이 입장", "family distillery visit"],
+     "importance": "required", "knowledge_kind": "experiential"},
+    {"index": 2, "probes": ["도쿄 근교 이동", "Tokyo transit"],
+     "importance": "optional", "knowledge_kind": "procedural"}
   ]
 }
 ```
 
-제약:
+- 호출은 **하나**다. 분해와 확장을 따로 부르지 않는다.
+- 그룹 상한은 타입 ①의 3을 그대로 쓴다. 1차 초안의 "1~5개"보다 좁고, 첫 슬라이스에는 충분하다.
+- `importance`·`knowledge_kind`가 스키마 검증에 실패하면 각각 `required`·`declarative`로 폴백하고 `degraded`에 남긴다. 그룹 자체를 버리지 않는다.
+- 모델은 owner·agent를 고르지 않고, 근거 소스를 보지 않는다. 질문 원문은 타입 ①과 같이 로그·예외·Sentry에 남기지 않는다(불변식 7).
 
-- need 수는 초기 1~5개로 제한한다.
-- required와 optional을 구분한다.
-- 모델은 owner나 agent를 선택하지 않는다.
-- 모델은 실제 지식 검색 결과를 보지 않는다.
-- 사용자 원문은 기존 explicit route와 동일하게 로그·예외·Sentry에 남기지 않는다.
+### T2. grounding — 한 번, 두 소스
 
-### S3. 공개 지식 grounding
+기존 S2를 그대로 쓴다. probe로 topic-api 이름 검색을 하고, 규칙으로 하나를 고르며, 못 고를 때만 batch disambiguation 1회. 결과는 그룹마다 `topic_id` 하나다.
 
-각 need를 memory personal knowledge가 사용하는 QID 공간에 연결한다.
+topic_id에서 QID는 우리가 커밋한 카탈로그로 읽는다(`source.qid`, 3,164/3,190). 가상 노드 26개는 QID가 없으므로 소스 B 조회를 건너뛰고 소스 A만 쓴다.
 
-1. alias·label·description으로 후보 검색
-2. 후보가 명확하면 결정적 선택
-3. 후보가 여러 개일 때만 LLM disambiguation
-4. 모델이 고른 QID가 실제 후보 집합에 있는지 코드로 검증
-5. 필요하면 broader QID를 함께 구성
+즉 **grounding 결과 하나가 두 근거 소스의 조회 키**다. 1차 초안의 "S3 공개 지식 grounding + S4 memory 검색"이 여기서 한 단계로 합쳐진다.
 
-LLM은 QID를 새로 만들어서는 안 된다. 선택지는 검색 결과의 후보 집합으로 제한한다.
+### T3. 근거 조회 — 두 소스, 한 테이블 구조
 
-여러 need가 동시에 모호하다면 need마다 순차 completion을 호출하지 않는다. 한 번의 구조화된 batch disambiguation으로 결정하거나 제한된 동시성으로 병렬 호출한다. 그렇지 않으면 질문 복잡도에 따라 latency가 선형 증가한다.
+두 소스 모두 우리 PostgreSQL에 있고 조회는 SQL이다. 각 소스가 무엇을 답하는지가 다르다.
 
-### S4. cross-owner capability/evidence 검색
+**소스 A — topic-api 파생. "이 주제에 깊은 관심을 드러낸 사람".**
+`visible_topic_rows`에 컬럼 둘을 더한다: `knowledge_facet`(`score_detail.facets.knowledge`, 0~100)과 `confidence`. `topics_updated`를 받으면 이미 재조회하므로 적재 경로는 바뀌지 않는다. 서브트리 롤업은 `catalog_edges`로 지금과 같이 한다.
 
-이 단계는 online LLM 없이 OpenSearch query와 aggregation으로 처리한다.
-
-입력 예시:
-
-```json
-{
-  "requester_user_id": "uuid",
-  "needs": [
-    {
-      "need_id": "n1",
-      "text": "일본 위스키 증류소 방문 경험",
-      "knowledge_kind": "experiential",
-      "groundings": [
-        {"qid": "Q0001", "match": "identity"},
-        {"qid": "Q0002", "match": "broader"}
-      ]
-    },
-    {
-      "need_id": "n2",
-      "text": "도쿄 가족 여행 이동 방법",
-      "knowledge_kind": "procedural",
-      "groundings": [
-        {"qid": "Q0003", "match": "broader"}
-      ]
-    }
-  ],
-  "owner_limit": 100,
-  "evidence_per_need": 5
-}
-```
-
-응답 예시:
-
-```json
-{
-  "owners": [
-    {
-      "owner_id": "uuid",
-      "needs": [
-        {
-          "need_id": "n1",
-          "matched_qids": ["Q0001"],
-          "identity_matches": 1,
-          "broader_matches": 2,
-          "active_statement_count": 8,
-          "procedural_statement_count": 1,
-          "experiential_statement_count": 3,
-          "hands_on_statement_count": 2,
-          "grounding_confidence": 0.91,
-          "last_seen_at": "2026-08-14T03:12:00Z",
-          "provenance_available": true
-        }
-      ]
-    }
-  ],
-  "truncated": false,
-  "searched_needs": ["n1", "n2"]
-}
-```
-
-반환하지 않는 정보:
-
-- message body
-- statement text
-- message/conversation id
-- 다른 사용자의 상세 private entity label
-- 원문을 유추할 수 있는 owner note
-
-필요하면 실제 선택된 agent가 자기 근거를 다시 찾는 데 쓸 수 있는 opaque·단기 `evidence_ref`를 반환할 수 있다. discovery나 requester가 그 ref로 타인의 원문을 읽을 수 있어서는 안 된다.
-
-### S5. 단일 agent 랭킹
-
-이 단계는 deterministic해야 한다.
-
-초기 feature 후보:
-
-- required need coverage
-- optional need coverage
-- QID identity/broader relation
-- grounding confidence
-- query-to-statement relevance
-- 필요한 knowledge kind와 statement kind의 일치
-- provenance availability
-- evidence freshness
-- evidence diversity
-- hands-on evidence
-- agent maturity 또는 응답 품질 신호가 있다면 별도 feature
-
-개념식:
+**소스 B — memory-api 파생. "이 주제에 대해 구체적 근거 statement를 가진 사람".**
+새 테이블 `knowledge_capabilities`, key는 `(owner_user_id, qid)`:
 
 ```text
-single_score =
-    required_coverage_gate
-  × relevance
-  × grounding_quality
-  × evidence_sufficiency
-  × freshness
-  × provenance_quality
+owner_user_id            uuid
+qid                      text        Wikidata QID (identity 또는 broader)
+match                    text        identity | broader
+active_statements        int
+procedural_statements    int
+experiential_statements  int
+hands_on_statements      int
+has_provenance           bool
+last_seen_at             timestamptz
+competence_norm          float       owner 내부 분포로 정규화한 값, 원시 competence_score 아님
+observed_build_at        timestamptz memory-api manifest의 built_at
 ```
 
-`salience`와 현재 `competence_score`는 owner 내부 척도다. 원시 값을 사용자 간 절대 순위로 쓰지 않는다. 쓰려면 owner별 분포를 정규화하거나, cross-owner 검증 데이터로 calibration한 feature로 변환한다.
+**들어가지 않는 것**: statement 텍스트, entity label, `personal_blurb`, message id, salience 원시값. 이 테이블은 "몇 개, 언제"만 안다. 크기는 owner당 entity 수(수백)로, `visible_topic_rows`의 유저당 상한 300과 같은 자릿수다. 10만 유저면 수천만 행이고 PostgreSQL이 감당하는 범위다.
 
-한 agent가 모든 required need를 각 need threshold 이상으로 커버하면 단일 추천이 group보다 우선한다. 사람 수를 늘리는 것은 비용과 지연, 정보 노출 면적을 모두 늘린다.
+조회는 grounding된 QID 집합에 대해 `WHERE qid = ANY(...)`이고, 두 소스를 owner로 합쳐 need별 coverage matrix를 만든다.
 
-### S6. agent group 계획
+### T4. 단일 agent 랭킹 — 결정적
 
-단일 agent가 충분하지 않을 때만 group planner가 동작한다. LLM은 필요하지 않다.
+feature 후보(타입 ①의 랭커 feature 표와 같은 방식으로 레지스터에 올린다):
 
-목표:
+- required need coverage(gate), optional need coverage
+- 소스 A: `knowledge_facet`, `confidence`, tier
+- 소스 B: need의 `knowledge_kind`와 일치하는 statement 수, `has_provenance`, `last_seen_at`의 신선도, `competence_norm`, identity/broader 구분
+- 두 소스가 같은 owner를 가리키는지(교차 확인)
+- `agent_maturity`(이미 있음)
 
 ```text
-group_score =
-    required_need_coverage
-  + evidence_quality
-  + complementary_coverage
-  + optional_need_coverage
-  - member_count_cost
-  - redundant_coverage_cost
-  - weak_grounding_cost
+single_score = required_coverage_gate × Σ_need( kind_match × evidence × freshness × provenance ) × source_agreement
 ```
 
-초기 제약:
+원시 `competence_score`·`salience`는 owner 내부 척도다. 사용자 간 절대 순위로 쓰지 않고 owner별 분포로 정규화한 값만 feature로 쓴다. 한 agent가 모든 required need를 threshold 이상으로 덮으면 단일 추천이 group보다 우선한다.
 
-- 최대 인원 3명
-- 모든 required need가 threshold 이상이어야 함
-- 각 member는 최소 하나의 need에 실질적으로 기여해야 함
+### T5. group planning — 결정적
+
+단일이 부족할 때만 돈다. 후보 pool을 랭킹 상위 일정 수로 제한한 뒤 bounded combination search.
+
+- 첫 슬라이스 **최대 2명**
+- 모든 required need가 threshold 이상
+- 각 member는 다른 member가 못 덮는 need를 최소 하나 덮어야 한다
 - 같은 need만 중복하는 member는 제외
-- 후보 pool은 랭킹 상위 일정 수로 제한한 뒤 조합 탐색
-- 핵심 need는 필요하면 두 agent의 독립 근거를 허용해 교차검증 가능
 
-need가 최대 5개, 후보가 수십 명, group이 최대 3명이면 greedy set-cover 또는 bounded combination search로 충분하다. 이 문제에 LLM을 사용하면 결과 재현성과 decision log 설명 가능성이 떨어진다.
+need 최대 3, 후보 수십, 인원 2면 탐색은 조합 수백 개다. LLM을 쓰면 재현성과 decision log 설명력이 떨어진다.
 
-### S7. 추천 응답 assembly
+### T6. 응답 조립
 
-추천 이유는 기본적으로 템플릿으로 만든다.
-
-```text
-일본 위스키와 증류소 방문 경험에 관한 근거가 있습니다.
-도쿄 가족 여행과 대중교통 경험을 보완할 수 있습니다.
-```
-
-LLM 문장 생성은 품질상 필수가 아니며 private evidence를 모델에 전달할 유인이 생기므로 첫 버전에는 넣지 않는다.
-
-### S8. 선택된 agent의 부분 답변
-
-실제 협업이 시작되면 각 agent는 자신에게 할당된 sub-question만 받는다.
-
-```json
-{
-  "need_id": "n2",
-  "question": "해당 증류소를 아이와 방문한 경험이나 어린이 입장 조건은?",
-  "answer_only_from_retrieved_evidence": true
-}
-```
-
-각 agent는 자기 memory만 검색하고 구조화된 답을 반환한다.
-
-```json
-{
-  "need_id": "n2",
-  "status": "supported",
-  "claims": [
-    {
-      "text": "...",
-      "confidence": 0.82,
-      "evidence_available": true,
-      "observed_at": "2026-07"
-    }
-  ],
-  "limitations": []
-}
-```
-
-agent는 다음을 지켜야 한다.
-
-- 자기 retrieval 결과 밖의 사실을 확정적으로 말하지 않음
-- 다른 participant의 사적 발화를 그대로 인용하지 않음
-- 답할 수 없는 need는 `unsupported`로 반환
-- 공개 가능한 수준의 요약만 coordinator에 전달
-- provenance는 내부 검증에 사용하되 raw message id/body를 반환하지 않음
-
-### S9. group 답변 종합
-
-coordinator LLM은 agent 답변만 입력으로 받는다. 원본 memory에는 접근하지 않는다.
-
-역할:
-
-- 중복 claim 병합
-- need별 답변 연결
-- 상충하는 claim 탐지
-- confidence와 freshness 반영
-- uncovered need 표시
-- 자연어 최종 답변 생성
-
-충돌은 임의로 지우지 않는다.
-
-```json
-{
-  "agreements": [],
-  "conflicts": [
-    {
-      "need_id": "n2",
-      "claim": "어린이 입장이 가능한가",
-      "positions": [
-        {"agent_id": "A", "answer": "가능", "confidence": 0.70},
-        {"agent_id": "B", "answer": "일부 프로그램만 가능", "confidence": 0.82}
-      ]
-    }
-  ],
-  "uncovered_needs": []
-}
-```
+이유는 템플릿이다. "일본 위스키·증류소 관련 근거가 있습니다." "도쿄 가족 여행 경험을 보완할 수 있습니다." LLM 문장 생성은 품질상 필수가 아니고, 타인의 근거를 모델에 보낼 유인이 생기므로 첫 슬라이스에 넣지 않는다.
 
 ---
 
-## 5. 추천 API 초안
+## 7. 근거 파생본의 적재
 
-기존 `POST /recommend/explicit`은 공개 topic 보유자를 찾는 타입이므로 그대로 둔다. 새 타입은 별도 route와 domain model을 가진다.
+### 7-1. 소스 A — 지금 이벤트 그대로
+
+`topics_updated` → 재조회 → `visible_topic_rows` 교체. 바뀌는 것은 재조회 응답에서 `score_detail.facets.knowledge`·`confidence`를 읽어 컬럼에 넣는 것뿐이다. topic-api의 `GET /users/{id}/topics` 응답에 `score_detail`이 포함되는지는 확인이 필요하다(§16).
+
+### 7-2. 소스 B — 폴링 파생본
+
+memory-api는 이벤트를 내지 않으므로 우리 워커의 **일곱 번째 주기 루프**가 pull한다.
+
+1. `GET /{tenant}/admin/personal/build`(모든 owner의 manifest, 페이지)를 읽어 `built_at`이 우리 `observed_build_at`보다 새로운 owner를 고른다.
+2. 그 owner에 대해 owner-scoped route로 entity를 읽고(`GET /{tenant}/users/{id}/personal/entities`, grounding 필드만 사용) 소스 B 행을 **교체**한다(타입 ①의 `CatalogRepository.replace`처럼 트랜잭션 하나).
+3. label·blurb·statement 텍스트는 읽고 버린다. 저장하지 않는다.
+
+주기는 memory-api 빌드 주기에 맞춘다. 빌드 자체가 배치라 폴링이 잃는 신선도는 없다. 한 사이클이 만지는 owner 수와 소요 시간은 로그로 낸다.
+
+**이것이 "모든 memory를 미러링"이 아닌 이유**: 원본은 statement(owner당 수천, 텍스트 포함)이고 파생본은 owner×QID 행(owner당 수백, 숫자와 날짜)이다. 파생본에서 원문을 복원할 수 없고, 삭제·동의 철회는 다음 폴링에서 행 교체로 따라간다.
+
+**memory-api에 바라는 것 하나**(§16): label 없이 `(qid, match, counts, last_seen)`만 주는 owner-scoped 집계 route. 없어도 동작하지만 있으면 읽고 버리는 데이터가 없어지고 응답이 작아진다. 1차 초안의 "배치 capability API"보다 훨씬 작은 요청이다.
+
+### 7-3. 소스 B가 비어 있을 때
+
+`bourbon-v2` tenant에 personal build가 실제로 몇 owner에 대해 돌았는지는 코드로 알 수 없다(§16). 소스 B 행이 없는 owner는 소스 A만으로 랭킹되고, 두 소스의 교차 확인 feature는 0이다. 파생본이 비어 있어도 서비스는 동작한다 — 그래서 슬라이스 1을 소스 A만으로 시작할 수 있다(§15).
+
+---
+
+## 8. API 초안
+
+기존 `POST /recommend/explicit`은 공개 topic 보유자를 찾는 타입이라 그대로 둔다. 새 타입은 route가 다르고 응답 envelope에 `needs`와 `mode`가 있다.
 
 ```http
 POST /api/internal/svc/agent-discovery/recommend/knowledge
@@ -501,9 +316,9 @@ POST /api/internal/svc/agent-discovery/recommend/knowledge
 {
   "user_id": "uuid",
   "question": "도쿄에서 아이와 갈 만한 위스키 증류소 여행을 어떻게 계획할까?",
-  "context": "선택적인 현재 대화 맥락",
+  "context": "선택. 현재 대화 맥락",
   "allow_group": true,
-  "max_agents": 3,
+  "max_agents": 2,
   "room_id": "uuid",
   "lang": "ko"
 }
@@ -517,460 +332,205 @@ POST /api/internal/svc/agent-discovery/recommend/knowledge
   "recommendation_id": "uuid",
   "mode": "group",
   "needs": [
-    {
-      "need_id": "n1",
-      "label": "일본 위스키 증류소",
-      "importance": "required",
-      "grounded_qids": ["Q0001"]
-    },
-    {
-      "need_id": "n2",
-      "label": "도쿄 가족 여행",
-      "importance": "required",
-      "grounded_qids": ["Q0003"]
-    }
+    {"need_id": "n0", "label": "일본 위스키 증류소", "importance": "required", "topic_id": "…"},
+    {"need_id": "n1", "label": "도쿄 가족 여행", "importance": "required", "topic_id": "…"}
   ],
   "agents": [
-    {
-      "agent_id": "uuid",
-      "owner_user_id": "uuid",
-      "covers": ["n1"],
-      "confidence": 0.87,
-      "reason": "일본 위스키와 증류소 방문 경험에 관한 근거가 있습니다."
-    },
-    {
-      "agent_id": "uuid",
-      "owner_user_id": "uuid",
-      "covers": ["n2"],
-      "confidence": 0.81,
-      "reason": "도쿄 가족 여행과 이동 경험을 보완할 수 있습니다."
-    }
+    {"agent_id": "uuid", "owner_user_id": "uuid", "covers": ["n0"], "reason": "일본 위스키·증류소 관련 근거가 있습니다."},
+    {"agent_id": "uuid", "owner_user_id": "uuid", "covers": ["n1"], "reason": "도쿄 가족 여행 경험을 보완할 수 있습니다."}
   ],
   "empty": false,
   "degraded": []
 }
 ```
 
-`confidence`는 “이 사람이 전문가일 확률”이 아니라 해당 질문 need를 검색된 evidence가 커버한다는 discovery의 calibrated confidence여야 한다. calibration 전에는 외부 필드로 열지 않고 decision log에만 두는 선택도 가능하다.
-
-`mode` 후보:
-
-- `single`
-- `group`
-- `none`
-
-내부 empty/degradation 후보:
-
-- `insufficient_coverage`
-- `no_consultable_agents`
-- `grounding_failed`
-- `grounding_ambiguous`
-- `memory_search_unavailable`
-- `memory_search_incomplete`
-- `expansion_partial`
-
-숨은 후보가 있었는지 추정할 수 있는 상세 count나 거절 이유는 외부 응답에 싣지 않는다.
+- `mode`: `single | group | none`
+- `agents[]`의 항목은 타입 ①의 `RecommendedAgent`를 재사용하고 `covers`만 더한다.
+- `confidence`는 **첫 슬라이스에서 외부 필드로 열지 않는다.** calibration 전의 숫자는 decision log에만 둔다(열린 항목 §17-5).
+- `degraded[]` 후보: `expansion_partial`(기존), `need_fields_defaulted`, `source_b_stale`, `source_b_unavailable`. `grounding_failed`·`grounding_ambiguous`는 타입 ①과 같이 422다.
+- 걸러진 후보 수, 숨은 후보의 존재를 추정할 수 있는 값은 응답에 없다(불변식 5).
 
 ---
 
-## 6. discovery domain 확장
+## 9. 도메인 확장
 
-기존 `TopicQuery`, `SourceHit`, `ExplicitRanker`에 이 타입을 끼워 넣지 않는다. 기존 타입은 공개 topic row의 tier와 topic coverage를 의미하고, 새 타입은 private memory에서 파생된 capability와 evidence sufficiency를 의미한다.
+1차 초안은 "기존 `TopicQuery`·`SourceHit`·`ExplicitRanker`에 끼워 넣지 말라"고 했다. 이 문서는 그것을 **슬라이스별로** 본다.
 
-새 domain 후보:
+- **슬라이스 1(소스 A만)**: need 하나는 grounding된 `topic_id`이고, 그것은 곧 `TopicQuery`다. 새 것은 need 여러 개를 한 요청에서 돌리는 것, `knowledge_facet`을 읽는 랭커 feature, set-cover다. 기존 도메인 위에 얹는 것이 맞다.
+- **슬라이스 2(소스 B)**: QID로 조회하는 새 `CandidateSource`와 새 `SourceHit` 종류가 필요하다. 여기서부터 `SourceHit.tier`에 memory 의미를 억지로 넣지 않는다는 1차 초안의 경고가 유효하다.
 
-```text
-KnowledgeQuestion
-KnowledgeNeed
-GroundedNeed
-KnowledgeQuery
-NeedEvidence
-ExpertiseHit
-AgentCapability
-SingleAgentPlan
-AgentGroupPlan
-KnowledgeRecommendation
-```
+새 도메인 후보: `KnowledgeNeed`(ConceptGroup + importance + kind), `NeedCoverage`, `CapabilityHit`(소스 B), `GroupPlan`, `KnowledgeRecommendation`. 새 stage 후보: `GroupPlanning` 하나. 나머지는 기존 stage의 파라미터 확장이다.
 
-새 stage 후보:
-
-```text
-AnswerabilityGate        requester agent 쪽 책임일 수 있음
-KnowledgeDecomposition
-KnowledgeGrounding
-CapabilityRetrieval
-CapabilityCalibration
-KnowledgeRanking
-GroupPlanning
-KnowledgeAssembly
-KnowledgeJournal
-```
-
-기존 explicit pipeline에서 재사용 가능한 것은 구조와 일부 구현이다.
-
-- deadline orchestration
-- structured LLM transport
-- expansion/grounding의 후보 제한과 schema validation 방식
-- digest 기반 private text logging 원칙
-- decision journal 패턴
-- requester self-exclusion
-
-재사용하면 안 되는 의미:
-
-- topic visibility를 personal knowledge consent로 간주
-- `SourceHit.tier`에 private capability 의미를 억지로 넣기
-- topic score를 evidence sufficiency로 간주
-- 기존 `coverage`를 그대로 group coverage로 사용
+재사용하면 안 되는 의미는 1차 초안과 같다 — topic visibility를 personal knowledge 동의로 간주하지 않고, `topic_score`를 evidence sufficiency로 읽지 않는다.
 
 ---
 
-## 7. 개인정보·권한 모델
+## 10. 개인정보·권한
 
-현재 memory personal knowledge의 cross-owner route는 tenant 경계 외에 `public/friends/private` 의미가 없다. 현행 API가 존재한다는 사실은 추천 또는 제3자 agent 답변에 대한 사용자 동의를 의미하지 않는다.
+### 10-1. 지금 있는 것과 없는 것
 
-최소한 다음 정책 축이 필요하다.
+- memory-api personal 데이터에는 visibility·동의가 없다. cross-owner route는 tenant 경로만 알면 누구의 label이든 준다.
+- topic-api의 `public/friends/private`는 **관심사 공개** 범위다. 관심사를 공개하는 것과 사적 대화에서 배운 것을 대신 답하게 하는 것은 노출 강도가 다르다. 재사용하지 않는다.
+- 우리 `agents.discoverable`은 "공개 topic이 하나 이상"에서 파생한 값이다.
+
+### 10-2. 첫 슬라이스의 정책
 
 ```text
-discoverable       다른 사용자의 질문에서 capability 후보로 발견될 수 있음
-consultable        다른 agent가 질문을 보낼 수 있음
-answer_share_scope public | friends | nobody
-evidence_share     none | summary | citations
+discoverable   agents.discoverable (지금 것). 후보로 발견될 수 있음
+consultable    없음 → bourbon-api의 agent 설정에 opt-in 필드로 요청 (§16). 있기 전에는 discoverable로 대체하고 응답 문구에 "연결 가능" 대신 "관련 근거가 있는 것으로 보임"을 쓴다
+answer_share_scope, evidence_share   실행 단계(bourbon-agent)의 것. 이 문서 범위 밖
 ```
 
-정책 강제 위치:
+강제 위치: 후보 조회 SQL의 `JOIN agents … WHERE discoverable`(나중에 `consultable`). **discovery가 모든 후보를 받은 뒤 거르지 않는다** — 파생본 자체에 label이 없으니 걸러 내기 전에 읽는 private 데이터도 없다.
 
-- `discoverable`과 `consultable`은 memory capability search 또는 그 앞의 authoritative projection에서 필터한다.
-- discovery가 private 후보를 모두 받은 뒤 필터하지 않는다. 그 시점에는 이미 불필요한 private metadata를 읽었다.
-- 실제 답변 시점에 agent가 `answer_share_scope`를 다시 확인한다. 추천 시점의 권한은 실행 시점의 권한을 보장하지 않는다.
-- 답변 직전 recheck가 실패하면 해당 agent를 제외하고, group required coverage가 깨지면 partial answer 또는 실행 중단으로 처리한다.
+실행 시점 재확인은 agent가 한다. 추천 시점의 권한은 실행 시점의 권한을 보장하지 않는다.
 
-topic-api의 user-topic `public/friends/private`나 block visibility는 personal knowledge consultation 동의로 재사용하지 않는다. 관심사를 공개하는 것과 사적 대화에서 배운 지식을 대신 답하게 하는 것은 노출 강도가 다르다.
+### 10-3. 모델 제공자 경계
 
-### 7-1. 모델 제공자 경계
-
-- 다른 owner의 raw personal memory를 discovery LLM에 보내지 않는다.
-- 선택된 agent의 LLM에는 그 agent 자신의 retrieval 결과만 보낸다.
-- coordinator LLM에는 각 agent가 공개 가능한 형태로 만든 answer claims만 보낸다.
-- 로그·Sentry·decision journal에는 질문과 답변 원문 대신 digest, 길이, count, reason code만 기록한다.
+- discovery의 LLM에는 요청자의 질문만 간다. 타인의 근거는 어떤 형태로도 가지 않는다(파생본에 텍스트가 없어 갈 수도 없다).
+- 선택된 agent의 LLM에는 그 agent 자신의 recall 결과만 간다.
+- 종합 LLM에는 각 agent가 공개 가능한 형태로 만든 answer claim만 간다.
+- 로그·Sentry·decision log에는 digest·길이·count·reason code만 남는다.
 
 ---
 
-## 8. 예상 지연 시간
+## 11. 지연 시간과 비용
 
-### 8-1. 전제
+### 11-1. 전제
 
-아래 수치는 SLA가 아니라 첫 구현의 latency budget을 잡기 위한 추정이다.
+SLA가 아니라 첫 구현의 예산을 잡기 위한 추정이다. 확인된 기준점:
 
-확인된 기준점:
+- 타입 ① 실측: disambiguation 켠 조건에서 p50 1.77초 / p95 3.11초, 약 98%가 모델 호출
+- PostgreSQL 후보 조회: 10만 합성 유저에서 한 자릿수 ms
+- `LLM_PROXY_TIMEOUT_SECONDS` 시도당 6초 최대 2회, `RECOMMEND_DEADLINE_SECONDS` 20초
+- bourbon-agent 쪽 예산: discovery 호출 10초, 턴 120초, 보이는 스트림 60초
 
-- 현행 discovery의 LLM 기반 text→topic 실측은 disambiguation을 켠 조건에서 약 **p50 1.77초 / p95 3.11초**다.
-- 같은 검증에서 타입 ① 전체의 약 98%가 모델 호출이었다.
-- PostgreSQL topic 후보 조회 자체는 10만 합성 유저에서 한 자릿수 ms였다.
-- 현행 `LLM_PROXY_TIMEOUT_SECONDS`는 시도당 6초, 최대 2회이고 pipeline deadline은 20초다.
-- memory capability batch search는 아직 구현·실측되지 않았다. 아래 OpenSearch 구간은 동일 리전 내부 호출과 bounded aggregation을 가정한 추정이다.
-
-따라서 새 타입도 모델 호출 수를 제한하지 않으면 storage 최적화보다 LLM 호출 수가 p95를 결정한다.
-
-### 8-2. 추천만 생성하는 경로
+### 11-2. 추천 경로
 
 | 단계 | LLM | 예상 p50 | 예상 p95 | 비고 |
 |---|---:|---:|---:|---|
-| S0 로컬 personal evidence 검색 | 아니오 | 40~120 ms | 150~350 ms | owner-scoped OpenSearch |
-| S1 deterministic answerability gate | 아니오 | < 5 ms | < 10 ms | 애플리케이션 계산 |
-| S1 경계선 answerability judge | 조건부 | 0.6~1.5 s | 2.5~5 s | 명확한 miss에는 생략 |
-| S2 need decomposition | 예 | 0.8~1.8 s | 2.5~4.5 s | 출력 1~5 needs |
-| S3 QID 후보 검색 | 아니오 | 30~100 ms | 150~400 ms | batch query 권고 |
-| S3 grounding disambiguation | 조건부 | 0.5~1.5 s | 2~4 s | batch completion 1회 권고 |
-| S4 memory capability batch search | 아니오 | 80~250 ms | 400~900 ms | 구현 후 반드시 실측 |
-| S5 후보 calibration·랭킹 | 아니오 | 2~15 ms | 30~80 ms | 후보 상한 100 가정 |
-| S6 group planning | 아니오 | 1~10 ms | 20~50 ms | 최대 3명, bounded search |
-| S7 hydration·권한 recheck·assembly | 아니오 | 20~100 ms | 150~400 ms | agent metadata store 포함 |
-| journal write | 아니오 | 3~20 ms | 30~100 ms | 응답을 막지 않는 방식 검토 |
+| T0 tool 결정 | 없음(추가분) | 0 | 0 | 이미 돌고 있는 턴 |
+| T1 need 추출 | 1회 | 0.8~1.8 s | 2.5~4.5 s | 타입 ① expansion과 같은 호출, 출력 필드 둘 추가 |
+| T2 grounding 검색 | 없음 | 30~100 ms | 150~400 ms | 그룹 3개 병렬 |
+| T2 disambiguation | 조건부 1회 | 0.5~1.5 s | 2~4 s | batch 1회 |
+| T3 두 소스 조회 | 없음 | 2~15 ms | 30~80 ms | `qid = ANY(...)`, 후보 상한 100 |
+| T4·T5 랭킹·group | 없음 | < 10 ms | < 50 ms | |
+| T6 조립·journal | 없음 | 5~30 ms | 30~100 ms | |
 
-예상 end-to-end:
+**end-to-end 추정: p50 1.5~2.5초, p95 3.5~6초.** 1차 초안의 3회 LLM(judge·decomposition·disambiguation) 대비 경로가 하나 줄었고, 남은 둘은 타입 ①이 이미 실측한 호출이다. bourbon-agent의 10초 예산 안에 든다.
 
-| 경로 | 예상 p50 | 예상 p95 | 설명 |
-|---|---:|---:|---|
-| 명확한 local miss, grounding 모호성 없음 | 1.2~2.5 s | 3.5~6 s | decomposition 1회가 대부분 |
-| grounding LLM 필요 | 2~4 s | 5~9 s | batch disambiguation 1회 |
-| answerability judge까지 필요 | 2.5~5 s | 7~12 s | requester 쪽 LLM이 앞에 추가 |
-| warm cache + 단순 단일 need | 0.9~2 s | 3~5 s | grounding/search cache 적중 |
+### 11-3. 실행 경로 — 이 문서 범위 밖이지만 예산은 분리한다
 
-현재 20초 discovery deadline 안에는 들어오지만, LLM 재시도가 겹치면 꼬리는 쉽게 20초에 접근한다. need마다 순차 disambiguation을 하면 안 되는 이유다.
+선택된 agent 1~2명이 병렬로 자기 recall(15초 예산)과 답변 completion을 하고, 종합이 1회 더 든다. 1차 초안의 추정(단일 p50 3~7초, group p50 5~10초 / p95 15~25초)은 유지하되 **실측 전의 숫자**다. 턴 120초 / 스트림 60초 안에 들지만, 추천 응답과 실행을 하나의 timeout에 넣지 않는다.
 
-### 8-3. 실제 단일 agent 답변까지 생성하는 경로
+### 11-4. 비용
 
-추천 이후 다음 비용이 추가된다.
-
-| 단계 | 예상 p50 | 예상 p95 |
-|---|---:|---:|
-| 선택 agent의 자기 evidence 재조회 | 50~250 ms | 300~800 ms |
-| agent answer completion | 1~4 s | 6~12 s |
-| 공개 정책·schema 검증 | 5~30 ms | 50~150 ms |
-
-추천부터 실제 답변까지의 전체 추정은 **p50 3~7초 / p95 10~20초**다. 모델·프롬프트·출력 길이에 따라 변화가 크므로 첫 구현에서 실측해야 한다.
-
-### 8-4. 2~3 agent group 답변까지 생성하는 경로
-
-agent 호출은 반드시 병렬 실행한다. 순차 실행은 member 수만큼 latency가 증가한다.
-
-| 단계 | 예상 p50 | 예상 p95 | 비고 |
-|---|---:|---:|---|
-| 2~3 agent retrieval + answer 병렬 | 2~6 s | 8~15 s | 가장 느린 member가 경로를 결정 |
-| coordinator synthesis | 1~3 s | 5~8 s | claim 수와 출력 길이에 영향 |
-| 전체: discovery + group 실행 + synthesis | 5~10 s | 15~25 s | 일부 agent timeout 제외 정책 필요 |
-
-현행 discovery의 20초 deadline을 group execution 전체에 공유하면 부족할 수 있다. 권고는 추천과 실행을 분리하는 것이다.
-
-```text
-knowledge recommendation deadline: 8~12초 목표, hard cap 20초
-agent member deadline: member당 8~12초
-group coordination deadline: 전체 20~30초
-```
-
-정확한 값은 e3llm 처리량과 실제 answer token 분포를 확인한 뒤 설정 레지스터에 넣는다. 위 숫자를 코드 상수로 복사하지 않는다.
-
-### 8-5. latency를 줄이는 핵심 규칙
-
-1. local answerability의 명확한 경우는 LLM 없이 처리한다.
-2. need decomposition과 query expansion을 가능하면 completion 하나에서 만든다.
-3. 여러 need의 grounding 후보 검색은 batch로 호출한다.
-4. 여러 모호한 need의 disambiguation은 한 번의 구조화 completion으로 제한한다.
-5. memory capability 검색은 need 전체를 받는 단일 batch API로 만든다.
-6. owner별 상세 조회 N+1을 금지한다.
-7. group member answer는 병렬 실행한다.
-8. coordinator는 raw memory가 아니라 짧은 structured claims만 받는다.
-9. recommendation-only 응답과 full answer 실행을 API와 timeout에서 분리한다.
+질문당 LLM 호출 1~2회, 토큰은 타입 ① 대비 출력 필드 둘만큼 증가. 소스 B의 폴링은 LLM이 없고, memory-api 빌드 비용은 우리 것이 아니다. **유저 수에 비례하는 LLM 비용이 없다**는 것이 이 설계의 요점이다.
 
 ---
 
-## 9. 실패와 degradation
+## 12. 실패와 degradation
 
-| 실패 | 추천 단계의 처리 | 실행 단계의 처리 |
+| 실패 | 추천 단계 | 실행 단계 |
 |---|---|---|
-| requester local memory unavailable | discovery로 바로 넘기지 않고 상태 구분 | 사용자에게 자기 근거 확인 실패 표시 |
-| decomposition LLM unavailable | fallback 분해가 가능하면 1개 verbatim need | `expansion_partial` 또는 503 |
-| grounding 후보 없음 | 422 성격의 grounding failure | 실행하지 않음 |
-| grounding 일부 모호 | required need면 중단, optional이면 degradation 검토 | 빠진 need 표시 |
-| memory capability search unavailable | 추천 불가 | 503 |
-| memory 결과 truncated | 완전성 threshold에 따라 degraded 또는 재조회 | group coverage 과대평가 금지 |
-| candidate recheck 실패 | 후보 제거 후 재계산 | required coverage가 깨지면 partial/중단 |
-| 한 group member timeout | 남은 member로 required coverage 재계산 | 빈 need를 명시하거나 중단 |
-| agent가 unsupported 반환 | 다른 후보로 한 번 대체 가능 | 그래도 실패하면 uncovered로 표시 |
-| agent 답변 간 충돌 | 추천 실패가 아님 | 최종 답변에 conflict 보존 |
-| coordinator LLM 실패 | structured agent answers는 유지 | 개별 답변을 분리해 반환할지 제품 결정 |
+| T1 LLM 실패 | 타입 ①과 같이 verbatim 폴백 + `expansion_partial` | — |
+| need 필드 스키마 위반 | `required`·`declarative`로 폴백 + `need_fields_defaulted` | — |
+| grounding 후보 없음 | 422 `grounding_failed` | 실행 안 함 |
+| grounding 모호 | required need면 422 `grounding_ambiguous`, optional이면 그 need 제외 + degraded | — |
+| topic-api 검색 불가 | 503(타입 ①과 같음) | — |
+| 소스 B 파생본이 오래됨 | 정상 응답 + `source_b_stale`(threshold는 레지스터) | — |
+| 소스 B 폴링 실패 | 다음 사이클로, 추천은 소스 A로 계속 | — |
+| required need 하나를 아무도 못 덮음 | `mode: none`, `empty: true` | — |
+| 실행 시 agent가 `unsupported` | — | 다른 후보로 한 번 대체, 그래도 실패면 uncovered |
+| member timeout | — | 남은 member로 required coverage 재계산 |
 
-재시도는 한 계층만 소유한다. discovery가 memory client를 재시도하고 memory가 같은 OpenSearch 요청을 다시 중첩 재시도하는 식으로 두 사다리를 두지 않는다. LLM도 transport retry와 pipeline retry를 중첩하지 않는다.
+재시도는 한 계층만 갖는다. discovery가 topic-api를 재시도하면 topic-api는 자기 인덱스를 재시도하지 않고, LLM은 transport 재시도와 pipeline 재시도를 중첩하지 않는다.
 
 ---
 
-## 10. 관측과 decision journal
+## 13. 관측과 decision log
 
-원문을 기록하지 않고 다음을 기록한다.
+원문 없이 다음을 남긴다.
 
 ```text
-question_digest
-question_chars
-context_chars
-needs_total
-needs_required
-needs_grounded
-needs_ambiguous
+question_digest, question_chars, context_chars
+needs_total, needs_required, needs_grounded, needs_ambiguous, need_fields_defaulted
 grounding_llm_calls
-capability_candidates
-consultable_candidates
-single_sufficient
-group_size
-covered_required_needs
-uncovered_required_needs
-memory_truncated
+candidates_source_a, candidates_source_b, candidates_both
+discoverable_candidates
+single_sufficient, group_size, covered_required, uncovered_required
+source_b_max_age_seconds
 degraded[]
-latency_ms.local_search
-latency_ms.answerability
-latency_ms.decompose
-latency_ms.grounding_search
-latency_ms.grounding_llm
-latency_ms.capability_search
-latency_ms.rank
-latency_ms.group_plan
-latency_ms.assemble
-latency_ms.total
+latency_ms.{expand, ground_search, ground_llm, retrieve, rank, group, assemble, total}
 ```
 
-full execution을 별도 journal로 기록한다.
+실행은 별도 journal이다(`recommendation_id`, `members_requested/answered/timed_out`, `needs_supported/unsupported`, `conflict_count`, latency).
 
-```text
-recommendation_id
-coordination_id
-members_requested
-members_answered
-members_timed_out
-needs_supported
-needs_unsupported
-conflict_count
-synthesis_llm_calls
-latency_ms.member_max
-latency_ms.synthesis
-latency_ms.total
-```
+**핵심 지표**: 추천 당시 need coverage와 실행 당시 `supported/unsupported`의 calibration error. "잘 알 것이라고 추천했는데 실제 agent가 답하지 못한 비율"을 계속 잰다. 랭커 feature 가중치는 이 지표로 고친다.
 
-금지:
-
-- 질문·context 원문
-- 타인의 statement·message 원문
-- provenance message ids
-- agent 답변 원문 전체
-- owner별 private entity 목록
-
-핵심 알람 후보:
-
-- `memory_search_unavailable`
-- `memory_search_incomplete`
-- `grounding_disambiguation_failed`
-- discovery deadline
-- group member timeout 비율
-- coordinator failure
-- `unsupported`가 추천 confidence와 모순되는 비율
-- 추천 당시 coverage와 실행 당시 실제 answerability의 calibration error
-
-마지막 항목은 이 기능의 핵심 품질 지표다. “잘 알 것이라고 추천했는데 실제 agent가 답하지 못한 비율”을 계속 측정해야 한다.
+알람 후보: `source_b_stale` 비율, 폴링 사이클 실패, `grounding_ambiguous` 비율(타입 ①과 공유), 실행 단계 `unsupported` 비율.
 
 ---
 
-## 11. 평가 지표
+## 14. 평가
 
-### 11-1. retrieval
+### 14-1. 오프라인 — 합성 모집단 위에서
 
-- relevant owner recall@K
-- irrelevant owner precision@K
-- required need coverage
-- consultable 정책 위반 0건
-- requester self-inclusion 0건
-- hidden candidate existence leakage 0건
+기존 10만 합성 모집단에 소스 B 파생본을 합성으로 더한다(owner별 QID 분포는 `visible_topic_rows`와 상관을 두되 `knowledge_kind` 분포는 따로 뽑는다). 재는 것:
 
-### 11-2. 단일 추천
+- relevant owner recall@K, precision@K
+- required need coverage, 요청자 자기 포함 0건, 숨은 후보 존재 유출 0건
+- procedural 질문에서 procedural·experiential 근거 보유자가 선택된 비율
+- entity만 일치하고 질문의 조건은 맞지 않는 false positive 비율
+- group: 평균 인원, 불필요한 member 비율, 오라클 최소 group 대비 인원 차이
 
-- 추천 agent의 실제 `supported` 응답 비율
-- confidence calibration
-- procedural 질문에서 procedural/experiential evidence가 선택된 비율
-- entity만 일치하고 질문 predicate는 맞지 않는 false positive 비율
+### 14-2. 온라인 — 실측만 답하는 것
 
-### 11-3. group
-
-- required need coverage
-- 평균 group size
-- 불필요한 member 비율
-- redundant coverage 비율
-- oracle 최소 group 대비 member 수 차이
-- group 추천 후 실제 uncovered need 비율
-
-### 11-4. 답변
-
-- evidence-supported claim 비율
-- unsupported claim 비율
-- conflict 보존율
-- stale evidence 경고 정확도
-- 사용자 만족도 또는 후속 대화 지속률
-
-offline 합성 데이터만으로는 실제 answerability를 완전히 검증할 수 없다. owner personal knowledge에서 질문·정답·근거를 생성하되, 평가 세트 생성에 사용한 statement를 추천 모델 입력으로 직접 노출하지 않는 분리가 필요하다.
+offline 합성 데이터로는 실제 answerability를 검증할 수 없다. §13의 calibration error가 유일한 답이고, 그것은 실행 단계가 있어야 잰다. 실행 단계 없이 추천만 내보내는 기간에는 **사용자가 추천을 수락했는지**를 대리 지표로 쓴다.
 
 ---
 
-## 12. 구현 단계
+## 15. 구현 슬라이스
 
-### Phase A. 기존 API를 이용한 PoC
+| 슬라이스 | 새 의존성 | 새 LLM 호출 | 답하는 질문 | 완료 조건 |
+|---|---|---|---|---|
+| **1. 소스 A만** | 없음 | 0 (스키마 확장) | 이 주제에 깊은 관심과 지식을 드러낸 사람 | route·envelope, `knowledge_facet` 미러, need 다중 grounding, 결정적 랭킹, 합성 모집단 측정 |
+| **2. 소스 B** | memory-api **폴링만** | 0 | 구체적 근거 statement를 가진 사람 | `knowledge_capabilities`, 일곱 번째 루프, 두 소스 합산 랭킹, `source_b_stale` |
+| **3. group** | 없음 | 0 | 두 need를 두 사람이 나눠 덮는 경우 | set-cover, `mode: group`, 인원 2 |
+| **4. 트리거** | bourbon-agent 변경 | 0 | 실제로 불리는가 | tool 설명 변경 또는 두 번째 tool, 호출 빈도 로그 |
+| **5. 실행·종합** | bourbon-agent 소유 | agent당 1 + 종합 1 | 실제 답변 | 이 문서 범위 밖. `moderator/agent_recommender/` |
 
-- 기존 `/personal/grounded/{qid}/entities`
-- 기존 `/personal/themes/{qid}/owners`
-- 소수 후보에 대한 owner-scoped statement 확인
-- discovery 내부에서 temporary coverage matrix 구성
-
-목표는 필요한 feature와 false positive 유형을 찾는 것이다. production latency나 privacy 경계의 최종 형태로 보지 않는다.
-
-완료 조건:
-
-- 실제 질문 세트에서 단일/group 구분 가능
-- 어떤 statement kind가 answerability에 유효한지 확인
-- owner-internal salience/competence의 cross-owner 오차 측정
-- batch API 응답 필드 확정
-
-### Phase B. memory capability batch API
-
-- multi-need batch request
-- QID identity/broader + statement text 검색
-- owner aggregation
-- consultable 필터
-- truncation/completeness 계약
-- raw prose 없는 응답
-- OpenSearch 부하·p50·p95 측정
-
-### Phase C. discovery 새 추천 타입
-
-- `KnowledgeQuery` 계열 domain
-- decomposition·grounding
-- capability source
-- single ranker
-- group planner
-- assembly와 decision journal
-- API contract와 typed failures
-
-### Phase D. agent 실행
-
-- per-agent scoped question contract
-- 자기 memory evidence retrieval
-- structured claims
-- 실행 시점 consent recheck
-- 병렬 호출과 member timeout
-
-### Phase E. coordination
-
-- claim merge
-- conflict detection
-- uncovered need
-- final synthesis
-- full execution journal
-
-### Phase F. projection 최적화 검토
-
-요청량이 커져 memory-api의 실시간 aggregation이 병목이면, consultable capability만 이벤트로 발행해 discovery에 projection을 둘 수 있다.
-
-projection에는 raw statement나 message id를 넣지 않는다. memory-api가 system of record이고, discovery projection은 검색 가능한 공개 capability의 파생본이다. 삭제·동의 철회·rebuild event가 빠지면 private 후보가 잔존할 수 있으므로, 이벤트 계약과 정기 full reconciliation이 먼저 필요하다.
+슬라이스 1은 타입 ① 위에 "need 여러 개 + knowledge 가중 랭커"를 얹는 것이라 새 도메인이 거의 없다. 슬라이스 4는 1과 동시에 시작할 수 있다 — discovery 쪽이 준비되기 전에는 지금 `recommend_agents`가 하는 일과 같으니 사용자에게 보이는 변화가 없다.
 
 ---
 
-## 13. 열린 결정
+## 16. 확인할 것과 요청할 것
 
-1. `discoverable`, `consultable`, `answer_share_scope`, `evidence_share`를 어느 서비스가 저장하는가.
-2. 기존 agent 공개 설정과 consultable을 분리할 것인가.
-3. requester가 추천을 수락한 뒤에만 agent를 실행할지, 자동 실행할지.
-4. agent group 최대 인원을 2명으로 시작할지 3명으로 시작할지.
-5. required need 하나가 비었을 때 partial answer를 허용할지.
-6. 충돌하는 agent 답변을 사용자에게 어떤 UI로 보여줄지.
-7. discovery 응답에 calibrated confidence를 노출할지 내부에만 둘지.
-8. `evidence_ref`가 필요한지, 필요하다면 누가 redeem할 수 있는지.
-9. memory capability search가 free-text statement 검색까지 맡을지, QID 기반 검색만 첫 버전에 넣을지.
-10. 추천 결과와 실제 answerability의 feedback event 이름과 payload.
-11. agent owner가 답변 사용 내역을 확인하거나 거부할 수 있어야 하는지.
-12. 추천-only와 full coordination을 동기 API로 둘지, coordination만 비동기 job/stream으로 둘지.
+다른 팀에 물어야 하는 것이다. 답이 오기 전에는 위 설계를 그대로 두고 슬라이스 1을 진행할 수 있다.
+
+**memory-api**
+1. `bourbon-v2` tenant에 personal build가 실제로 돌고 있는지, 몇 owner인지, 주기는 어떻게 되는지. 소스 B의 가치가 이 숫자에 달려 있다.
+2. label·blurb 없이 `(qid, match, statement kind별 count, has_provenance, last_seen)`만 주는 owner-scoped 집계 route를 추가해 주실 수 있는지. 없어도 `GET /users/{id}/personal/entities`로 읽고 버리면 되지만, 있으면 private 텍스트가 우리 프로세스에 들어오지 않는다.
+3. `GET /{tenant}/admin/personal/build`를 폴링 피드로 써도 되는지, 페이지 크기와 부하 상한.
+
+**topic-api**
+4. `GET /users/{id}/topics`(우리가 재조회하는 route)의 응답에 `score_detail.facets`·`confidence`가 포함되는지. 없으면 포함을 요청한다.
+
+**bourbon-api**
+5. agent 설정에 `consultable`(다른 사용자의 질문에 내 agent가 대신 답해도 되는가) opt-in 필드를 둘 수 있는지, 그리고 그 변경을 이벤트로 낼 수 있는지. `personal_agent_visibility_changed`가 만들어지지 않았던 것과 같은 이유로 이벤트 대신 재조회가 될 수도 있다.
+
+**bourbon-agent**
+6. `recommend_agents`의 트리거를 넓히는 것과 두 번째 tool을 두는 것 중 어느 쪽이 프롬프트 설계상 맞는지. `moderator/agent_recommender/`의 계획이 이 기능과 같은 것인지.
 
 ---
 
-## 14. 권고안
+## 17. 열린 항목
 
-첫 production slice는 다음으로 제한한다.
-
-- requester agent가 명확한 local miss일 때만 호출
-- knowledge need 최대 3개
-- memory capability batch API는 QID + statement full-text를 함께 사용
-- consultable opt-in이 있는 owner만 반환
-- 단일 agent 우선
-- group 최대 2명
-- recommendation과 agent 실행은 분리
-- discovery 경로 LLM은 decomposition 1회, 필요 시 batch disambiguation 1회까지
-- agent 답변은 병렬 실행
-- coordinator는 structured claims만 입력으로 받음
-- raw provenance는 owner agent 밖으로 나오지 않음
-- latency 목표는 추천 p50 2.5초 이내, p95 6초 이내에서 시작하되 실측 후 확정
-- full group answer는 별도 budget으로 p50 10초 이내를 초기 목표로 두고 p95를 우선 관측
-
-이 순서라면 personal knowledge의 강점인 구체적 entity·statement·provenance를 활용하면서도, 다른 사용자의 private memory를 discovery 데이터로 바꾸는 위험을 피할 수 있다. 또한 단일 추천 품질을 먼저 검증한 뒤 group orchestration 비용과 복잡도를 추가할 수 있다.
+1. `consultable`이 생기기 전 `discoverable`로 대체하는 기간을 둘 것인가, 아니면 필드가 생길 때까지 기다릴 것인가.
+2. 요청자가 추천을 수락한 뒤에만 실행할지, 자동 실행할지(1차 초안 3번, 그대로).
+3. required need 하나가 비었을 때 partial answer를 허용할지(1차 초안 5번, 그대로).
+4. group 인원을 2에서 3으로 올릴 조건.
+5. calibrated confidence를 외부 필드로 열 시점과 조건.
+6. 소스 B의 `stale` threshold — memory-api 빌드 주기가 정해진 뒤 레지스터 행으로.
+7. 실행 단계의 feedback event(추천 id ↔ `supported/unsupported`) 이름과 payload. calibration error를 재려면 이것이 먼저 있어야 한다.
+8. 슬라이스 1을 타입 ① 도메인 위에 얹는 것을 슬라이스 2에서 새 소스로 나누는 시점의 기준.
