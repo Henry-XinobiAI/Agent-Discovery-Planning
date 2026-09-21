@@ -3,7 +3,7 @@
 > 상태: **설계 초안, 결정 아님**
 > 범위: `bourbon-agent` · `bourbon-agent-discovery-api` · `bourbon-memory-api-v2` · `bourbon-topic-api` 사이의 새 추천 타입(타입 ④ 후보)
 > 비범위: 타입 ①·②·③의 계약 변경, 선택된 agent들의 실제 답변 실행과 종합(이 문서는 경계만 정한다)
-> 개정 이력: 1차 초안 2026-09-18 → 2차 2026-09-21 세 서비스의 코드를 읽고 전면 재작성 → 2차 보정 2026-09-21 외부 리뷰 반영(동의 경계, export route 선행, bounded map, coverage 상태, 슬라이스 순서)
+> 개정 이력: 1차 초안 2026-09-18 → 2차 2026-09-21 세 서비스의 코드를 읽고 전면 재작성 → 2차 보정 2026-09-21 외부 리뷰 반영(동의 경계, export route 선행, bounded map, coverage 상태, 슬라이스 순서) → 2차 보정 2 2026-09-21 두 번째 리뷰 반영(authorship은 결정 대기·자리만, need별 후보 pool, coverage 상태 비노출, 완전 scan 뒤 삭제)
 > 이 문서의 "현재"는 각 repo의 HEAD 기준이다 — bourbon-agent `80d81bf`(09-10), memory-api-v2 `6c0ae52`(09-15), topic-api `ae09a28`(09-19), agent-discovery-api `339a99f`(09-21)
 
 ---
@@ -18,7 +18,7 @@
 2. **discovery 경로의 LLM 호출은 타입 ①이 이미 내는 그 호출이다.** need 분해는 expansion 스키마의 필드 둘이고, answerability judge는 없다. 보통 1회, 모호할 때 2회(§6 T1·T2).
 3. **근거 소스는 둘이고 같은 QID key space에서 만난다.** 소스 A는 topic-api 파생(관심·지식 신호, `prior`), 소스 B는 memory-api 파생(근거 statement의 개수·종류·날짜, 텍스트 없음). 두 소스는 개체 층과 주제 층이 달라 `topic_qid_map`으로 조인한다(§6 T2·T3, §7).
 4. **후보 조회는 두 단계다.** 1단계는 우리 DB로 수십 명까지 좁히고, 2단계는 그 후보만 memory-api에 넘겨 질문 텍스트로 재점수한다. 2단계가 답하지 않으면 1단계 순위를 그대로 응답한다 — fallback은 별도 경로가 아니라 매 요청 항상 도는 1단계다(§6 T3).
-5. **동의 요건이 소스마다 다르다.** 소스 A는 owner가 이미 공개한 관심사라 `discoverable`로 가고, 소스 B는 개수만 있어도 개인 데이터라 `consultable` opt-in 뒤에만 production에 적재한다(§10).
+5. **동의 요건이 소스마다 다르다.** 소스 A는 owner가 이미 공개한 관심사라 `discoverable`로 가고, 소스 B는 개수만 있어도 개인 데이터라 `consultable` opt-in 뒤에만 production에 적재한다. 소스 B에는 질문이 하나 더 있다 — owner의 memory에는 **다른 참가자가 말한 것**도 statement로 들어가므로, 그것을 owner의 capability로 셀지는 memory-api·기획과 정할 정책이다. 결정 전에는 구분 없이(`authorship=any`) 가되, 결정이 오면 설정값 하나로 바뀌게 자리를 둔다(§10-2).
 
 추천 시점의 런타임 의존성은 topic-api 검색(지금 타입 ①과 같음)과 memory-api evidence route 1회다. 후자가 없어도 추천은 나간다. 1차 초안과 무엇이 달라졌는지는 §3-5에 표로 모았다.
 
@@ -48,9 +48,9 @@
 
 요청자의 agent가 자기 recall에서 근거를 찾지 못한다. discovery는 질문을 need 하나(espresso 추출 조정, procedural)로 읽고, 그 topic/QID 아래에 procedural·experiential 근거를 가진 소유자를 찾는다.
 
-> 이 질문은 제가 가진 근거로 답하기 어렵습니다. 에스프레소 추출 조정에 관한 근거가 있는 agent를 연결할 수 있습니다.
+> 이 질문은 제가 가진 근거로 답하기 어렵습니다. 에스프레소 추출 조정에 관해 도움이 될 수 있는 agent를 연결할 수 있습니다.
 
-추천 이유는 공개 가능한 것에만 근거하고, 근거의 확실성에 따라 문구가 달라진다(§6 T6). 타인의 statement·메시지 내용은 이유에 들어가지 않는다.
+추천 이유는 공개 가능한 것에만 근거한다. 첫 버전은 근거의 확실성을 문구에 드러내지 않는다(§6 T6). 타인의 statement·메시지 내용은 이유에 들어가지 않는다.
 
 ### 2-2. agent group
 
@@ -88,7 +88,9 @@ need는 셋으로 나뉜다 — ① 도쿄 근교 위스키 증류소(declarativ
 - **personal knowledge 빌드는 LLM을 여섯 단계에서 부른다**(extract·grounding scoring·judge·dedup·competence·classes). 배치이고 `BackgroundTasks`로 돈다. **읽기 경로는 LLM 0회**, BM25와 필터만 쓴다. embedding·kNN은 없다. "LLM을 안 쓴다"는 읽기에 대해 맞고, 빌드에 대해서는 틀리다 — 다만 빌드 비용은 owner당 한 번 내는 것이고 질문마다 내지 않는다.
 - **QID가 붙는 층은 개체다.** `knowledge_qid`는 "야마자키 증류소 Q1146917"처럼 구체적인 것이고, `broader_qids`는 `[*instance_of(P31), *occupations(P106), *class_ancestors(YAGO 클래스 폐포)]`다(`positioning.py:38-58`). 개체 자신의 P279 체인이나 제품·재료 관계는 들어가지 않는다 — 야마자키 증류소는 "위스키 증류소 → 증류소 → 공장 → …"으로 올라가고 **"위스키 Q281"에는 닿지 않는다.** extractor가 개체에 `broader`·`related` grounding을 덧붙이면 그 QID와 그것의 조상이 함께 들어가지만, 그것은 모델의 선택이라 확률적이다. 지인(acquaintance)은 `GroundingSource.LOCAL`로 `knowledge_qid=None`, QID가 없다.
 - **cross-owner route가 이미 있다.** `GET /{tenant}/personal/themes/{qid}/owners`는 QID 하나에 대해 **OpenSearch 집계 한 번**으로 owner별 `count`·`last_seen`과 샘플 entity를 준다(정렬 `count|recent|pagerank`, `limit≤100`). `GET /{tenant}/personal/grounded/{qid}/entities`는 owner_id가 붙은 entity 목록을 준다. 둘 다 entity label·`personal_blurb`·salience를 그대로 노출한다.
-- entity에는 `grounding.knowledge_qid`(Wikidata), `grounding.broader_qids[]`, `salience`, `competence_score`, `hands_on_statements`, `grounding.last_seen`이 있다. statement에는 `statement_kind`(declarative·procedural·experiential·preference·intention), `epistemic`(fact·opinion), `status`(active·invalidated), `provenance_message_ids`가 있다. owner-scoped entity 목록 route에는 **kind별 statement 개수와 provenance 유무가 없고**, statements route는 `text`와 `provenance_message_ids`를 싣는다(`api/routers/personal/structs.py:117-138, 165-172`).
+- entity에는 `grounding.knowledge_qid`(Wikidata), `grounding.broader_qids[]`, `salience`, `competence_score`, `hands_on_statements`, `grounding.last_seen`이 있다. statement에는 `statement_kind`(declarative·procedural·experiential·preference·intention), `epistemic`(fact·opinion), `status`(active·invalidated), `provenance_message_ids`, `speaker`가 있다. owner-scoped entity 목록 route에는 **kind별 statement 개수와 provenance 유무가 없고**, statements route는 `text`와 `provenance_message_ids`를 싣는다(`api/routers/personal/structs.py:117-138, 165-172`).
+- **owner의 memory에는 다른 참가자가 말한 것도 statement로 들어간다.** statement의 `speaker`는 이름 문자열이고 user id가 아니다(`structs.py:196`, 인덱스 `keyword`). 빌드는 message별 sender id(`history.py:130`의 `sender_by_msg`)로 owner의 발화와 타인의 발화를 갈라 `salience_owner_refs`·`salience_other_refs`를 만든다(`scoring.py:101-141`) — 즉 그 구분이 빌드에는 있고 statement 자체에는 없다. 같은 조인은 조회 시점에도 가능하다(provenance → message → sender).
+- 빌드 manifest(`PersonalManifest`, `manifest.py:252-263`)에는 `owner_id` 외에 `owner_name`, `fingerprint`, `report`, `last_build_delta`가 있다.
 - **이벤트 발행 없음. 인증 없음. personal 데이터에 visibility·동의 모델 없음.** 접근 제어는 tenant 경로 세그먼트뿐이다("wire authentication in before exposing this service externally"). 변경 피드에 가장 가까운 것은 빌드 manifest의 `last_build_delta.changed_entity_ids`(truncated)이고, manifest 목록 route는 `offset`·`limit`만 받는다(`admin.py:353-368`). 계정 삭제는 manifest를 지우고 tombstone을 남기지 않는다(`manifest.py:449`).
 - 공개 지식 corpus는 `wikidata-latest-all`(2026-06-21 수집)에서 만들고 `--dump-version 20260802`로 인덱싱한다. topic-api 카탈로그의 `dump_version`과 같은 날짜다. `POST /knowledge/expand`는 seed 최대 32개, 결과 최대 500개, pagination 없음, depth 2의 두 번째 hop seed는 상위 64개다(`expand.py:19-30`).
 - owner당 규모 힌트: context 조립의 entity pool 상한 500, provenance entity 상한 200. 명시적 유저 수·statement 수 목표는 없다.
@@ -242,7 +244,7 @@ T3-2  memory-api       질문 텍스트 BM25         수십 명 재점수       
 
 grounding에서 질문의 조건("압력이 너무 높을 때")은 topic으로 압축되며 사라진다. T3-1만으로는 에스프레소에 procedural 근거 8건을 가진 사람이 그 8건 모두 로스팅 이야기인지 구분하지 못한다. T3-2가 그 조건을 되찾는다. 두 단계는 다른 축(topic ↔ 텍스트)을 보므로 겹치지 않고 보완한다.
 
-두 단계가 need마다 owner의 **coverage 상태**를 한 단계씩 올린다. 이 상태가 랭킹 가중·응답 문구·fallback 강도를 한 번에 정하고, 뒤의 T4·T6·§8·§12·§13이 전부 이것을 읽는다.
+두 단계가 need마다 owner의 **coverage 상태**를 한 단계씩 올린다. 이 상태가 랭킹 가중과 fallback 강도를 정하고 T4·§12·§13이 읽는다. **응답에는 나가지 않는다** — 문구도 `covers`도 상태를 드러내지 않는다(T6, §8). 그것은 `consultable`이 덮는 동의가 아니기 때문이다.
 
 ```text
 prior_only              소스 A만 있음 — 관심·지식 신호는 있으나 근거 statement는 확인 안 됨      T3-1이 매김
@@ -275,13 +277,25 @@ has_provenance               bool
 last_seen_at                 timestamptz
 observed_build_at            timestamptz memory-api manifest의 built_at
 last_seen_in_source_at       timestamptz 우리 폴링이 이 owner를 마지막으로 본 시각 (§7-3 제거 정책)
+authorship                   text        any | owner — 이 행의 개수가 어느 발화를 센 것인가. 지금은 전부 any (§10-2)
 ```
+
+`authorship`은 **결정 대기 중인 정책의 자리**다. owner의 memory에는 다른 참가자가 말한 것도 statement로 들어가므로(§3-2) "owner 자신의 발화만 센다"로 정해지면 export route에 `authorship=owner`를 넘겨 재적재하고 이 컬럼 값이 바뀐다. 조회 SQL은 이 컬럼을 읽지 않고, 과도기에 두 값이 섞이면 `WHERE authorship = :current` 한 줄이다. 결정은 memory-api·기획과 한다(§17-15).
 
 **들어가지 않는 것**: statement 텍스트, entity label, `personal_blurb`, message id, salience 원시값, **그리고 `competence_score`와 그 파생값**. competence를 owner 내부에서 정규화해도 사용자 간 비교가 되지 않는다 — 아는 것이 거의 없는 사람의 최고 entity도 percentile 1.0이다. 실행 단계의 `supported/unsupported`가 쌓인 뒤 cross-owner calibration이 되면 그때 다시 본다. 이 테이블은 "몇 개, 언제"만 안다. 크기는 owner당 entity 수(수백)로, `visible_topic_rows`의 유저당 상한 300과 같은 자릿수다.
 
 **topic 단위로 합칠 때 `SUM`을 쓰지 않는다.** entity 하나의 `broader_qids` 여러 개가 같은 topic의 `topic_qid_map`에 함께 들어가면 그 entity가 여러 번 세어져 topic의 근거량이 부푼다. 첫 버전은 중복에 강한 집계만 쓴다 — QID 행들 사이의 `MAX(active_statements)`, `MAX(last_seen_at)`, `bool_or(has_provenance)`, 그리고 export route가 topic 단위 distinct entity 수를 줄 수 있으면 그것(§16 memory-api 질문 3). `SUM`은 상한을 둔 capped sum으로만.
 
-조회는 소스 A가 `topic_id`(+ `catalog_edges` 서브트리), 소스 B가 `qid IN (topic_qid_map의 그 topic 행)`이고, `JOIN agents … WHERE consultable`(소스 A만 있는 슬라이스에서는 `discoverable`)과 요청자 제외를 여기서 적용한다. 두 소스를 owner로 합쳐 need별 coverage matrix를 만들고, 1단계 점수로 정렬해 **상위 N명**(레지스터, 초기 50)을 남긴다. 둘 다 인덱스 한 번 타는 SQL이다.
+조회는 소스 A가 `topic_id`(+ `catalog_edges` 서브트리), 소스 B가 `qid IN (topic_qid_map의 그 topic 행)`이고, `JOIN agents … WHERE consultable`(소스 A만 있는 슬라이스에서는 `discoverable`)과 요청자 제외를 여기서 적용한다. 둘 다 인덱스 한 번 타는 SQL이다.
+
+**후보 pool은 need × 소스별 top K의 합집합이다**, 전체 점수 상위 N명이 아니다. 복합 질문에서 n1 후보가 수천 명이고 n2 후보가 3명이면 전체 상위 50명은 전부 n1 후보라 n2의 유일한 전문가가 group planner에 닿지 못한다. 그래서:
+
+```text
+required need마다, 소스 A·B 각각에서 top K   (레지스터, 초기 K=25)
+→ owner 합집합
+→ 전체 상한 N                                 (레지스터, 초기 N=50, 넘으면 need별로 균등하게 자른다)
+→ need별 coverage matrix
+```
 
 이 시점의 순위를 `stage1_ranking`으로 보관한다. T3-2가 실패하면 이것이 응답이 된다.
 
@@ -297,7 +311,8 @@ POST /{tenant}/personal/evidence/search
      "kind": "procedural", "qids": ["Q...", "Q..."]}
   ],
   "owners": ["<1단계 N명의 owner id>"],
-  "exclude_owner": "<requester>"
+  "exclude_owner": "<requester>",
+  "authorship": "any"
 }
 ```
 
@@ -311,8 +326,9 @@ POST /{tenant}/personal/evidence/search
     ]},
     {"owner_id": "…", "needs": [{"need_id": "n0", "matched": 0}]}
   ],
-  "searched_needs": ["n0"],
-  "truncated": false
+  "needs": [
+    {"need_id": "n0", "owners_complete": true, "evidence_counts_complete": true}
+  ]
 }
 ```
 
@@ -320,13 +336,17 @@ POST /{tenant}/personal/evidence/search
 - `owners`가 우리 `consultable`을 이미 통과한 집합이라, 비동의 owner에 관한 데이터는 어떤 형태로도 우리 프로세스에 오지 않는다(§10). memory-api에 동의 모델이 없어도 이 경계는 우리 쪽에서 닫힌다.
 - 검색 범위가 N명이라 OpenSearch 비용도 tenant 전체 집계가 아니다.
 - timeout은 레지스터 행(`evidence_search.timeout_ms`)으로 두고 초기값은 실측 뒤 정한다. 재시도 사다리는 우리 쪽 하나만 갖는다(§12).
+- `authorship`은 export route와 **같은 값, 같은 판정**이어야 한다(§10-2). 한쪽은 owner 발화만 세고 다른 쪽은 전부 매치하면 1단계와 2단계가 다른 사람을 본다. 지금은 `any`.
+- **`truncated` 한 칸이 아니라 need별 completeness다.** 잘린 단위에 따라 안전성이 다르다 — owner의 matched statement 샘플만 잘렸으면 owner별 집계가 맞는 한 랭킹할 수 있고, owner가 빠졌으면 owner 사이 비교가 불완전하고, need가 빠졌으면 group coverage가 틀린다. `owners_complete = false`인 need가 required면 그 응답으로 **group을 만들지 않는다**(단일 추천만, 또는 `stage1_ranking`으로).
 - **`max_score`는 sufficiency가 아니다.** BM25 점수는 같은 need·같은 응답 안에서의 정렬에만 쓸 수 있다 — need 사이에서 비교되지 않고, 언어와 statement 길이에 흔들리며, "검색어와 비슷하다"는 뜻이지 "답할 만큼 충분하다"는 뜻이 아니다. 그래서 랭커는 점수가 아니라 **need별 rank**(또는 need 안에서 정규화한 값)를 feature로 받고, `matched ≥ 1`이 `evidence_text_matched`의 조건이다. `matched = 0`인 owner는 소스 A가 아무리 높아도 그 need에서 `prior_only`(소스 B 행이 있으면 `evidence_coarse`)로 남는다. sufficiency threshold는 평가(§14)로 정한다.
 
 T3-2의 rank가 T3-1의 순위를 다시 매긴다. 에스프레소 근거가 많아 1단계 상위였지만 압력 이야기가 없는 사람은 내려가고, 압력 조정을 3건 말한 사람은 올라간다.
 
 #### fallback — T3-2가 답하지 않을 때
 
-memory-api가 죽었거나 timeout 안에 답이 없으면 **`stage1_ranking`을 그대로 응답**하고 `degraded: ["evidence_search_unavailable"]`을 붙인다. 새로 계산하는 것이 없다 — 장애 때만 도는 별도 코드 경로가 아니라, 매 요청 항상 돌던 1단계의 결과다. `truncated: true`면 받은 것으로 순위를 매기고 `evidence_search_incomplete`를 붙인다.
+memory-api가 죽었거나 timeout 안에 답이 없으면 **`stage1_ranking`을 그대로 응답**하고 `degraded: ["evidence_search_unavailable"]`을 붙인다. 새로 계산하는 것이 없다 — 장애 때만 도는 별도 코드 경로가 아니라, 매 요청 항상 돌던 1단계의 결과다. need별 completeness가 하나라도 false면 받은 것으로 순위를 매기고 `evidence_search_incomplete`를 붙이되, required need의 `owners_complete`가 false면 group은 내지 않는다.
+
+**fallback이 보정하는 것과 못 하는 것.** T3-2는 1단계 후보 **안의** 순서를 고친다(precision). 파생본이 stale해서 1단계에 들지 못한 owner는 `owners` 목록에도 없으므로 T3-2가 발견해 주지 않는다(recall). 그래서 `source_b_stale`일 때의 정확한 서술은 "후보 내 재정렬은 최신, 후보 recall은 stale"이다.
 
 #### 부수 효과 — 매 요청이 실측
 
@@ -348,9 +368,18 @@ feature 후보(타입 ①의 랭커 feature 표와 같은 방식으로 레지스
 - 두 소스가 같은 owner를 가리키는지(교차 확인)
 - `agent_maturity`(이미 있음)
 
+**곱셈식은 쓰지 않는다.** `state_weight × kind_match × log_evidence × … × text_rank`처럼 곱하면 소스 A만 있는 후보는 `text_rank`가 없어 0이 되고, fallback에서는 전원이 0이 된다. "측정되지 않은 feature"와 "측정됐고 0인 feature"는 다르다 — 우리 도메인의 `Features.present`가 이미 그 구분을 갖고 있다(`domain/discovery.py:106-115`, present에 없는 feature는 값이 0이어야 하고 present에 있는 것만 점수에 든다). 개념식은 coverage 상태별 branch의 **가중 합**이다.
+
 ```text
-single_score = required_coverage_gate × Σ_need( state_weight × kind_match × log_evidence × freshness × provenance × text_rank ) × source_agreement
+need_score(owner, need) =
+    prior_only            → w_prior  × f(knowledge_facet, confidence, tier)
+    evidence_coarse       → w_coarse × f(log_evidence, kind_match, freshness, provenance, identity)  + (present이면 prior 항)
+    evidence_text_matched → w_text   × f(text_rank)                                                  + coarse 항 + prior 항
+
+single_score = required_coverage_gate × Σ_need need_score × (1 + source_agreement if present)
 ```
+
+각 상태에서 **존재하는 feature만** 쓰고 마지막에 상태 가중치를 곱한다. `w_text > w_coarse > w_prior`. 구현은 타입 ①의 `Ranker.features/score`와 같은 모양이라 새 Protocol이 필요하지 않다.
 
 **쓰지 않는 것**: `competence_score`·`salience`와 그 파생값. owner 내부 척도라 다른 owner와 비교되지 않고, owner 내부 정규화도 그것을 바꾸지 못한다(T3-1). 위 feature는 전부 사용자 간 같은 뜻을 갖는 것만 골랐다 — 개수의 log, 종류 일치, 출처 유무, 날짜, identity/broader, 그리고 같은 need 안의 rank. 한 agent가 모든 required need를 threshold 이상으로 덮으면 단일 추천이 group보다 우선한다.
 
@@ -367,14 +396,14 @@ need 최대 3, 후보 수십, 인원 2면 탐색은 조합 수백 개다. LLM을
 
 ### T6. 응답 조립
 
-이유는 템플릿이고, **coverage 상태가 문구를 정한다.** 소스 A만 매칭된 owner에게 "근거가 있습니다"라고 쓰면 과장이다 — topic-api의 `knowledge` facet은 persona의 preferences 레이어에서 뽑은 관심 topic의 한 면이고, `expertise` 레이어는 빠져 있다.
+이유는 템플릿이다. **첫 버전은 coverage 상태와 무관한 중립 문구 하나**를 쓴다.
 
 ```text
-prior_only              "일본 위스키에 관심과 지식 신호가 있습니다."
-evidence_coarse         "일본 위스키·증류소에 관한 근거가 있습니다."
-evidence_text_matched   "증류소 어린이 방문에 관한 근거가 있습니다."   ← need의 label을 쓴다
-group 보완 문구          "도쿄 가족 여행 쪽을 보완할 수 있습니다."
+단일·group 공통     "{need label}에 관해 도움이 될 수 있는 agent입니다."
+group 보완          "{need label} 쪽을 보완할 수 있습니다."
 ```
+
+상태별 문구("근거가 있습니다" / "관심과 지식 신호가 있습니다")는 더 정확하지만 **owner의 memory에 그 주제의 statement가 있다는 사실을 요청자에게 알려 준다.** `consultable`은 답변 요청을 받는 동의이고 memory 구성을 공개하는 동의가 아니다. 상태별 문구는 `consultable` 계약에 "공개 가능한 capability summary"가 포함될 때 연다(§17-16). 그 전에는 소스 A만 매칭된 owner에게 "근거가 있다"고 과장하지 않는 것도 이 중립 문구로 같이 해결된다.
 
 LLM 문장 생성은 품질상 필수가 아니고, 타인의 근거를 모델에 보낼 유인이 생기므로 첫 슬라이스에 넣지 않는다.
 
@@ -431,13 +460,13 @@ memory-api는 이벤트를 내지 않으므로 우리 워커의 **일곱 번째 
 
 **지금 있는 route로는 만들 수 없다.** `GET /{tenant}/users/{id}/personal/entities`의 항목에는 `salience_statements`·`salience_opinions`·`hands_on_statements`·`competence_score`·`grounding{knowledge_qid, broader_qids, last_seen}`은 있지만 **procedural·experiential 개수와 provenance 유무가 없다.** 그것을 얻으려면 entity마다 `/entities/{id}/statements`를 불러야 하는데, 그건 N+1이면서 응답이 `text`와 `provenance_message_ids`를 싣는다(§3-2) — 원문이 우리 프로세스에 들어온다. 그래서 **memory-api의 compact export route가 소스 B의 선행 의존성**이다(§16 memory-api 질문 3). 축소판(QID·hands_on·last_seen만)으로 시작하는 길도 있지만 `knowledge_kind` 구분이 사라져 소스 B의 존재 이유가 절반 없어진다.
 
-route가 있다고 할 때 한 사이클:
+route가 있다고 할 때 한 사이클(`sync_generation` 하나):
 
-1. `GET /{tenant}/admin/personal/build`로 manifest를 훑어 `built_at`(또는 `rescored_at`)이 우리 `observed_build_at`보다 새로운 owner를 고른다. **`consultable`인 owner만** 다음 단계로 간다(§10-2).
-2. 그 owner에 대해 export route로 `(qid, identity/broader entity 수, kind별 statement 수, has_provenance, last_seen)`을 받아 소스 B 행을 **교체**한다(타입 ①의 `CatalogRepository.replace`처럼 트랜잭션 하나). `last_seen_in_source_at`을 갱신한다.
-3. 사이클 끝에 **full reconciliation**: manifest에서 보이지 않은 owner의 `last_seen_in_source_at`이 K 사이클 이전이면 행을 지운다. 계정 삭제는 manifest를 지우고 tombstone을 남기지 않으므로(§3-2), 이것이 삭제를 따라가는 유일한 길이다. `consultable`을 끈 owner도 같은 경로로 빠진다.
+1. **manifest 피드**로 `built_at`(또는 `rescored_at`)이 우리 `observed_build_at`보다 새로운 owner를 고른다. 피드는 **`consultable`인 owner만** 돌려주거나(우리가 `owners=[…]`를 넘긴다) 최소 필드(`owner_id, built_at, rescored_at, status`)만 준다 — 지금의 `GET /{tenant}/admin/personal/build`는 전체 owner의 `owner_name`·`fingerprint`·`report`까지 싣기 때문에(§3-2) 그대로 쓰면 비동의 owner의 데이터가 저장은 안 해도 우리 프로세스에 들어온다. 그래서 피드 자체가 §16의 요청이다.
+2. 그 owner에 대해 export route로 `(qid, identity/broader entity 수, kind별 statement 수, has_provenance, last_seen)`을 받아 소스 B 행을 **교체**한다(타입 ①의 `CatalogRepository.replace`처럼 트랜잭션 하나). `last_seen_in_source_at`과 `authorship`(레지스터 `source_b.authorship`의 현재값, §10-2)을 쓴다.
+3. **이번 generation의 scan이 끝까지 성공했을 때만** reconciliation을 돈다: 이 generation에서 보이지 않은 owner의 행을 지운다. scan이 timeout·pagination 오류·upstream 실패로 불완전하면 삭제 단계는 건너뛴다 — 사이클에 owner 상한이 있거나 중간에 실패한 채로 "K 사이클 안 보이면 삭제"를 하면 아직 못 본 정상 owner를 지운다. 계정 삭제는 manifest를 지우고 tombstone을 남기지 않으므로(§3-2), 완전한 scan 뒤의 이 단계가 삭제를 따라가는 유일한 길이다. `consultable`을 끈 owner도 같은 경로로 빠진다.
 
-**manifest 훑기 자체가 문제다.** `list_builds`는 `offset`·`limit`만 받는다 — `updated_since`도 cursor도 없다. owner가 10만이면 사이클마다 전체를 넘기고, 넘기는 중 새 빌드가 끼면 offset 이동으로 중복·누락이 생긴다. `last_build_delta`는 truncated라 증분 피드로 못 쓴다. 필요한 것은 `(built_at, owner_id)` 기반 안정 cursor 또는 `updated_since`이고, 이건 memory-api 변경이다(§16 memory-api 질문 5). 그 전까지는 사이클당 owner 상한과 backlog(안 본 owner 수)를 로그로 내고, 상한에 자주 닿으면 주기를 늘리는 것이 아니라 cursor를 기다린다.
+**manifest 훑기 자체가 문제다.** `list_builds`는 `offset`·`limit`만 받는다 — `updated_since`도 cursor도 없다. owner가 10만이면 사이클마다 전체를 넘기고, 넘기는 중 새 빌드가 끼면 offset 이동으로 중복·누락이 생긴다. `last_build_delta`는 truncated라 증분 피드로 못 쓴다. 필요한 것은 `(built_at, owner_id)` 기반 안정 cursor 또는 `updated_since`, 그리고 위의 최소 필드·`owners` 필터이고, 이건 memory-api 변경이다(§16 memory-api 질문 5). 그 전까지는 사이클당 owner 상한과 backlog(안 본 owner 수)를 로그로 내고, 상한에 자주 닿으면 주기를 늘리는 것이 아니라 cursor를 기다린다. 상한에 닿은 사이클은 "완전한 scan"이 아니므로 삭제도 하지 않는다.
 
 주기는 memory-api 빌드 주기에 맞춘다. 빌드 자체가 배치라 폴링이 잃는 신선도는 없다.
 
@@ -486,10 +515,10 @@ POST /api/internal/svc/agent-discovery/recommend/knowledge
   ],
   "agents": [
     {"agent_id": "uuid", "owner_user_id": "uuid", "position": 1,
-     "covers": [{"need_id": "n0", "coverage": "evidence_coarse"}],
-     "reason": "일본 위스키·증류소에 관한 근거가 있습니다."},
+     "covers": ["n0"],
+     "reason": "일본 위스키 증류소에 관해 도움이 될 수 있는 agent입니다."},
     {"agent_id": "uuid", "owner_user_id": "uuid", "position": 2,
-     "covers": [{"need_id": "n1", "coverage": "prior_only"}],
+     "covers": ["n1"],
      "reason": "도쿄 가족 여행 쪽을 보완할 수 있습니다."}
   ],
   "empty": false,
@@ -498,7 +527,8 @@ POST /api/internal/svc/agent-discovery/recommend/knowledge
 ```
 
 - `mode`: `single | group | none`. `none`이면 `empty: true`이고 `agents`는 빈 배열이다 — required need를 아무도 덮지 못했거나 동의한 후보가 없을 때(§2-3).
-- **`agents[]`의 항목은 새 wire 모델 `KnowledgeRecommendedAgent`다.** 타입 ①②③의 `RecommendedAgent`는 `position`·`matched_topics`·`signals`가 필수이고 세 타입이 한 모델을 쓴다(§3-4) — 거기에 `covers`를 더하면 세 계약에 필드가 생기고, 위 예시처럼 `matched_topics`·`signals`를 빼면 그 모델이 아니다. 내부 공통 base(`agent_id`·`owner_user_id`·`position`)만 나누고 wire 모델은 분리한다. `covers[]`의 `coverage`는 §6 T3의 세 상태다.
+- **`agents[]`의 항목은 새 wire 모델 `KnowledgeRecommendedAgent`다.** 타입 ①②③의 `RecommendedAgent`는 `position`·`matched_topics`·`signals`가 필수이고 세 타입이 한 모델을 쓴다(§3-4) — 거기에 `covers`를 더하면 세 계약에 필드가 생기고, 위 예시처럼 `matched_topics`·`signals`를 빼면 그 모델이 아니다. 내부 공통 base(`agent_id`·`owner_user_id`·`position`)만 나누고 wire 모델은 분리한다.
+- **`covers[]`는 need id 목록이고 coverage 상태는 싣지 않는다.** `"coverage": "evidence_coarse"`는 "이 owner의 private memory에 이 주제 statement가 있다"를 요청자에게 알려 주는 것이라, `consultable`이 덮는 동의가 아니다(§6 T6). 상태는 랭킹과 decision log(§13)에만 있다. 외부에 여는 시점은 열린 항목 §17-16.
 - `confidence`는 **첫 슬라이스에서 외부 필드로 열지 않는다.** calibration 전의 숫자는 decision log에만 둔다(열린 항목 §17-4).
 - `degraded[]` 후보: `expansion_partial`(기존), `need_fields_defaulted`, `source_b_stale`, `evidence_search_unavailable`, `evidence_search_incomplete`. `grounding_failed`·`grounding_ambiguous`는 타입 ①과 같이 422다.
 - 걸러진 후보 수, 숨은 후보의 존재를 추정할 수 있는 값은 응답에 없다(불변식 5).
@@ -550,10 +580,22 @@ consultable    없음 → bourbon-api의 agent 설정에 opt-in 필드로 요청
 answer_share_scope, evidence_share   실행 단계(bourbon-agent)의 것. 이 문서 범위 밖
 ```
 
-- 소스 A(topic row)는 owner가 이미 `public`/`friends`로 공개한 관심사다. 그것을 "이 사람이 관심 있어 보인다"는 prior로 쓰는 것은 타입 ①②③이 지금 하는 일과 같은 노출이라 `discoverable`로 충분하다. 단, 문구는 `prior_only`의 것이어야 한다(§6 T6) — "근거가 있다"가 아니라 "관심과 지식 신호가 있다".
+- 소스 A(topic row)는 owner가 이미 `public`/`friends`로 공개한 관심사다. 그것을 "이 사람이 관심 있어 보인다"는 prior로 쓰는 것은 타입 ①②③이 지금 하는 일과 같은 노출이라 `discoverable`로 충분하다. 단, 문구가 "근거가 있다"고 말하지 않아야 한다 — 첫 버전의 중립 문구(§6 T6)가 그것을 지킨다.
 - 소스 B(memory 파생)는 다르다. **owner가 어떤 QID를 알고, statement가 몇 개이고 어떤 종류이며, 언제 마지막으로 말했는지**는 텍스트가 아니어도 개인 데이터다. `discoverable`은 그 사용에 동의한 것이 아니다. 그래서 **소스 B의 production 적재는 `consultable`이 있고 그 값이 true인 owner에 대해서만** 한다. 그 전에는 dev와 합성 모집단에서만 만든다. 이것이 슬라이스 2의 선행 의존성이다(§15).
 
-이 갈림은 2차 보정에서 정했다. 1차 초안의 열린 항목 "`consultable`이 생기기 전 `discoverable`로 대체하는 기간을 둘 것인가"는 이것으로 닫힌다 — 소스 A는 대체하고, 소스 B는 기다린다. 남는 것은 `consultable`의 소유와 기본값(opt-in인가 opt-out인가)이고 그건 bourbon-api와 제품의 결정이다(§16 질문 8).
+**소스 B에는 동의 질문이 하나 더 있다 — 누가 말한 지식인가.** owner의 personal memory에는 owner 자신의 발화에서 나온 statement만 있지 않다. 대화에 참여한 다른 사람이 말한 사실·경험도 statement가 되고, memory-api의 빌드가 그것을 sender id로 갈라 `owner_refs`·`other_refs`를 세는 것이 그 증거다(§3-2). 그러면 "A가 B에게 제주도 여행 경험을 자세히 이야기함 → B의 memory에 experiential statement → B가 제주도 전문가로 추천됨"이 생긴다. 랭킹이 틀리는 것보다 **B의 `consultable`이 A의 사적 이야기를 제3자에게 쓰는 동의가 아니라는 것**이 더 큰 문제다.
+
+이것은 우리가 정할 정책이 아니다 — memory-api와 기획이 정한다. 선택지는 셋이다: 구분 없이 전부 센다(`any`), owner 자신의 발화에서 나온 statement만 센다(`owner`), 별도로 공개된 근거만 센다. 판정 기준은 statement의 `speaker` 문자열이 아니라 provenance message의 sender이고, memory-api가 빌드 때 필드로 파생하든 route 안에서 조회 시점에 조인하든 그쪽 구현 선택이다(§16 memory-api 질문 3·4).
+
+**결정 전의 우리 자세**: 구분 없이(`authorship=any`) 가되, 결정이 오면 **설정값 하나**로 바뀌게 자리를 둔다.
+
+- export route와 evidence route 계약에 `authorship: any | owner` 파라미터(기본 `any`). 응답 필드 이름에는 authorship이 들어가지 않는다.
+- `knowledge_capabilities.authorship` 컬럼(§6 T3-1)과 레지스터 행 `source_b.authorship`. 폴링 루프가 이 값을 route에 넘긴다.
+- journal에 `authorship` 값을 남겨 결정 전후의 calibration error를 나눠 본다(§13).
+
+그래서 **소스 B의 production 적재 선행 조건은 둘**이다 — `consultable`, 그리고 authorship 정책의 결정(어느 쪽이든). `consultable`만으로 열면 결정이 `owner`로 났을 때 이미 적재된 행을 다시 만들어야 하고 그 사이 추천이 나갔을 수 있다. 결정이 `any`로 나면 그대로 연다. 결정을 우리가 내리는 것이 아니라, 결정이 있어야 한다는 것만 적는다.
+
+이 갈림은 2차 보정에서 정했다. 1차 초안의 열린 항목 "`consultable`이 생기기 전 `discoverable`로 대체하는 기간을 둘 것인가"는 이것으로 닫힌다 — 소스 A는 대체하고, 소스 B는 기다린다. 남는 것은 `consultable`의 소유와 기본값(opt-in인가 opt-out인가)이고 그건 bourbon-api와 제품의 결정이다(§16 질문 9).
 
 강제 위치: 소스 B 적재의 owner 선별(§7-3 1단계)과 후보 조회 SQL의 `JOIN agents … WHERE consultable`. **discovery가 비동의 owner의 데이터를 받은 뒤 거르는 일이 없어야 한다** — 적재 단계에서 걸러야 파생본에 그 owner의 행이 처음부터 없다. 2차 초안에서 "파생본에 label이 없으니 걸러 내기 전에 읽는 private 데이터도 없다"고 쓴 것은 틀렸다.
 
@@ -615,13 +657,16 @@ SLA가 아니라 첫 구현의 예산을 잡기 위한 추정이다. 확인된 �
 | grounding 후보 없음 | 422 `grounding_failed` | 실행 안 함 |
 | grounding 모호 | required need면 422 `grounding_ambiguous`, optional이면 그 need 제외 + degraded | — |
 | topic-api 검색 불가 | 503(타입 ①과 같음) | — |
-| 소스 B 파생본이 오래됨 | 정상 응답 + `source_b_stale`(threshold는 레지스터). T3-2가 살아 있으면 조건 매치가 보정한다 | — |
+| 소스 B 파생본이 오래됨 | 정상 응답 + `source_b_stale`(threshold는 레지스터). T3-2가 살아 있으면 후보 **안의** 순서는 최신이지만 후보 **recall**은 stale이다 — 파생본에 없는 새 owner는 T3-2도 못 본다 | — |
 | 소스 B 폴링 실패 | 다음 사이클로, 추천은 소스 A로 계속 | — |
-| owner의 manifest가 사라짐(계정 삭제) | K 사이클 뒤 reconciliation이 행을 지운다. 그 사이 그 owner는 후보가 될 수 있다 — `agents` 쪽 `user_deactivated` 처리가 먼저 잡는다 | — |
-| owner가 `consultable`을 끔 | 다음 사이클에 적재 대상에서 빠지고 reconciliation이 행을 지운다. 조회 SQL의 `WHERE consultable`이 그 사이를 막는다 | — |
+| owner의 manifest가 사라짐(계정 삭제) | 다음 **완전한** scan 뒤 reconciliation이 행을 지운다. 그 사이 그 owner는 후보가 될 수 있다 — `agents` 쪽 `user_deactivated` 처리가 먼저 잡는다 | — |
+| 폴링 scan이 불완전(timeout·상한·upstream 실패) | 적재는 본 것까지, **삭제 단계는 건너뜀**. backlog를 로그 | — |
+| owner가 `consultable`을 끔 | 다음 사이클에 적재 대상에서 빠지고 완전한 scan 뒤 행이 지워진다. 조회 SQL의 `WHERE consultable`이 그 사이를 막는다 | — |
+| authorship 정책이 `any`→`owner`로 바뀜 | 레지스터 값 변경 → 다음 사이클부터 `authorship=owner`로 재적재. 과도기 조회는 `WHERE authorship = :current` | — |
 | `topic_qid_map`에서 잘린 topic | 그 need는 소스 A만, 상태 `prior_only` 상한 | — |
 | evidence route timeout·5xx | `stage1_ranking`으로 응답 + `evidence_search_unavailable` | — |
-| evidence route `truncated` | 받은 것으로 재점수 + `evidence_search_incomplete` | — |
+| evidence route 일부 need `evidence_counts_complete = false` | 받은 것으로 재점수 + `evidence_search_incomplete` | — |
+| evidence route required need `owners_complete = false` | 재점수는 하되 **group은 내지 않음** + `evidence_search_incomplete` | — |
 | evidence route가 `owners` 밖 owner를 돌려줌 | 그 항목은 버리고 로그. 계약 위반이라 알람 | — |
 | required need 하나를 아무도 못 덮음 | `mode: none`, `empty: true` | — |
 | 실행 시 agent가 `unsupported` | — | 다른 후보로 한 번 대체, 그래도 실패면 uncovered |
@@ -645,9 +690,9 @@ candidates_source_a, candidates_source_b, candidates_both
 discoverable_candidates, stage1_candidates
 evidence_search_status         ok | unavailable | incomplete
 stage1_final_overlap_at_k      1단계 상위 k와 최종 상위 k의 겹침 — "topic만으로 얼마나 맞히는가"
-coverage_states                need × 상위 agent의 prior_only / evidence_coarse / evidence_text_matched 개수
+coverage_states                need × 상위 agent의 prior_only / evidence_coarse / evidence_text_matched 개수 (내부용, 응답에는 없다)
 single_sufficient, group_size, covered_required, uncovered_required
-source_b_max_age_seconds
+source_b_max_age_seconds, source_b_authorship   any | owner — 결정 전후를 나눠 보기 위해
 degraded[]
 latency_ms.{expand, ground_search, ground_llm, retrieve, evidence_search, rank, group, assemble, total}
 ```
@@ -665,6 +710,8 @@ latency_ms.{expand, ground_search, ground_llm, retrieve, evidence_search, rank, 
 ## 14. 평가
 
 ### 14-1. 오프라인 — 합성 모집단 위에서
+
+**슬라이스 1·1-b가 검증하는 것은 구조다.** 소스 A는 preferences에서 나온 prior라, 그 단계의 측정은 need 분해·coverage matrix·단일/group planner·API·journal이 맞게 동작하는가에 대한 것이다. "실제로 답할 근거를 가진 agent를 찾는가"는 소스 B가 들어온 뒤에만 잰다. 슬라이스 1의 precision을 기능 전체의 precision으로 읽지 않는다 — `validation_results.md`에 결과를 적을 때 이 한 줄을 표 위에 둔다.
 
 기존 10만 합성 모집단에 소스 B 파생본을 합성으로 더한다(owner별 QID 분포는 `visible_topic_rows`와 상관을 두되 `knowledge_kind` 분포는 따로 뽑는다). 재는 것:
 
@@ -689,14 +736,14 @@ offline 합성 데이터로는 실제 answerability를 검증할 수 없다. §1
 |---|---|---|---|---|
 | **1. 소스 A + 단일 추천** | 없음 | 0 (스키마 확장) | 이 주제에 깊은 관심과 지식을 드러낸 사람(`prior_only`). **"아는 사람"과 "해 본 사람"은 구분하지 못한다** — topic row에 statement 종류가 없어 `knowledge_kind`는 추출·journal만 하고 랭킹에 쓰이지 않는다 | route·`KnowledgeRecommendedAgent` envelope, `knowledge_facet` 미러(우리 쪽 `PublishedTopic`·storage·fixture), need 다중 grounding, 결정적 랭킹, 합성 모집단 측정 |
 | **1-b. group** | 없음 | 0 | 두 need를 두 사람이 나눠 덮는 경우 | 1의 coverage matrix 위에 set-cover, `mode: group`, 인원 2. **1의 중간 모델이 group을 지원하는 모양인지 검증하는 테스트 역할** |
-| **2. 소스 B** | bourbon-api **`consultable`** + memory-api **compact export route** + `topic_qid_map` **spike 완료** | 0 | 구체적 근거 statement를 가진 사람(`evidence_coarse`) | 커버리지 측정(§16 질문 2 또는 파생본 자체로), `topic_qid_map`(bounded), `knowledge_capabilities`, 일곱 번째 루프 + reconciliation, 두 소스 합산 랭킹, `source_b_stale` |
+| **2. 소스 B** | dev·합성: memory-api **compact export route** + `topic_qid_map` **spike 완료**. production 추가로: bourbon-api **`consultable`** + **authorship 정책 결정**(§10-2) | 0 | 구체적 근거 statement를 가진 사람(`evidence_coarse`) | 커버리지 측정(§16 질문 2 또는 파생본 자체로), `topic_qid_map`(bounded), `knowledge_capabilities`(`authorship` 컬럼 포함), need별 top K 합집합, 일곱 번째 루프 + 완전 scan 뒤 reconciliation, 두 소스 합산 랭킹, `source_b_stale` |
 | **3. T3-2 재점수** | memory-api **evidence route** | 0 | 질문의 조건까지 맞는 사람(`evidence_text_matched`) | route 계약 합의, 클라이언트, timeout·fallback, `stage1_final_overlap_at_k` journal |
 | **4. 트리거** | bourbon-agent 변경 | 0 | 실제로 불리는가 | tool 설명 변경 또는 두 번째 tool, 호출 recall 지표 넷 |
 | **5. 실행·종합** | bourbon-agent 소유 | agent당 1 + 종합 1 | 실제 답변 | 이 문서 범위 밖. `moderator/agent_recommender/` |
 
 group이 1-b인 이유는 이 절의 정의 그대로다 — 외부 의존성이 없고, 소스 A만으로 `KnowledgeNeed[]`·후보·coverage matrix가 이미 만들어지므로 group planner에 필요한 입력이 전부 있다. 2차 초안에서 4번에 둔 것은 정의를 내가 어긴 것이다.
 
-슬라이스 1·1-b는 memory-api와 bourbon-api의 일정과 무관하게 배포할 수 있다. **슬라이스 2는 세 선행 조건이 다 있어야 시작한다** — `consultable` 없이 적재하면 동의 경계를 넘고(§10-2), export route 없이는 파생본을 만들 수 없고(§7-3), spike 없이는 map이 얼마나 잘리는지 모른다(§7-2). 슬라이스 3이 들어가는 날부터 fallback이 곧 그 전날까지의 동작이다 — 새 경로가 아니다.
+슬라이스 1·1-b는 memory-api와 bourbon-api의 일정과 무관하게 배포할 수 있다. **슬라이스 2는 dev·합성에서 먼저 돈다** — export route와 spike만 있으면 시작할 수 있고, 그 동안 authorship은 `any`다. **production 적재는 `consultable`과 authorship 결정이 둘 다 있어야 연다**(§10-2). 슬라이스 3이 들어가는 날부터 fallback이 곧 그 전날까지의 동작이다 — 새 경로가 아니다.
 
 슬라이스 1은 타입 ① 위에 "need 여러 개 + knowledge 가중 랭커"를 얹는 것이라 새 도메인이 거의 없다. 슬라이스 4는 1과 동시에 시작할 수 있다 — discovery 쪽이 준비되기 전에는 지금 `recommend_agents`가 하는 일과 같으니 사용자에게 보이는 변화가 없고, 호출 recall 측정(§14)은 discovery 없이도 시작할 수 있다.
 
@@ -709,23 +756,25 @@ group이 1-b인 이유는 이 절의 정의 그대로다 — 외부 의존성이
 **memory-api**
 1. `bourbon-v2` tenant에 personal build가 실제로 돌고 있는지, 몇 owner인지, 주기는 어떻게 되는지. 소스 B의 가치가 이 숫자에 달려 있다.
 2. 그 빌드 결과에서 **`knowledge_qid`·`broader_qids`의 상위 분포**를 받아 볼 수 있는지(QID와 개수만, owner·label 없이). 우리 카탈로그 QID와 `topic_qid_map`(§7-2)의 교집합이 얼마인지가 소스 B 커버리지의 첫 측정이다. 이것을 모르면 소스 B를 만들어도 얼마나 잡히는지 말할 수 없다.
-3. **compact export route**(소스 B의 선행 의존성, §7-3) — owner 하나에 대해 `(qid, identity_entities, broader_entities, active_statements, procedural_statements, experiential_statements, hands_on_statements, has_provenance, last_seen)`을 label·blurb·text·message id 없이 돌려주는 owner-scoped route. 지금 entity route에는 kind별 개수와 provenance 유무가 없고, statements route는 원문을 싣기 때문에 우리가 조합해 만들 수 없다(§3-2). 가능하면 `qids` 목록을 받아 그 집합 단위의 **distinct entity 수**도 함께 — topic 단위 합산에서 entity 중복을 빼는 유일한 길이다(§6 T3-1).
-4. **evidence route**(§6 T3-2) — `POST /{tenant}/personal/evidence/search`. 조건은 셋이다. (가) `owners` 허용 목록이 필수이고 그 밖의 owner는 어떤 형태로도 응답에 없다. (나) 응답에 statement 텍스트·entity label·message id가 없고 점수·개수·날짜만 있다. (다) 그쪽에서 OpenSearch 재시도를 중첩하지 않는다(우리가 사다리를 갖는다). 요청자의 질문 텍스트가 그쪽으로 가므로, 이 route와 함께 내부 호출 인증이 들어가야 한다. 1차 초안이 Phase B로 제안했던 것의 축소판이다.
-5. **폴링 피드**: `GET /{tenant}/admin/personal/build`가 지금 `offset`·`limit`만 받는다. `(built_at, owner_id)` 기반 안정 cursor 또는 `updated_since`를 붙여 주실 수 있는지, 그리고 계정 삭제로 manifest가 지워질 때 tombstone을 남길 수 있는지. 없으면 우리는 전체 페이지를 매 사이클 넘기고 K 사이클 reconciliation으로 삭제를 따라간다(§7-3). 그리고 `POST /knowledge/expand`를 카탈로그 갱신 때 넓은 topic은 seed 하나씩, 합쳐 수백 회 호출해도 되는지.
+3. **compact export route**(소스 B의 선행 의존성, §7-3) — owner 하나에 대해 `(qid, identity_entities, broader_entities, active_statements, procedural_statements, experiential_statements, hands_on_statements, has_provenance, last_seen)`을 label·blurb·text·message id 없이 돌려주는 owner-scoped route. 지금 entity route에는 kind별 개수와 provenance 유무가 없고, statements route는 원문을 싣기 때문에 우리가 조합해 만들 수 없다(§3-2). 가능하면 `qids` 목록을 받아 그 집합 단위의 **distinct entity 수**도 함께 — topic 단위 합산에서 entity 중복을 빼는 유일한 길이다(§6 T3-1). 그리고 **`authorship: any | owner` 파라미터의 자리**(§10-2) — `owner`이면 provenance message의 sender가 owner인 statement만 센다. 지금은 `any`만 구현돼도 되고, `owner`의 구현(빌드 때 필드 파생이든 조회 시 조인이든)은 정책이 정해진 뒤 그쪽 선택이다.
+4. **evidence route**(§6 T3-2) — `POST /{tenant}/personal/evidence/search`. 조건은 넷이다. (가) `owners` 허용 목록이 필수이고 그 밖의 owner는 어떤 형태로도 응답에 없다. (나) 응답에 statement 텍스트·entity label·message id가 없고 점수·개수·날짜만 있다. (다) 그쪽에서 OpenSearch 재시도를 중첩하지 않는다(우리가 사다리를 갖는다). (라) `authorship` 파라미터를 export route와 **같은 판정**으로 받는다. 응답의 completeness는 `truncated` 한 칸이 아니라 need별 `owners_complete`·`evidence_counts_complete`다 — 잘린 단위가 owner인지 need인지에 따라 우리가 group을 낼 수 있는지가 갈린다. 요청자의 질문 텍스트가 그쪽으로 가므로, 이 route와 함께 내부 호출 인증이 들어가야 한다. 1차 초안이 Phase B로 제안했던 것의 축소판이다.
+5. **폴링 피드**: `GET /{tenant}/admin/personal/build`가 지금 `offset`·`limit`만 받고 전체 owner의 `owner_name`·`fingerprint`·`report`를 싣는다(§3-2). 필요한 것은 셋이다 — `(built_at, owner_id)` 기반 안정 cursor 또는 `updated_since`; `owners=[…]` 필터 또는 최소 필드(`owner_id, built_at, rescored_at, status`)만 주는 변형(비동의 owner의 이름과 빌드 요약이 우리 프로세스에 들어오지 않게); 계정 삭제 때의 tombstone. 없으면 우리는 전체 페이지를 매 사이클 넘기고 완전한 scan 뒤의 reconciliation으로 삭제를 따라간다(§7-3). 그리고 `POST /knowledge/expand`를 카탈로그 갱신 때 넓은 topic은 seed 하나씩, 합쳐 수백 회 호출해도 되는지.
+6. **authorship 정책**(§10-2) — owner의 memory에 든 타인의 발화를 owner의 capability로 셀 것인가. 우리가 정할 일이 아니라 memory-api와 기획이 정할 일이고, 위 3·4의 파라미터는 그 답을 받을 자리다. 소스 B의 production 적재가 이 답에 걸려 있다.
 
 **topic-api**
-6. `GET /users/{id}/topics` 응답의 `blocks[]` 안 `type: "score_detail"` block — 이미 오고 있고 우리 adapter가 읽는다(§7-1). 물을 것은 **그 block의 facet 이름(`knowledge` 등)과 `confidence`를 소비자 계약으로 삼아도 되는가**다. 우리 wire 주석이 "합의하지 않은 계약"이라 적어 둔 것을 합의로 바꾸는 일이고, 그쪽 답이 "예"면 우리 upstream fixture에 고정한다.
-7. 소스 B 커버리지 측정에서 시설↔제품처럼 Wikidata 관계로 못 건너는 구멍이 크게 나오면, 카탈로그 편집으로 메울 수 있는지(예: "위스키 증류소"를 위스키의 자식 topic으로). 편집 정책에 맞는지는 그쪽 판단이다.
+7. `GET /users/{id}/topics` 응답의 `blocks[]` 안 `type: "score_detail"` block — 이미 오고 있고 우리 adapter가 읽는다(§7-1). 물을 것은 **그 block의 facet 이름(`knowledge` 등)과 `confidence`를 소비자 계약으로 삼아도 되는가**다. 우리 wire 주석이 "합의하지 않은 계약"이라 적어 둔 것을 합의로 바꾸는 일이고, 그쪽 답이 "예"면 우리 upstream fixture에 고정한다.
+8. 소스 B 커버리지 측정에서 시설↔제품처럼 Wikidata 관계로 못 건너는 구멍이 크게 나오면, 카탈로그 편집으로 메울 수 있는지(예: "위스키 증류소"를 위스키의 자식 topic으로). 편집 정책에 맞는지는 그쪽 판단이다.
 
 **bourbon-api**
-8. agent 설정에 `consultable`(다른 사용자의 질문에 내 agent가 대신 답해도 되는가) opt-in 필드를 둘 수 있는지, 기본값을 opt-in으로 할지, 그리고 그 변경을 이벤트로 낼 수 있는지. `personal_agent_visibility_changed`가 만들어지지 않았던 것과 같은 이유로 이벤트 대신 재조회가 될 수도 있다.
+9. agent 설정에 `consultable`(다른 사용자의 질문에 내 agent가 대신 답해도 되는가) opt-in 필드를 둘 수 있는지, 기본값을 opt-in으로 할지, 그리고 그 변경을 이벤트로 낼 수 있는지. `personal_agent_visibility_changed`가 만들어지지 않았던 것과 같은 이유로 이벤트 대신 재조회가 될 수도 있다. 그리고 그 동의가 "답변 요청을 받는다"까지인지 "내 capability 요약(어느 주제에 근거가 있다)이 추천 이유에 드러나도 된다"까지인지 — 후자가 포함돼야 §6 T6의 상태별 문구와 §8의 coverage 노출을 열 수 있다.
 
 **e3llm**
-9. 새 타입이 질문당 completion 1~2회를 더 보낸다. 슬라이스 4에서 트리거를 넓히면 호출량이 타입 ①의 몇 배가 될지 우리도 모른다. 처리량·레이트 리밋 상한이 얼마인지 — 타입 ① 요청서에 이미 있는 질문과 같은 것이다.
+10. 새 타입이 질문당 completion 1~2회를 더 보낸다. 슬라이스 4에서 트리거를 넓히면 호출량이 타입 ①의 몇 배가 될지 우리도 모른다. 처리량·레이트 리밋 상한이 얼마인지 — 타입 ① 요청서에 이미 있는 질문과 같은 것이다.
 
 **bourbon-agent**
-10. `recommend_agents`의 트리거를 넓히는 것과 두 번째 tool을 두는 것 중 어느 쪽이 프롬프트 설계상 맞는지. `moderator/agent_recommender/`의 계획이 이 기능과 같은 것인지.
-11. T0의 **호출 recall 지표 넷**(§13)을 그쪽 journal에서 낼 수 있는지 — tool 호출 여부는 그쪽만 안다. 그리고 새 tool의 호출 예산을 지금 `recommend_agents`의 10초로 둘지, 그 안에서 우리 route deadline 8초가 맞는지(§11-1).
+11. `recommend_agents`의 트리거를 넓히는 것과 두 번째 tool을 두는 것 중 어느 쪽이 프롬프트 설계상 맞는지. `moderator/agent_recommender/`의 계획이 이 기능과 같은 것인지.
+12. T0의 **호출 recall 지표 넷**(§13)을 그쪽 journal에서 낼 수 있는지 — tool 호출 여부는 그쪽만 안다. 그리고 새 tool의 호출 예산을 지금 `recommend_agents`의 10초로 둘지, 그 안에서 우리 route deadline 8초가 맞는지(§11-1).
+13. `persona_extractor`가 persona의 preferences 레이어를 만들 때 **다른 참가자의 발화**를 owner의 관심으로 읽지 않는지. 소스 A에도 §10-2의 authorship 질문이 닿을 수 있는데, 우리는 그쪽 코드를 확인하지 않았다.
 
 ---
 
@@ -745,5 +794,7 @@ group이 1-b인 이유는 이 절의 정의 그대로다 — 외부 의존성이
 12. `prior_only`(소스 A만)로 required need를 covered로 볼 것인가. 초기값은 "본다, 단 낮은 가중과 약한 문구"이고, coverage 상태별 calibration error(§13)가 답을 준다.
 13. T1이 재시도한 요청에서 disambiguation을 생략할 것인가 — route deadline 8초 안에 LLM 두 번을 넣는 방법으로, 정확도를 꼬리 지연 시간과 바꾸는 결정이다.
 14. `topic_qid_map`을 `expand`로 만들지, 잘린 topic이 많으면 공개 지식 인덱스·dump에서 직접 만들지 — spike 결과로 정한다(§7-2).
+15. **authorship 정책** — owner의 memory에 든 타인의 발화를 owner의 capability로 셀 것인가(`any` / `owner` / 공개된 근거만). memory-api·기획의 결정이고, 소스 B production 적재의 선행 조건이다(§10-2). provenance가 owner와 타인의 메시지에 섞인 statement를 `owner`에서 어떻게 볼지도 그 결정에 딸린다.
+16. coverage 상태와 상태별 추천 문구를 외부에 열 시점 — `consultable` 계약이 "공개 가능한 capability summary"를 포함한다고 정해진 뒤(§16 질문 9). 그 전에는 `covers: ["n0"]`와 중립 문구다.
 
 닫힌 항목: "`consultable`이 생기기 전 `discoverable`로 대체하는 기간을 둘 것인가"는 §10-2에서 소스별로 갈라 정했다.
