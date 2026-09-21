@@ -211,6 +211,7 @@ bourbon-agent의 `recommend_agents` tool은 지금 "누군가 추천을 요청�
 ```
 
 - 호출은 **하나**다. 분해와 확장을 따로 부르지 않는다.
+- **프롬프트와 스키마는 타입 ①의 것을 고치지 않고 형제로 따로 둔다.** 출력 필드가 둘 늘어나는 것만으로도 grounding 결과가 흔들릴 수 있다 — R60에서 프롬프트 한 줄이 422 비율을 26%까지 움직였다. 타입 ①의 프롬프트는 바이트 단위로 그대로이고, 새 프롬프트는 그것을 복사해 두 필드를 더한 것으로 시작한다. 두 프롬프트가 갈라지는 것은 감수한다.
 - 그룹 상한은 타입 ①의 3을 그대로 쓴다. 1차 초안의 "1~5개"보다 좁고, 첫 슬라이스에는 충분하다.
 - `importance`·`knowledge_kind`가 스키마 검증에 실패하면 각각 `required`·`declarative`로 폴백하고 `degraded`에 남긴다. 그룹 자체를 버리지 않는다.
 - 모델은 owner·agent를 고르지 않고, 근거 소스를 보지 않는다. 질문 원문은 타입 ①과 같이 로그·예외·Sentry에 남기지 않는다(불변식 7).
@@ -367,6 +368,8 @@ memory-api는 이벤트를 내지 않으므로 우리 워커의 **일곱 번째 
 
 주기는 memory-api 빌드 주기에 맞춘다. 빌드 자체가 배치라 폴링이 잃는 신선도는 없다. 한 사이클이 만지는 owner 수와 소요 시간은 로그로 낸다.
 
+**루프 하나가 커넥션 하나다.** 워커 풀의 하한은 `WORKER_CONCURRENCY` + 상시 루프 수이고, 지금 10 + 6 = 16에 dev·base가 정확히 8 + 8이다. 일곱 번째 루프가 들어가면 17이라 `DB_POOL_SIZE`·`DB_MAX_OVERFLOW`를 같이 올려야 한다. 잊으면 풀 오류가 아니라 재조회의 `attempt_timeout`이 먼저 걸려 이벤트가 조용히 버려진다. `test_deploy_env_wiring.py`가 `started(` 호출을 세므로 테스트가 잡지만, 이 문서에도 적어 둔다.
+
 **이것이 "모든 memory를 미러링"이 아닌 이유**: 원본은 statement(owner당 수천, 텍스트 포함)이고 파생본은 owner×QID 행(owner당 수백, 숫자와 날짜)이다. 파생본에서 원문을 복원할 수 없고, 삭제·동의 철회는 다음 폴링에서 행 교체로 따라간다.
 
 **memory-api에 바라는 것 하나**(§16): label 없이 `(qid, match, counts, last_seen)`만 주는 owner-scoped 집계 route. 없어도 동작하지만 있으면 읽고 버리는 데이터가 없어지고 응답이 작아진다. 1차 초안의 "배치 capability API"보다 훨씬 작은 요청이다.
@@ -460,6 +463,22 @@ POST /api/internal/svc/agent-discovery/recommend/knowledge
 새 도메인 후보: `KnowledgeNeed`(ConceptGroup + importance + kind), `NeedCoverage`, `CapabilityHit`(소스 B), `GroupPlan`, `KnowledgeRecommendation`. 새 stage 후보: `GroupPlanning` 하나. 나머지는 기존 stage의 파라미터 확장이다.
 
 재사용하면 안 되는 의미는 1차 초안과 같다 — topic visibility를 personal knowledge 동의로 간주하지 않고, `topic_score`를 evidence sufficiency로 읽지 않는다.
+
+### 9-1. 타입 ①·②·③에 미치는 영향
+
+②·③은 접점이 없다. ①과 공유하는 것을 만지는 지점은 다음이고, 각각 어떻게 막는지를 적는다.
+
+| 만지는 것 | 영향 | 막는 방법 |
+|---|---|---|
+| expansion 프롬프트·스키마 | **있을 수 있음** — ①과 공유하면 grounding이 흔들린다 | 형제 프롬프트로 분리(§6 T1). ①의 것은 그대로 |
+| 워커 주기 루프 추가 | **있음** — 풀 하한 16 → 17 | 풀 크기 조정(§7-2). 배선 테스트가 잡는다 |
+| `visible_topic_rows` 컬럼 둘 | 없음 — nullable 추가, ①②③ 랭커는 읽지 않음 | 응답에 없으면 NULL |
+| `CandidateSource`·`VisibilityFilter` 재사용 | 없음 — 읽기만 | — |
+| 새 route·랭커·stage·테이블 둘 | 없음 — 별도 | — |
+| 레지스터 행 추가 | 동작 없음. `settings_hash`가 바뀌어 **①②③ decision log의 해시가 배포 후 달라진다** | 배포 노트에 "값 변경 아님, 행 추가" |
+| deferq | 없음 — 새 이벤트를 받지 않으니 새 큐도 없다 | — |
+
+**공유 자원의 부하**는 코드가 아니라 호출량의 문제다. 새 타입은 질문당 e3llm 1~2회, topic-api 검색 1~3회를 더 보낸다. e3llm에는 용량 문서도 서킷 브레이커도 없어서(R60 ⑤) 새 타입이 많이 불리면 ①의 꼬리 지연 시간이 같이 늘 수 있다. 슬라이스 5(트리거)를 넓히기 전에 e3llm 쪽에 용량을 묻는다(§16).
 
 ---
 
@@ -633,8 +652,11 @@ offline 합성 데이터로는 실제 answerability를 검증할 수 없다. §1
 **bourbon-api**
 8. agent 설정에 `consultable`(다른 사용자의 질문에 내 agent가 대신 답해도 되는가) opt-in 필드를 둘 수 있는지, 그리고 그 변경을 이벤트로 낼 수 있는지. `personal_agent_visibility_changed`가 만들어지지 않았던 것과 같은 이유로 이벤트 대신 재조회가 될 수도 있다.
 
+**e3llm**
+9. 새 타입이 질문당 completion 1~2회를 더 보낸다. 슬라이스 5에서 트리거를 넓히면 호출량이 타입 ①의 몇 배가 될지 우리도 모른다. 처리량·레이트 리밋 상한이 얼마인지 — 타입 ① 요청서에 이미 있는 질문과 같은 것이다.
+
 **bourbon-agent**
-9. `recommend_agents`의 트리거를 넓히는 것과 두 번째 tool을 두는 것 중 어느 쪽이 프롬프트 설계상 맞는지. `moderator/agent_recommender/`의 계획이 이 기능과 같은 것인지.
+10. `recommend_agents`의 트리거를 넓히는 것과 두 번째 tool을 두는 것 중 어느 쪽이 프롬프트 설계상 맞는지. `moderator/agent_recommender/`의 계획이 이 기능과 같은 것인지.
 
 ---
 
