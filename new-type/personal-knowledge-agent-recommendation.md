@@ -15,7 +15,7 @@
 
 1. **"유저 X가 질문 Q에 답할 수 있는가"를 (X, Q) 쌍마다 판단하지 않는다.** 그렇게 하면 LLM 호출이 유저 수에 비례한다. 대신 owner별·QID별 capability 집계를 **오프라인**에 두고, 온라인에서는 질문을 QID 몇 개로 grounding한 뒤 그 집계를 조회해 **결정적으로** 랭킹한다. 유저가 몇 명이든 온라인 비용은 후보 수에만 비례한다.
 2. **discovery 경로의 LLM 호출은 타입 ①이 이미 내는 그 호출 하나다.** need 분해를 기존 expansion 프롬프트의 스키마 확장으로 처리하고, answerability judge는 두지 않는다. 최악 2회(모호할 때 batch disambiguation 1회 추가), 보통 1회.
-3. **topic-api의 카탈로그가 Wikidata QID를 들고 있어서**(3,190개 중 3,164개, 1:1) grounding 한 번으로 topic-api 파생 근거와 memory-api 파생 근거를 **같은 key space**에서 조회할 수 있다. 1차 초안은 이 조인을 쓰지 않았다.
+3. **topic-api의 카탈로그가 Wikidata QID를 들고 있어서**(3,190개 중 3,164개, 1:1) grounding 한 번으로 topic-api 파생 근거와 memory-api 파생 근거를 **같은 key space**에서 조회할 수 있다. 1차 초안은 이 조인을 쓰지 않았다. 단, id 체계는 같아도 **가리키는 층이 다르다** — memory-api는 개체(야마자키 증류소)에 QID를 붙이고 클래스 축으로 올라가며, 카탈로그는 주제(위스키)를 큐레이션한 계층이다. 그래서 등식 조인이 아니라 **topic이 덮는 QID 집합**(`topic_qid_map`)으로 조인하고, 그 커버리지는 실제 빌드 결과로 재야 한다(§6 T2, §7-4).
 4. **memory-api는 이벤트를 발행하지 않는다.** 그러므로 memory 파생 근거는 push 미러가 아니라 **빌드 manifest를 폴링하는 pull 파생본**이어야 하고, 그 파생본에는 statement·label·blurb가 없다 — owner×QID의 개수와 날짜만 있다. "모든 memory를 미러링"하는 것이 아니다.
 
 추천 시점의 런타임 의존성은 **topic-api 검색(지금 타입 ①과 같음)뿐**이고, memory-api에는 추천 경로에서 닿지 않는다.
@@ -40,13 +40,16 @@
 - 저장소는 **OpenSearch만**. tenant당 인덱스 다섯(`entities`·`statements`·`links`·`build`·`classes`), owner 구분은 인덱스 경계가 아니라 `owner_id` 필터다.
 - **personal knowledge 빌드는 LLM을 여섯 단계에서 부른다**(extract·grounding scoring·judge·dedup·competence·classes). 배치이고 `BackgroundTasks`로 돈다. **읽기 경로는 LLM 0회**, BM25와 필터만 쓴다. embedding·kNN은 없다. "LLM을 안 쓴다"는 읽기에 대해 맞고, 빌드에 대해서는 틀리다 — 다만 빌드 비용은 owner당 한 번 내는 것이고 질문마다 내지 않는다.
 - entity에는 `grounding.knowledge_qid`(Wikidata), `grounding.broader_qids[]`, `salience`, `competence_score`, `hands_on_statements`, `grounding.last_seen`이 있다. statement에는 `statement_kind`(declarative·procedural·experiential·preference·intention), `epistemic`(fact·opinion), `status`(active·invalidated), `provenance_message_ids`가 있다.
+- **QID가 붙는 층은 개체다.** `knowledge_qid`는 "야마자키 증류소 Q1146917"처럼 구체적인 것이고, `broader_qids`는 `[*instance_of(P31), *occupations(P106), *class_ancestors(YAGO 클래스 폐포)]`다(`positioning.py:38-58`). 개체 자신의 P279 체인이나 제품·재료 관계는 들어가지 않는다 — 야마자키 증류소는 "위스키 증류소 → 증류소 → 공장 → …"으로 올라가고 **"위스키 Q281"에는 닿지 않는다.** extractor가 개체에 `broader`·`related` grounding을 덧붙이면 그 QID와 그것의 조상이 함께 들어가지만, 그것은 모델의 선택이라 확률적이다. 지인(acquaintance)은 `GroundingSource.LOCAL`로 `knowledge_qid=None`, QID가 없다.
+- 공개 지식 corpus는 `wikidata-latest-all`(2026-06-21 수집)에서 만들고 `--dump-version 20260802`로 인덱싱한다. topic-api 카탈로그의 `dump_version`과 같은 날짜다.
 - **cross-owner route가 이미 있다.** `GET /{tenant}/personal/themes/{qid}/owners`는 QID 하나에 대해 **OpenSearch 집계 한 번**으로 owner별 `count`·`last_seen`과 샘플 entity를 준다(정렬 `count|recent|pagerank`, `limit≤100`). `GET /{tenant}/personal/grounded/{qid}/entities`는 owner_id가 붙은 entity 목록을 준다. 둘 다 entity label·`personal_blurb`·salience를 그대로 노출한다.
 - **이벤트 발행 없음. 인증 없음. personal 데이터에 visibility·동의 모델 없음.** 접근 제어는 tenant 경로 세그먼트뿐이다("wire authentication in before exposing this service externally"). 변경 피드에 가장 가까운 것은 빌드 manifest의 `last_build_delta.changed_entity_ids`다.
 - owner당 규모 힌트: context 조립의 entity pool 상한 500, provenance entity 상한 200. 명시적 유저 수·statement 수 목표는 없다.
 
 ### 1-3. topic-api — persona에서 관심을 뽑고, QID를 들고 있다
 
-- topic_id는 opaque 32-hex이지만 **각 항목이 `source.qid`를 갖는다.** 3,190개 중 3,164개가 Wikidata QID(중복 없음), 26개는 `N-…` 가상 축 노드다.
+- topic_id는 opaque 32-hex이지만 **각 항목이 `source.qid`를 갖는다.** 3,190개 중 3,164개가 Wikidata QID(중복 없음), 26개는 `N-…` 가상 축 노드다. `dump_version`은 `20260802`로 memory-api와 같다.
+- **노드는 주제이고 계층은 편집 큐레이션이다.** "위스키 Q281 → 몰트 위스키·아메리칸 위스키·아일라 싱글 몰트"처럼 제품·활동·분야가 노드이고, "증류소" 같은 시설 클래스 노드는 없다. 부모 edge는 Wikidata에서 오지 않는다 — 편집 정책이 "발견에 사용한 seed나 Wikidata의 분류 경로를 그대로 사용자 계층으로 옮기지 않는다"고 명시한다(`docs/catalog-editorial-policy.md:10`). 즉 memory-api의 클래스 축과 카탈로그의 계층은 **같은 QID를 쓰는 서로 다른 두 그래프**다.
 - 유저 topic은 **메시지가 아니라 bourbon-agent의 persona 문서 중 preferences 레이어**에서 LLM 두 단계로 추출된다(`persona_updated` → 신호 추출 → 카탈로그 lexical 검색으로 grounding → 마킹). persona의 `expertise` 레이어는 **의도적으로 제외**한다. 집합은 persona 텍스트의 sha256이 바뀔 때만 움직이고, 유저당 상한 300, recency 반감기 180일.
 - `score`(0~100)는 **관심 강도**다. 여섯 facet(`knowledge`·`engagement`·`affinity`·`duration`·`recency` LLM 판정 + `volume` 측정)의 가중 평균에 coverage·confidence를 곱한다. **`knowledge` facet은 `score_detail.facets` 안에만 남고** 인덱스·정렬·필터 대상이 아니다. 사용자 간 비교는 설계상 가능하다(같은 범위, 같은 식, 같은 파이프라인).
 - `bourbon.topics_updated`는 sync 한 번당 한 건(batch)이고 payload에 score가 없어 소비자가 재조회한다 — 우리 워커가 지금 하는 그대로다.
@@ -68,7 +71,7 @@
 | consultable 필터는 memory-api가 강제한다 | memory-api에 동의 모델·인증이 없다 | 첫 슬라이스는 우리 `agents.discoverable`, opt-in은 bourbon-api에 요청(§10) |
 | Phase F에서 이벤트로 projection | memory-api는 이벤트를 발행하지 않는다 | 빌드 manifest 폴링(§7-2) |
 | topic-api 신호는 관심이라 knowledge에 못 쓴다 | `knowledge` facet이 `score_detail`에 있다 | 미러에 컬럼으로 추가해 첫 근거 소스로 쓴다(§7-1) |
-| grounding은 memory 쪽 QID 어댑터 | 카탈로그가 QID를 1:1로 들고 있다 | 기존 S2 grounding 한 번으로 두 소스를 조회한다(§6 T2) |
+| grounding은 memory 쪽 QID 어댑터 | 카탈로그가 QID를 1:1로 들고 있다. 다만 memory는 개체·클래스 축, 카탈로그는 주제·큐레이션 축이라 등식으로는 자주 빈다 | 기존 S2 grounding 한 번 + `topic_qid_map`으로 두 소스를 조회한다(§6 T2, §7-4). 커버리지는 측정 항목이다(§16) |
 | memory-api에 배치 capability API를 신설한다(Phase B) | `themes/{qid}/owners`가 이미 집계 한 번으로 답한다 | 첫 슬라이스에서는 신설 불필요. 필요해지는 것은 label 없는 owner-scoped 집계 route 하나(§16) |
 
 ---
@@ -213,7 +216,11 @@ bourbon-agent의 `recommend_agents` tool은 지금 "누군가 추천을 요청�
 
 topic_id에서 QID는 우리가 커밋한 카탈로그로 읽는다(`source.qid`, 3,164/3,190). 가상 노드 26개는 QID가 없으므로 소스 B 조회를 건너뛰고 소스 A만 쓴다.
 
-즉 **grounding 결과 하나가 두 근거 소스의 조회 키**다. 1차 초안의 "S3 공개 지식 grounding + S4 memory 검색"이 여기서 한 단계로 합쳐진다.
+**소스 B의 조회 키는 topic의 QID 하나가 아니라 topic이 덮는 QID 집합이다.** memory-api는 개체에 QID를 붙이고 P31·YAGO 클래스 축으로 올라가므로(§1-2), "위스키 Q281"로 등식 조회를 하면 "야마자키 증류소"만 말한 사람은 나오지 않는다 — 그 개체의 `broader_qids`는 증류소·공장 쪽으로 올라가고 위스키에 닿지 않는다. 그래서 오프라인에 `topic_qid_map(topic_id, qid, via, distance)`를 두고(§7-4) 조회는 `qid IN (SELECT qid FROM topic_qid_map WHERE topic_id = …)`로 한다.
+
+그래도 **grounding은 한 번**이다. 결과 topic_id 하나가 소스 A에는 그대로, 소스 B에는 매핑을 거쳐 조회 키가 된다. 1차 초안의 "S3 공개 지식 grounding + S4 memory 검색"이 여기서 한 단계로 합쳐지는 것은 같다.
+
+이 매핑이 잡지 못하는 것이 있다. "위스키 증류소 → 위스키" 같은 **시설↔제품** 관계는 P279·P31에도 memory-api의 typed_links 화이트리스트(author·director·manufacturer·genre 계열)에도 없다. 그래서 소스 B는 주제를 개체로 직접 언급한 사람("위스키 좋아해")은 잡고, 구체적 개체만 말한 사람("야마자키·하쿠슈 다녀왔어")은 extractor가 related grounding을 붙였을 때만 잡는다. 이 사각의 크기는 설계로 정할 수 없고 실제 빌드 결과로 재야 한다(§16 memory-api 질문 2).
 
 ### T3. 근거 조회 — 두 소스, 한 테이블 구조
 
@@ -241,7 +248,7 @@ observed_build_at        timestamptz memory-api manifest의 built_at
 
 **들어가지 않는 것**: statement 텍스트, entity label, `personal_blurb`, message id, salience 원시값. 이 테이블은 "몇 개, 언제"만 안다. 크기는 owner당 entity 수(수백)로, `visible_topic_rows`의 유저당 상한 300과 같은 자릿수다. 10만 유저면 수천만 행이고 PostgreSQL이 감당하는 범위다.
 
-조회는 grounding된 QID 집합에 대해 `WHERE qid = ANY(...)`이고, 두 소스를 owner로 합쳐 need별 coverage matrix를 만든다.
+조회는 소스 A가 `topic_id`(+ `catalog_edges` 서브트리), 소스 B가 `qid IN (topic_qid_map의 그 topic 행)`이고, 두 소스를 owner로 합쳐 need별 coverage matrix를 만든다. 둘 다 인덱스 한 번 타는 SQL이다.
 
 ### T4. 단일 agent 랭킹 — 결정적
 
@@ -299,6 +306,29 @@ memory-api는 이벤트를 내지 않으므로 우리 워커의 **일곱 번째 
 ### 7-3. 소스 B가 비어 있을 때
 
 `bourbon-v2` tenant에 personal build가 실제로 몇 owner에 대해 돌았는지는 코드로 알 수 없다(§16). 소스 B 행이 없는 owner는 소스 A만으로 랭킹되고, 두 소스의 교차 확인 feature는 0이다. 파생본이 비어 있어도 서비스는 동작한다 — 그래서 슬라이스 1을 소스 A만으로 시작할 수 있다(§15).
+
+### 7-4. `topic_qid_map` — 카탈로그 topic이 덮는 QID 집합
+
+카탈로그가 바뀔 때만 다시 만드는 오프라인 파생본이다. 카탈로그 복사본처럼 커밋해 두고 `load_catalog`와 같은 방식으로 적재한다.
+
+```text
+topic_id    카탈로그 topic
+qid         이 topic의 근거로 인정할 Wikidata QID
+via         seed | narrower | typed
+distance    0 (seed) | 1 | 2
+```
+
+재료는 memory-api의 공개 지식 route다. `POST /knowledge/expand`는 seed QID 최대 32개를 받아 `narrower`(역 P31·P279), `typed`(화이트리스트 관계), `co_link`를 depth 2까지 돌려주는 배치 traversal이고 hop당 round trip이 고정이다. 3,164 topic이면 100회 안쪽이다. `max_generality`로 지나치게 넓은 클래스를 잘라 낸다.
+
+- `seed`: topic의 QID 자체. identity 매치.
+- `narrower`: 그 topic의 하위 클래스와 인스턴스. "몰트 위스키"의 narrower에 "야마자키 12년"이 있다면 그것을 개체로 가진 사람이 잡힌다.
+- `typed`: 화이트리스트 관계로 이어진 것. 저작·제작 계열이라 취미·기술 topic에서는 기여가 작을 것으로 본다. 측정 뒤 뺄 수 있다.
+
+**넣지 않는 것**: memory-api의 `broader` 확장(위로 올라가면 "음료·식품"까지 번져 topic 경계가 사라진다), `co_link`(링크 그래프 동시 출현은 근거가 아니다).
+
+한 QID가 여러 topic에 속할 수 있다(몰트 위스키 ⊂ 위스키). 그 경우 두 topic 행에 모두 넣고, 랭킹은 grounding된 topic 쪽 행만 읽으므로 이중 계산은 없다.
+
+**이 테이블의 커버리지가 소스 B의 상한이다.** 실제 memory 빌드의 `broader_qids`·`knowledge_qid` 분포와 `topic_qid_map`의 교집합이 얼마인지가 첫 측정이고, 그 숫자가 낮으면 시설↔제품 같은 빠진 관계를 카탈로그 쪽 편집(예: "위스키 증류소"를 위스키의 자식 topic으로)으로 메울지, 매핑에 수동 행을 둘지 정한다.
 
 ---
 
@@ -495,7 +525,7 @@ offline 합성 데이터로는 실제 answerability를 검증할 수 없다. §1
 | 슬라이스 | 새 의존성 | 새 LLM 호출 | 답하는 질문 | 완료 조건 |
 |---|---|---|---|---|
 | **1. 소스 A만** | 없음 | 0 (스키마 확장) | 이 주제에 깊은 관심과 지식을 드러낸 사람 | route·envelope, `knowledge_facet` 미러, need 다중 grounding, 결정적 랭킹, 합성 모집단 측정 |
-| **2. 소스 B** | memory-api **폴링만** | 0 | 구체적 근거 statement를 가진 사람 | `knowledge_capabilities`, 일곱 번째 루프, 두 소스 합산 랭킹, `source_b_stale` |
+| **2. 소스 B** | memory-api **폴링만** | 0 | 구체적 근거 statement를 가진 사람 | 커버리지 측정(§16 질문 2)이 먼저. 그 뒤 `topic_qid_map`, `knowledge_capabilities`, 일곱 번째 루프, 두 소스 합산 랭킹, `source_b_stale` |
 | **3. group** | 없음 | 0 | 두 need를 두 사람이 나눠 덮는 경우 | set-cover, `mode: group`, 인원 2 |
 | **4. 트리거** | bourbon-agent 변경 | 0 | 실제로 불리는가 | tool 설명 변경 또는 두 번째 tool, 호출 빈도 로그 |
 | **5. 실행·종합** | bourbon-agent 소유 | agent당 1 + 종합 1 | 실제 답변 | 이 문서 범위 밖. `moderator/agent_recommender/` |
@@ -510,17 +540,19 @@ offline 합성 데이터로는 실제 answerability를 검증할 수 없다. §1
 
 **memory-api**
 1. `bourbon-v2` tenant에 personal build가 실제로 돌고 있는지, 몇 owner인지, 주기는 어떻게 되는지. 소스 B의 가치가 이 숫자에 달려 있다.
-2. label·blurb 없이 `(qid, match, statement kind별 count, has_provenance, last_seen)`만 주는 owner-scoped 집계 route를 추가해 주실 수 있는지. 없어도 `GET /users/{id}/personal/entities`로 읽고 버리면 되지만, 있으면 private 텍스트가 우리 프로세스에 들어오지 않는다.
-3. `GET /{tenant}/admin/personal/build`를 폴링 피드로 써도 되는지, 페이지 크기와 부하 상한.
+2. 그 빌드 결과에서 **`knowledge_qid`·`broader_qids`의 상위 분포**를 받아 볼 수 있는지(QID와 개수만, owner·label 없이). 우리 카탈로그 QID와 `topic_qid_map`(§7-4)의 교집합이 얼마인지가 소스 B 커버리지의 첫 측정이다. 이것을 모르면 소스 B를 만들어도 얼마나 잡히는지 말할 수 없다.
+3. label·blurb 없이 `(qid, match, statement kind별 count, has_provenance, last_seen)`만 주는 owner-scoped 집계 route를 추가해 주실 수 있는지. 없어도 `GET /users/{id}/personal/entities`로 읽고 버리면 되지만, 있으면 private 텍스트가 우리 프로세스에 들어오지 않는다.
+4. `GET /{tenant}/admin/personal/build`를 폴링 피드로 써도 되는지, 페이지 크기와 부하 상한. 그리고 `POST /knowledge/expand`를 카탈로그 갱신 때마다 100회 안쪽으로 호출해도 되는지.
 
 **topic-api**
-4. `GET /users/{id}/topics`(우리가 재조회하는 route)의 응답에 `score_detail.facets`·`confidence`가 포함되는지. 없으면 포함을 요청한다.
+5. `GET /users/{id}/topics`(우리가 재조회하는 route)의 응답에 `score_detail.facets`·`confidence`가 포함되는지. 없으면 포함을 요청한다.
+6. 소스 B 커버리지 측정에서 시설↔제품처럼 Wikidata 관계로 못 건너는 구멍이 크게 나오면, 카탈로그 편집으로 메울 수 있는지(예: "위스키 증류소"를 위스키의 자식 topic으로). 편집 정책에 맞는지는 그쪽 판단이다.
 
 **bourbon-api**
-5. agent 설정에 `consultable`(다른 사용자의 질문에 내 agent가 대신 답해도 되는가) opt-in 필드를 둘 수 있는지, 그리고 그 변경을 이벤트로 낼 수 있는지. `personal_agent_visibility_changed`가 만들어지지 않았던 것과 같은 이유로 이벤트 대신 재조회가 될 수도 있다.
+7. agent 설정에 `consultable`(다른 사용자의 질문에 내 agent가 대신 답해도 되는가) opt-in 필드를 둘 수 있는지, 그리고 그 변경을 이벤트로 낼 수 있는지. `personal_agent_visibility_changed`가 만들어지지 않았던 것과 같은 이유로 이벤트 대신 재조회가 될 수도 있다.
 
 **bourbon-agent**
-6. `recommend_agents`의 트리거를 넓히는 것과 두 번째 tool을 두는 것 중 어느 쪽이 프롬프트 설계상 맞는지. `moderator/agent_recommender/`의 계획이 이 기능과 같은 것인지.
+8. `recommend_agents`의 트리거를 넓히는 것과 두 번째 tool을 두는 것 중 어느 쪽이 프롬프트 설계상 맞는지. `moderator/agent_recommender/`의 계획이 이 기능과 같은 것인지.
 
 ---
 
@@ -534,3 +566,5 @@ offline 합성 데이터로는 실제 answerability를 검증할 수 없다. §1
 6. 소스 B의 `stale` threshold — memory-api 빌드 주기가 정해진 뒤 레지스터 행으로.
 7. 실행 단계의 feedback event(추천 id ↔ `supported/unsupported`) 이름과 payload. calibration error를 재려면 이것이 먼저 있어야 한다.
 8. 슬라이스 1을 타입 ① 도메인 위에 얹는 것을 슬라이스 2에서 새 소스로 나누는 시점의 기준.
+9. `topic_qid_map`에 `typed` 관계를 넣을지, `narrower`만으로 시작할지 — 커버리지 측정 결과로 정한다.
+10. 소스 B 커버리지가 낮을 때 조인 키를 memory-api의 `classes` 인덱스(그쪽이 theme으로 판정한 클래스)로 바꾸는 대안을 열어 둘지. tenant별로 동적이라 매핑 테이블이 어차피 필요하고, 첫 슬라이스에서는 `expand` 쪽이 단순하다고 본다.
