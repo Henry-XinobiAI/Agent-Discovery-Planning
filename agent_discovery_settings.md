@@ -145,7 +145,7 @@
 
 ## 9. 워커·적재
 
-> 값: `agent_discovery/settings.py` — `Refresh` · `Attribution` · `RoomTurns` · `Friends` · `TopicApi` · `DynamoDb`
+> 값: `agent_discovery/settings.py` — `Refresh` · `Attribution` · `RoomTurns` · `Friends` · `TopicApi` · `BourbonApi` · `DynamoDb`
 
 | 이름 | 뜻 | 올리면 / 내리면 | 출처 |
 |---|---|---|---|
@@ -158,6 +158,7 @@
 | `room_turns.orphan_ttl_days` | `interactions` 행이 없는 `room_turns`(우리 서비스 이전에 열린 방, 놓친 시작)를 정리하기까지의 기간 | 짧으면 우리가 예측하지 않은 방의 turn을 일찍 잃고, 길면 고아 행이 쌓인다. 스윕은 `friends.tombstone_ttl_days`의 것과 함께 뒤에 온다 — 그때까지 이 값은 아무도 집행하지 않는 정책이고 테이블은 쌓이기만 한다 | R49, 값은 분석 |
 | `friends.tombstone_ttl_days` | 끊긴 친구관계를 이벤트 순서 비교용으로 얼마나 더 들고 있나(R50) | 올리면 뒤늦게 재발행된 옛 `accepted`도 계속 걸러낸다. 내리면 그 창 밖의 옛 이벤트가 친구관계를 되살린다. 스윕은 다른 보존 항목들과 함께 뒤에 온다 — 그때까지 tombstone은 쌓이기만 한다 | R50, 값은 분석 |
 | `topic_api.timeout_ms` | 재조회·요청자 프로필(R27)·hydration 호출 한 번의 타임아웃(시도 1회, 재시도는 `TOPIC_API_MAX_ATTEMPTS`) | 내리면 `hydration_partial`이 늘고 p95가 짧아진다. 초기값은 현행 서비스의 값이고, 실측(1-9) 전에 줄이면 근거 없이 사용자 경로를 조이는 셈이라 그대로 둔다. 1-4c에서 다시 봤고 이 값은 그대로 둔다 — 재조회를 워커가 하게 되면서 이 타임아웃 × 시도 수가 `refresh.attempt_timeout_seconds` 안에 들어가야 했는데, 사용자 경로의 이 값을 조이는 대신 **워커 쪽 시도 수를 1로 두어** 사다리를 하나로 만들었다(중첩 재시도는 느린 upstream의 부하를 두 수의 곱만큼 늘린다). `TOPIC_API_MAX_ATTEMPTS`는 API 프로세스의 것으로 남는다 | 분석(현행 `TOPIC_API_TIMEOUT_SECONDS`), 확정은 검증 1-9 |
+| `bourbon_api.timeout_ms` | 응답 직전 표시 필드 hydration 호출 한 번의 타임아웃(R63 — `GET /api/internal/users?ids=`와 `GET /api/internal/agents?ids=` 둘을 병렬로 친다) | 내리면 `hydration_partial`이 늘고 p95가 짧아진다. **이 값은 라우트 데드라인보다 한참 짧아야 한다** — 목록의 길이도 순서도 이 호출에 달려 있지 않으므로, 답을 늦추면서까지 기다릴 이유가 없다. 초기값은 bourbon-topic-api가 같은 peer에 쓰는 2초(2000)를 따라간다(`topic/config.py`의 `BOURBON_API_TIMEOUT_SECONDS`). dev 관측에서 두 배치 조회의 실제 분포를 보고 줄인다 | R63, 초기값은 topic-api의 같은 값 |
 | `dynamodb.table_name` | 서비스 소유 테이블 하나(R44). key space는 계약 §6-1. **이름은 환경마다 다르므로 값의 집이 배포 표면이다** — `config.py`의 `StorageSettings.DYNAMODB_TABLE_NAME`이고 매니페스트가 고정한다 | — | R44 |
 | `dynamodb.log_shards` | 결정 로그 GSI 파티션 키와 `event_log` 파티션 키의 shard 수(`hash(id) % N`) | 올리면 하루치 쓰기가 더 넓게 퍼지고 읽기가 N개 Query를 병합한다. 늘려도 옛 항목은 이동하지 않는다(옛 shard < 새 N). 내리지 않는다 — 내리면 읽기가 옛 shard를 훑지 않는다 | R44, 값은 분석 |
 

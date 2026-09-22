@@ -109,6 +109,15 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 {
   "agent_id": "uuid",              // personal agent id
   "owner_user_id": "uuid",         // agent 소유자. agent_id에서 유도되지만 클라이언트가 유도하지 않게 준다
+  "owner": {                       // 목록을 그리는 데 필요한 소유자 표시 필드. 요청 시 채운다 (R63)
+    "name": "지원",                  // 받은 그대로. 폴백은 그리는 쪽이 정한다. null 가능
+    "picture": "https://…",        // null 가능
+    "handle": "jiwon"              // null 가능 — 아직 정하지 않은 유저가 있다
+  },
+  "agent": {                       // personal agent 쪽 표시 필드. 같은 요청에서 같이 읽는다 (R63)
+    "name": "지원의 에이전트",         // null 가능
+    "picture": "https://…"         // null 가능
+  },
   "position": 1,                   // 이 응답 안의 순위 (1부터). 페이지가 이어져도 계속 증가
   "matched_topics": [              // 이 agent가 여기 있게 만든 topic들
     {
@@ -132,6 +141,12 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 예약된 필드: `talked_before`(타입 ③, R28의 "소진 뒤 재등장" 표식). 코드는 계산하고 결정 로그에 남기지만 **응답에는 넣지 않는다** — 표시 기획이 요청하면 같은 `contract_version`으로 연다.
 
 `owner_note`는 소유자가 쓴 글이다. **응답에 싣는 것으로 끝이다.** 로그, 예외, 결정 로그, Sentry에 들어가지 않는다.
+
+**표시 필드는 우리가 채우고, 뷰어에 따라 달라지는 것은 클라이언트가 읽는다**(R63). `owner`·`agent`는 요청 시 bourbon-api 내부 route 둘(`GET /api/internal/users?ids=`, `GET /api/internal/agents?ids=`)을 배치로 읽어 채운다. 미러하지 않는다(§6). 못 채우면 그 필드는 null이고 `degraded`에 `hydration_partial`이 붙는다 — 상태는 200이고 카드는 id만 가진 채로 그려진다.
+
+반대로 **요청자와 소유자의 관계에 따라 달라지는 값은 이 응답에 없다.** 친구 관계와, 이미 열려 있는 DM 방 id가 그것이다. 기준이 bourbon-api이고, 목록을 *그리는* 데 필요한 것이 아니라 카드 하나를 *누를* 때 필요한 것이라, 클라이언트가 그 시점에 공개 `GET /users/{user_id}` 한 번으로 읽는다. 방 안의 `agent_profiles_v1` 카드가 하는 것과 같은 해석이다 — 다른 점은 카드가 한 장에 한 명이고 목록은 한 페이지에 최대 `for_you.limit_max`명이라는 것뿐이며, 그래서 배치가 필요한 쪽은 목록뿐이다.
+
+`owner_user_id`·`agent_id`는 표시 블록이 생겨도 그대로 남는다. 누른 시점 조회의 키이자 §2-5 어트리뷰션 보고의 키다.
 
 ### 3-2. 타입별 envelope
 
@@ -200,7 +215,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 |---|---|
 | `friends_unavailable` | 친구 집합을 못 읽어 friends tier를 후보에서 뺐다. public만 답했다. R17·R18 배치에서는 실제로 나오지 않는 예약 값이다 — §5 불변식 3 |
 | `expansion_partial` | 타입 ①: 개념 확장 일부가 답을 못 받아 topic이 덜 뽑혔을 수 있다 |
-| `hydration_partial` | 라벨·owner_note를 다 못 채웠다 |
+| `hydration_partial` | 표시 필드를 다 못 채웠다 — 라벨·owner_note(topic-api)이거나 `owner`·`agent`(bourbon-api, R63)다. **어느 쪽인지는 응답이 말하지 않는다**: 값 하나가 두 업스트림을 덮으므로 호출자가 보는 것은 "덜 채워졌다" 하나이고, 어느 업스트림이 답하지 않았는지는 로그에 남는다. 호출자가 그 구분으로 할 수 있는 일이 없어서 나누지 않았다 |
 | `cf_candidates_stale` | 타입 ③: 사전 계산 결과가 **있는데** TTL의 몇 배(R36: 7일) 이상 오래됐다. TTL을 넘긴 정도는 정상 경로(그대로 서빙하고 스윕이 갱신, R19)라 붙이지 않는다. 항목이 없어서 인기도·content로 답한 경우는 이 값이 아니다 — `basis`가 그것을 말한다 |
 
 "몇 개가 가려졌다"는 어떤 형태로도 응답에 없다(§5).
@@ -289,7 +304,11 @@ class Ranker(Protocol):
 
 ### 4-5. 응답 조립
 
-`RecommendedAgent`를 만들고 라벨·owner_note를 채운다(hydration). hydration은 응답 직전이고 실패하면 `hydration_partial`. **응답 직전에 공개된 row가 존재하는지 다시 확인**한다(§5 불변식 4).
+`RecommendedAgent`를 만들고 표시 필드를 채운다(hydration). 업스트림 둘을 **병렬로** 읽는다 — 라벨·owner_note는 topic-api, `owner`·`agent`는 bourbon-api 내부 route 배치(R63). 둘 다 응답 직전이고, 어느 쪽이 실패해도 그 필드만 null이 된 채 `hydration_partial`이 붙는다.
+
+**이 단계는 어떤 후보가 답에 드는지를 바꾸지 않는다.** 랭킹이 끝난 뒤이고 페이지가 이미 정해져 있어서, bourbon-api가 답하지 않아도 목록의 길이도 순서도 같다 — 그래서 503이 아니다. 친구 집합(불변식 3)과 갈리는 지점이 정확히 여기다: 그쪽은 후보 쿼리 **안**의 조건이라 못 읽으면 답이 줄어든다.
+
+**응답 직전에 공개된 row가 존재하는지 다시 확인**한다(§5 불변식 4).
 
 ---
 
@@ -316,6 +335,7 @@ class Ranker(Protocol):
 | `visible_topic_rows` 보조 인덱스 | `owner_user_id` | → 그 소유자의 row들 | agent private 시 일괄 삭제용 |
 | `agents` | `owner_user_id` | `agent_id`, `discoverable`, `agent_maturity`, `registered_at`, `updated_at`, **`last_active_at`**, **`cf_candidates_computed_at`**(R19) | `bourbon.user_registered`로 생성(추천 대상 풀, `discoverable`은 기본 false), **`discoverable`은 재조회가 파생한다**(R57 — 읽어 온 집합에 `public` row가 있나. row 교체와 **같은 트랜잭션**이라 둘이 어긋날 수 없고, 그래서 이벤트 순서를 비교하던 `visibility_changed_at`은 없앴다), 성숙도는 성숙도 이벤트로, `bourbon.user_deactivated`로 삭제. 없는 채로 topic 이벤트가 오면 재조회가 만든다. `last_active_at`은 우리 API 요청·**agent_dm 방의 첫 `message_created`를 보낸 사람**(R51)·`topics_updated` 셋 중 어느 것이든 갱신한다. **`cf_candidates_computed_at`**(R19)은 그 유저의 top-K를 마지막으로 만든 시각 — 스윕 조건 `last_active_at > cf_candidates_computed_at`의 오른쪽 |
 | `requester_topics` (**R27: 저장하지 않음**) | `user_id` | 요청자 자신의 topic 목록(점수 포함) — 본인의 `public`·`friends`·`private`, `hidden` 제외(R22). 타입 ②의 섹션과 타입 ③의 content 쿼리에 씀 | 요청 시 topic-api 내부 route(`visibility=public&visibility=friends&visibility=private`)로 읽는다(R27). 소유자 키 아래에만 두는 미러는 지연 시간이 문제될 때의 대안 |
+| `owner`·`agent` 표시 필드 (**R63: 저장하지 않음**) | — | 소유자의 `name`·`picture`·`handle`, personal agent의 `name`·`picture` | 요청 시 bourbon-api 내부 route 둘(`GET /api/internal/users?ids=`, `GET /api/internal/agents?ids=`)을 배치로 읽는다. 한 번에 보내는 id 수는 한 페이지의 상한(`for_you.limit_max`)이고 그쪽 배치 상한 100개 아래다. **미러하지 않는다** — 우리가 받는 이벤트(§9-1) 중 프로필 변경을 싣는 것이 하나도 없어서 미러를 최신으로 유지할 방법이 주기 스윕뿐인데, 이름과 사진은 그 주기만큼 눈에 띄게 낡는다. 남의 소유인 값의 낡음만 우리가 떠안는 거래다. `friends`가 반대 방향인 이유는 그쪽이 후보 쿼리 **안**의 조인이기 때문이고(R17), 이쪽은 랭킹이 끝난 뒤의 표시 필드다 |
 | `friends` (**R17: 미러, 필수**) | canonical pair `(user_low, user_high)`. 조회는 `user_id` → 친구 id 집합(상한 5,000) | `state ∈ {friends, removed}`, `changed_at`(발행자 시각) | `bourbon.friendship_changed`: `accepted`·`removed` 모두 upsert, **자기보다 새 `changed_at`이 있으면 적용하지 않는다**(R50 — 이벤트 둘이 커밋 순서로 정착하므로 지우는 설계로는 끊긴 친구가 남는다). 읽는 쪽은 전부 `state = 'friends'`이고, 그 조건을 빠뜨릴 자리를 없애려 저장소가 "친구 집합"만 답한다. `removed` tombstone은 `friends.tombstone_ttl_days` 뒤 정리. 요청 시 bourbon-api 조회·TTL 캐시는 쓰지 않는다. `visible_topic_rows`와 같은 저장소에 두어 후보 조회 쿼리가 배열로 받거나 조인한다 |
 | `popularity` | `owner_user_id` | 시간 감쇠 카운트(계산 시점에 전체 최대로 나눈 값이라 저장된 값이 곧 §7의 0~1 feature), `computed_at` | **주기적으로 다시 만든다**(`popularity.refresh_minutes`): `interactions` ⋈ `room_turns`를 `popularity.window_days` 창으로 읽어 집계 SQL 한 문장으로 덮어쓴다. 대화 시작 이벤트마다 더하는 방식이 아니다 — R29의 가중은 `1 + α·log(1 + turns)`이고 대화가 시작되는 순간의 `turns`는 1이라 그 대화의 최종 무게를 아직 모르며, 30일 창은 아무 일도 일어나지 않는 동안에도 움직이는 경계다(1-7에서 확인). 대화가 0건인 소유자는 행이 없고, `popularity.new_agent_prior`는 랭커가 그 자리에 넣는 값이다 — 저장소에 넣으면 대화 없는 agent 전부가 같은 점수로 묶여 인기도 소스가 무작위 agent 생성기가 된다 |
 | `cf_candidates` | `user_id` | `candidates: [(owner_user_id, score)]` top-K, `computed_at`, `model_version`(어느 전역 학습으로 만들었나 — 재현·갱신 판단용) | 워커의 주기 스윕이 배치로 쓴다 — 조건은 R19. K는 설정 레지스터 `cf.pool_k`(R20의 pool). **DynamoDB**(R18·R44 — `USER#{user_id}` / `CF_CANDIDATES`, §6-1, **TTL 없음**): 서빙은 단건 GetItem, 조인은 없다(재확인은 PostgreSQL `visible_topic_rows`에서). 오래된 항목도 그대로 서빙한다. 항목이 없는 요청자는 §2-3의 콜드스타트 경로 |
@@ -436,4 +456,5 @@ class Ranker(Protocol):
 - persona(HEXACO) 입력의 경로·동의 범위·가중 규칙(O20). 자리만 있다(R42): `UserQuery.requester_traits`, feature `persona_similarity`, 설정 `rank.for_you.w_persona`.
 - **타입 ③에서 소스 하나를 못 읽었을 때의 응답.** §3-4에 값이 없다. 구현(1-7)은 요청자 topic 조회(R27)가 실패하면 **503**으로 끝낸다 — 타입 ②와 같은 처리이고, "봤는데 없다"가 아니라 "못 봤다"이기 때문이다(§3-3). 다만 타입 ②와 달리 타입 ③에서 요청자 topic은 세 소스 중 하나의 입력일 뿐이라, 인기도만으로도 완전한 목록이 나온다 — 그쪽을 택하면 `degraded`에 "content를 못 읽었다"에 해당하는 값이 필요하고, 그 값은 요청자 개인에 대한 사실을 드러내지 않는다(§3-4의 조건을 만족한다). 어느 쪽이든 계약이 정할 일이라 코드에서 지어내지 않았다. 실측(1-9)에서 topic-api 장애가 이 화면을 얼마나 자주 멈추는지를 보고 정하는 것이 낫다.
 - **게이트가 재는 "군집 다양성"의 실서비스 입력.** R35는 ALS와 인기도를 HR@10과 **같은 군집 비율**로 비교하라고 하고, 검증 §3-1은 합성 모집단의 persona 군집 라벨로 그것을 쟀다. 실서비스에는 그 라벨이 없다 — R42로 persona를 읽지 않고, R27로 요청자 topic을 저장하지 않는다. 1-8 구현은 가진 입력으로 같은 질문을 하는 **대리 지표**를 쓴다: 추천된 소유자가 **요청자 본인이 공개한 topic**을 공개하고 있으면 개인화 쪽으로 센다. 두 방법에 같은 자를 대므로 비교 자체는 성립하지만, 눈금이 다르다 — persona 군집은 굵은 분할이고 topic 겹침은 잘게 나뉘며 인기 소유자가 인기 topic을 갖는다(10만 실측: 인기도 0.345, ALS 0.249). 지금의 대리 지표로는 `gate.min_cluster_gain` 1.5를 넘길 수 없다. 실측(1-9)에서 두 지표를 나란히 재고, 임계를 다시 정하거나 지표를 계약에 명시하는 것이 낫다. 설정 레지스터 §4에도 같은 내용을 적어 뒀다.
+- **목록 카드가 뷰어에 따라 달라지는 값을 필요로 하는가.** R63은 목록에 `owner`·`agent`만 싣고 친구 관계·DM 방 id는 카드를 누른 시점에 클라이언트가 읽는 것으로 정했다. 목록 단계에서 "친구예요" 같은 배지를 그리기로 하면 그 전제가 깨진다 — 우리가 친구 미러로 답하거나(그러면 불변식 3의 fail-closed가 표시 필드까지 지배한다), 클라이언트가 한 페이지마다 최대 `for_you.limit_max`번 읽거나 둘 중 하나다. **클라이언트 화면 기획에 달렸고 아직 묻지 않았다** — 요청서 `requests/client.md`에 넣었다.
 - 섹션 한 개 페이지(`GET /discover/by-topic/{topic_id}`)의 응답 envelope. §3-2가 인쇄하지 않는다. 구현(1-3c에서 읽고 **1-5에서 그대로 냈다**)은 **타입 ②의 envelope에 섹션 하나**로 답한다 — 클라이언트가 `sections[0].next_cursor`를 꺼내야 하는 비용이 있다. 전용 envelope(`topic_id`·`label`·`agents`·`next_cursor`를 최상위에)로 정하면 §3-2에 인쇄하고 이 항목을 지운다. 클라이언트가 붙기 전이라 지금 바꾸는 값은 코드뿐이다.
