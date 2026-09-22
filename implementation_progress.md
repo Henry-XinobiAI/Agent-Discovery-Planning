@@ -303,6 +303,25 @@
 
   **앞으로 정해야 할 것 하나**: 카탈로그가 계속 바뀐다면 지금의 "복사해 커밋하고 배포 때 적재" 방식은 배포 주기만큼 뒤처진다. 이번에 3주 뒤처진 채였고 아무것도 알려주지 않았다. 주기 작업으로 topic-api에서 직접 읽는 쪽과 비교해 정해야 하는데, **dev에서 실제 변경 빈도를 보고 정하는 게 맞다** — 지금은 근거가 한 번의 관측뿐이다.
 
+- [ ] **18. 탐색 응답이 그려질 수 있는 상태로 나간다 — `owner`·`agent` 표시 필드**(R63) 🟡
+  계약 §3-1이 `RecommendedAgent`에 `owner` 블록을 더했다. 모양은 bourbon-api `GET /api/users`의 `UserOut`을 따르고(그 endpoint를 부르는 것이 아니다), **디자인 전의 기준값이지 확정이 아니다**. 값은 요청 시 내부 route 둘(`GET /api/internal/users?ids=`, `GET /api/internal/agents?ids=`)에서 배치로 읽고 저장하지 않는다(계약 §6).
+
+  **이 서비스의 첫 bourbon-api HTTP 의존이다.** `providers/`에 `topic_api`·`llm`뿐이었고, bourbon-api와는 deferq 이벤트(단방향)와 uuid5 재계산으로만 엮여 있었다. 모양은 이미 두 곳에 있다 — `providers/topic_api/`(내부 prefix, Service 직접, 자격증명 없음, `outbound_headers()`의 request id 하나)와 bourbon-topic-api의 `topic/visibility/friends.py`(`BOURBON_API_URL`을 **base ConfigMap**에, origin만, 경로는 모듈 한 곳에, URL이 비면 클라이언트를 만들지 않는 것이 로컬 기본값).
+
+  **할 것**: `providers/bourbon_api/`(transport·client·wire·adapter), `BourbonApiSettings`(`BOURBON_API_BASE_URL` + 타임아웃 + 시도 수), base ConfigMap·`.env.example`·README 행, 설정 레지스터 §9의 `bourbon_api.timeout_ms`, `discovery/assembly.py`의 hydration에 병렬 호출 한 갈래, 세 응답의 wire struct.
+
+  **같이 들어가는 작은 계약 변경 하나**(R64): 페이지가 있는 봉투에 `has_next`를 더한다 — 타입 ③의 최상위와 타입 ②의 섹션마다. `next_cursor`의 유무와 **언제나 일치해야** 하고, 그 불변은 봉투를 만드는 한 곳이 지킨다(둘을 각자 계산하면 갈릴 자리가 생긴다). `contract_version`은 안 움직인다 — 필드를 더하는 것은 버전을 올리지 않는다(계약 §10).
+
+  **id 수가 그쪽 배치 상한을 넘는 화면이 하나 있다**: 타입 ②의 섹션 개요는 `sections_max × per_section_max` = 200명이고 배치 상한은 100이다. 소유자 id를 **중복 제거한 뒤 100개씩 끊어** 보낸다(계약 §6). 타입 ③과 섹션 한 개 페이지는 50이라 한 번이면 된다.
+
+  **테스트로 고정할 것 하나**: **bourbon-api가 답하지 않아도 200이고 목록의 길이·순서가 같아야 한다**(`degraded: ["hydration_partial"]`). 이 단계는 랭킹 뒤라 후보를 바꾸지 않는다는 것이 R63이 친구 미러(불변식 3)와 갈라지는 근거 전부다. 이게 깨지면 `storage/friends.py`가 적어 둔 반례("요청 시 조회는 그들의 가용성을 모든 추천 앞에 세운다")가 다시 맞는 말이 된다.
+
+  **타입 ①도 같이 바뀐다** — `RecommendedAgent`는 셋이 공유한다. 얼어붙은 내부 `POST /recommend`(bourbon-agent용)는 별도 struct라 영향이 없다.
+
+  **물은 것 셋 중 둘은 답이 왔다**(요청서 bourbon-api §5, 오너 2026-09-22 구두): 호출량 괜찮고(섹션 개요의 route당 최대 2회까지 포함해 다시 확인받았다 — 조정이 필요해지면 우리 쪽 `sections`·`per_section` 상한을 조인다), `GET /api/internal/agents`를 요청 경로에서 써도 된다. 그래서 users 쪽만으로 좁히는 대안은 접는다. 남은 하나(네트워크가 닿는지)는 답을 기다리지 않고 **dev 파드에서 직접 확인한다** — 막혀 있으면 그때 요청이 구체적이 된다. 클라이언트 쪽 열린 질문(목록에 뷰어 의존 값이 필요한가)은 계약 §11 · 요청서 client §3의 4번.
+
+  **덤**: go-live 백필이 쓰려던 bourbon-api 클라이언트가 여기서 먼저 생긴다(항목 15의 여섯째 주기 잡). 지금 여는 것은 `ids` 배치뿐이고 열거 셀렉터는 그때.
+
 ## 미룬 소소한 것 (해당 PR에서 되짚기)
 
 - ~~목 서버 검색 `limit`은 최상위 노드만 자른다~~ — 1-6에서 목 `search.json`을 시드가 쓰게 했고, 한 검색어에 노드 하나를 답하므로 `limit`이 자를 것이 없다. 이름이 같은 topic 둘은 먼저 쓴 쪽이 가져간다(실서비스는 둘 다 답하고 grounding이 고른다) — 가끔 한 쿼리가 매치를 잃을 뿐이다.
