@@ -85,6 +85,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 
 - `lang`은 모든 요청에 있고(기본 `en`, 허용 `ko`·`en`·`ja` — 그 밖은 422), 응답의 다국어 필드(`label`, `owner_note`)는 그 언어의 **문자열 하나**다(R40). 폴백은 요청 언어 → `en` → 있는 첫 값 → null.
 - 페이지네이션은 opaque `cursor`다. 오프셋을 노출하지 않는다(사전 계산 결과가 갈아엎어지면 오프셋은 의미가 없다). `recommendation_id`는 **목록 하나**(첫 페이지)에 발급되고 `cursor`가 그것을 실어 오므로 다음 페이지는 같은 id·같은 seed(R20)로 순서를 잇는다. 그 사이 사전 계산이 갱신될 수 있어(R19) 페이지 연속성은 best-effort다.
+- **페이지가 있는 답은 `has_next`와 `next_cursor`를 같이 준다**(R64). bourbon-api의 목록 봉투(`GET /api/users`의 `UserListOut`)와 같은 모양이라, 클라이언트가 두 종류의 목록에 한 가지 페이지 로직을 쓴다. **둘은 언제나 일치한다** — `has_next`가 참인 것과 `next_cursor`가 있는 것은 같은 말이고, 그 불변은 봉투를 만드는 한 곳이 지킨다. 중복인 것을 알고 두는 것이다: 한 값만 보는 클라이언트가 어느 쪽을 골라도 맞게 하려는 것이고, 값이 갈리면 그것은 우리 결함이지 상태가 아니다. 커서가 없는 답(타입 ①)에는 둘 다 없다.
 - 요청자 본인의 agent는 어느 타입에서도 결과에 없다.
 
 ### 2-5. 어트리뷰션 보고 `POST /attributions` (R47)
@@ -182,6 +183,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
     {
       "topic_id": "…", "label": "…",
       "agents": [ RecommendedAgent… ],
+      "has_next": true,                  // next_cursor의 유무와 언제나 같다 (R64, §2-4)
       "next_cursor": "…" | null
     }
   ],
@@ -191,6 +193,8 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 
 섹션이 비면(그 topic을 공개한 타인이 없음) 섹션은 `agents: []`로 남긴다. 섹션이 아예 없으면(요청자가 topic이 없음) `sections: []`.
 
+**페이지는 섹션 *안*에만 있다.** `sections` 자체에는 커서가 없다 — 요청자 topic 중 preference 점수 상위 `sections`개로 고정이고, 더 보고 싶으면 `sections`를 올려서 다시 요청한다(상한 `by_topic.sections_max`). 섹션마다 인덱스 쿼리가 하나씩이라 그 수를 올리는 비용이 선형이고, 화면을 계속 내리는 상호작용은 섹션 안의 "더 보기"다(오너, 2026-09-22).
+
 **③ `GET /discover/for-you` → 200**
 
 ```json
@@ -199,6 +203,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
   "recommendation_id": "uuid",
   "agents": [ RecommendedAgent… ],
   "basis": "popularity" | "content" | "collaborative",   // 이 응답을 주로 만든 신호. 콜드스타트 표시용
+  "has_next": true,              // next_cursor의 유무와 언제나 같다 (R64, §2-4)
   "next_cursor": "…" | null,
   "degraded": []
 }
@@ -466,4 +471,4 @@ class Ranker(Protocol):
 - **타입 ③에서 소스 하나를 못 읽었을 때의 응답.** §3-4에 값이 없다. 구현(1-7)은 요청자 topic 조회(R27)가 실패하면 **503**으로 끝낸다 — 타입 ②와 같은 처리이고, "봤는데 없다"가 아니라 "못 봤다"이기 때문이다(§3-3). 다만 타입 ②와 달리 타입 ③에서 요청자 topic은 세 소스 중 하나의 입력일 뿐이라, 인기도만으로도 완전한 목록이 나온다 — 그쪽을 택하면 `degraded`에 "content를 못 읽었다"에 해당하는 값이 필요하고, 그 값은 요청자 개인에 대한 사실을 드러내지 않는다(§3-4의 조건을 만족한다). 어느 쪽이든 계약이 정할 일이라 코드에서 지어내지 않았다. 실측(1-9)에서 topic-api 장애가 이 화면을 얼마나 자주 멈추는지를 보고 정하는 것이 낫다.
 - **게이트가 재는 "군집 다양성"의 실서비스 입력.** R35는 ALS와 인기도를 HR@10과 **같은 군집 비율**로 비교하라고 하고, 검증 §3-1은 합성 모집단의 persona 군집 라벨로 그것을 쟀다. 실서비스에는 그 라벨이 없다 — R42로 persona를 읽지 않고, R27로 요청자 topic을 저장하지 않는다. 1-8 구현은 가진 입력으로 같은 질문을 하는 **대리 지표**를 쓴다: 추천된 소유자가 **요청자 본인이 공개한 topic**을 공개하고 있으면 개인화 쪽으로 센다. 두 방법에 같은 자를 대므로 비교 자체는 성립하지만, 눈금이 다르다 — persona 군집은 굵은 분할이고 topic 겹침은 잘게 나뉘며 인기 소유자가 인기 topic을 갖는다(10만 실측: 인기도 0.345, ALS 0.249). 지금의 대리 지표로는 `gate.min_cluster_gain` 1.5를 넘길 수 없다. 실측(1-9)에서 두 지표를 나란히 재고, 임계를 다시 정하거나 지표를 계약에 명시하는 것이 낫다. 설정 레지스터 §4에도 같은 내용을 적어 뒀다.
 - **목록 카드가 실제로 무엇을 그리는가.** R63은 `owner`를 bourbon-api `GET /api/users`의 `UserOut` 모양으로 두기로 했는데, **이것은 디자인이 나오기 전의 기준값이지 확정이 아니다**(오너, 2026-09-22). 필드를 더하거나 빼는 것은 §3-1과 hydration 한 곳만 고치면 되는 변경이라 싸다. **비싼 쪽은 따로 있다**: 목록 단계에서 "친구예요" 같은 **뷰어에 따라 달라지는 값**을 그리기로 하면 전제 자체가 깨진다 — 우리가 친구 미러로 답하거나(그러면 불변식 3의 fail-closed가 표시 필드까지 지배한다), 클라이언트가 한 페이지마다 최대 `for_you.limit_max`번 읽거나 둘 중 하나다. `UserOut`을 고른 것이 그 선을 자연스럽게 지킨다 — 그 모양에 `relationship`이 없다. 요청서 `requests/client.md` §3의 4번으로 물어 뒀다.
-- 섹션 한 개 페이지(`GET /discover/by-topic/{topic_id}`)의 응답 envelope. §3-2가 인쇄하지 않는다. 구현(1-3c에서 읽고 **1-5에서 그대로 냈다**)은 **타입 ②의 envelope에 섹션 하나**로 답한다 — 클라이언트가 `sections[0].next_cursor`를 꺼내야 하는 비용이 있다. 전용 envelope(`topic_id`·`label`·`agents`·`next_cursor`를 최상위에)로 정하면 §3-2에 인쇄하고 이 항목을 지운다. 클라이언트가 붙기 전이라 지금 바꾸는 값은 코드뿐이다.
+- 섹션 한 개 페이지(`GET /discover/by-topic/{topic_id}`)의 응답 envelope. §3-2가 인쇄하지 않는다. 구현(1-3c에서 읽고 **1-5에서 그대로 냈다**)은 **타입 ②의 envelope에 섹션 하나**로 답한다 — 클라이언트가 `sections[0].next_cursor`를 꺼내야 하는 비용이 있다. 전용 envelope(`topic_id`·`label`·`agents`·`has_next`·`next_cursor`를 최상위에)로 정하면 §3-2에 인쇄하고 이 항목을 지운다. 클라이언트가 붙기 전이라 지금 바꾸는 값은 코드뿐이다.

@@ -310,6 +310,8 @@
 
   **할 것**: `providers/bourbon_api/`(transport·client·wire·adapter), `BourbonApiSettings`(`BOURBON_API_BASE_URL` + 타임아웃 + 시도 수), base ConfigMap·`.env.example`·README 행, 설정 레지스터 §9의 `bourbon_api.timeout_ms`, `discovery/assembly.py`의 hydration에 병렬 호출 한 갈래, 세 응답의 wire struct.
 
+  **같이 들어가는 작은 계약 변경 하나**(R64): 페이지가 있는 봉투에 `has_next`를 더한다 — 타입 ③의 최상위와 타입 ②의 섹션마다. `next_cursor`의 유무와 **언제나 일치해야** 하고, 그 불변은 봉투를 만드는 한 곳이 지킨다(둘을 각자 계산하면 갈릴 자리가 생긴다). `contract_version`은 안 움직인다 — 필드를 더하는 것은 버전을 올리지 않는다(계약 §10).
+
   **id 수가 그쪽 배치 상한을 넘는 화면이 하나 있다**: 타입 ②의 섹션 개요는 `sections_max × per_section_max` = 200명이고 배치 상한은 100이다. 소유자 id를 **중복 제거한 뒤 100개씩 끊어** 보낸다(계약 §6). 타입 ③과 섹션 한 개 페이지는 50이라 한 번이면 된다.
 
   **테스트로 고정할 것 하나**: **bourbon-api가 답하지 않아도 200이고 목록의 길이·순서가 같아야 한다**(`degraded: ["hydration_partial"]`). 이 단계는 랭킹 뒤라 후보를 바꾸지 않는다는 것이 R63이 친구 미러(불변식 3)와 갈라지는 근거 전부다. 이게 깨지면 `storage/friends.py`가 적어 둔 반례("요청 시 조회는 그들의 가용성을 모든 추천 앞에 세운다")가 다시 맞는 말이 된다.
