@@ -145,11 +145,12 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 
 `owner_note`는 소유자가 쓴 글이다. **응답에 싣는 것으로 끝이다.** 로그, 예외, 결정 로그, Sentry에 들어가지 않는다.
 
-**널 가능한 필드는 키가 빠지지 않는다 — 값이 `null`일 뿐이다.** `owner_note`, `fit`, `signals`의 다섯,
-`next_cursor`, 타입 ②③의 `owner`·`agent`가 전부 그렇다. 클라이언트가 "없는 키"와 "null인 값"을 구분할
-이유가 없도록 한쪽으로 고정한 것이고, `matched_topics`가 `null`이 아니라 `[]`인 것과 같은 규칙이다.
-**발행 스키마와 발행 예제도 그렇게 말한다** — 예제에서 null인 필드가 키째 사라지면 클라이언트는 그
-필드가 그 카드에 없다고 읽는다.
+**답의 필드는 키가 빠지지 않는다 — 값이 `null`이거나 비어 있을 뿐이다.** 널 가능한 쪽이
+`owner_note`, `fit`, `signals`의 다섯, `next_cursor`, 타입 ②③의 `owner`·`agent`이고, 널이 아닌 쪽도
+같다 — `matched_topics`는 `null`이 아니라 `[]`이고, `degraded`도 비었으면 `[]`이며,
+`contract_version`은 늘 실린다. 클라이언트가 "없는 키"와 "null인 값"을 구분할 이유가 없도록 한쪽으로
+고정한 것이다. **발행 스키마와 발행 예제도 그렇게 말한다** — 스키마의 `required`가 빠뜨리거나 예제에서
+null인 필드가 키째 사라지면, 클라이언트는 그 필드가 그 카드에 없다고 읽는다.
 
 **`owner_note`가 null인 것은 degraded가 아니다.** 소유자가 그 topic에 아무것도 안 썼다는 사실이고,
 그건 답이 덜 채워진 것이 아니라 완전한 답이다(불변식 5).
