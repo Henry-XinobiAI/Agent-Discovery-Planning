@@ -122,7 +122,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 | 필드 | 타입 | 의미 |
 |---|---|---|
 | `recommendation_id` | UUID | 그 카드들을 만들어 낸 응답 envelope의 값 |
-| `cards[]` | 배열 | 이번에 화면에 그려진 카드들. 빈 배열은 422, **한 응답이 낼 수 있는 카드 수보다 길어도 422** — 가장 큰 경우가 타입 ②의 `sections`×`per_section` = 10×20이므로 200장이다. 한 번에 다 보낼 필요는 없다(아래) |
+| `cards[]` | 배열 | 이번에 화면에 그려진 카드들. 빈 배열은 422, **200장을 넘어도 422**(아래). 한 번에 다 보낼 필요는 없다 |
 | `cards[].owner_user_id` | UUID | 카드의 값 |
 | `cards[].position` | int | 카드의 `position`(§3-1) |
 | `cards[].section_topic_id` | string \| null | 그 카드가 선 선반의 topic. 타입 ②만 |
@@ -136,6 +136,8 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 **이 서비스에서 조건이 붙는 유일한 보고다.** append는 `attribute_exists(PK) AND requester_user_id = :requester` 아래에서만 일어난다(§8의 `pages[]`가 쓰는 조건과 같다). 우리가 낸 적 없는 목록에도, 남의 목록에도 적히지 않는다. §2-5는 대조할 상대가 없어 무엇이든 받지만(R47), 이쪽은 **우리가 그 목록을 누구에게 냈는지 이미 알고 있다.**
 
 **조건에 걸려도 204다.** 404는 "그 `recommendation_id`가 존재하는가"를 묻는 도구가 되고, 클라이언트는 어차피 할 수 있는 것이 없다(fire-and-forget). 대신 구조화 로그가 남는다.
+
+**`cards[]`의 상한은 한 요청을 묶는 값이지 한 응답의 크기가 아니다.** 처음에 "한 응답이 낼 수 있는 카드 수"(타입 ②의 `sections`×`per_section`)로 유도했는데 **틀렸다** — 클라이언트는 스크롤을 따라 보고하고 다음 페이지는 같은 `recommendation_id`를 이어 가므로, **한 섹션을 끝까지 읽은 정직한 보고가 어느 한 응답보다 길다.** 그래서 200은 레지스터 행이 아니라 요청 크기의 상한이고, "실제 화면이 닿지 않을 만큼 크다"는 것 말고는 아무것도 뜻하지 않는다. 넘으면 나눠 보내면 된다.
 
 **한 목록에 여러 번 온다.** 스크롤을 따라 같은 `recommendation_id`에 append가 이어지므로 항목이 자란다. 클라이언트는 한 목록 안에서 **카드 하나를 처음 보일 때 한 번만** 보고하고, 서버는 `attribution.max_impression_reports`를 넘기면 더 붙이지 않는다(DynamoDB 항목 400 KB 상한).
 
