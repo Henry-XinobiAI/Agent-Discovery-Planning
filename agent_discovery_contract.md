@@ -59,11 +59,18 @@ GET /discover/by-topic?per_section=5&sections=3&lang=ko      // 기본 5·3, 상
 
 요청자의 grounding된 topic 중 preference 점수 상위 `sections`개를 섹션으로, 섹션마다 agent `per_section`명. 응답의 각 섹션에 `next_cursor`가 있고, 더 보기는 아래 route다.
 
+**한 섹션이 묻는 것은 그 topic과 그 topic의 1 hop 자손이다**(R65). 요청자가 "커피"를 갖고 있으면 커피를 공개한 사람과 **핸드드립만** 공개한 사람이 같은 선반에 선다 — 섹션은 요청자가 가진 것을 말하고, 카드는 실제로 맞은 것을 말한다(§3-1).
+
+- **아래 방향만, 1 hop만.** 부모·형제로는 넓히지 않는다. 요청자가 가진 것보다 *더 구체적인* 사람은 그 관심의 한 구석을 아는 사람이지만, 더 일반적인 쪽("음료")은 그렇지 않다.
+- **타입 ①은 펼치지 않는다.** ①의 첫 정렬 키가 `coverage`이고 그 값은 "뽑힌 topic 중 몇 개를 가졌나"다(§4-4). 자손을 세면 "커피" 하나를 물었는데 핸드드립·에스프레소·로스팅을 공개한 사람이 coverage 3이 되어, 정확히 맞춘 사람을 제친다 — 분모가 뜻을 잃는다. 타입 ②에는 이 문제가 없다: ②는 `score desc`만으로 정렬하고 coverage를 보여주지도 쓰지도 않는다.
+- **계층은 우리 `catalog_edges`에서 읽는다**(R26의 커밋된 카탈로그). 타입 ③의 content 소스가 이미 같은 표를 걷는다.
+- **비용**(커밋된 카탈로그 + dev 스냅샷 실측, 2026-09-23): 사람들이 실제로 공개한 topic 377개 중 자식이 있는 것은 153개뿐이라, 섹션의 `IN` 목록은 **중앙값 1개 그대로**, p95 21개, 최악 69개가 된다. 3 hop이면 44 / 463이라 그쪽은 택하지 않았다.
+
 ```
 GET /discover/by-topic/{topic_id}?limit=20&cursor=…&lang=ko      // limit 기본 20, 상한 50 (설정 레지스터)
 ```
 
-`topic_id`는 요청자가 가진 topic이어야 한다. 아니면 404(요청자의 topic 목록에 없음). 요청자 자신의 topic 목록은 요청 시 topic-api 내부 route로 읽는다(R27 — 나중에 미러로 바꿀 수 있다). 읽는 범위는 본인의 `public`·`friends`·`private`이고 **`hidden`은 읽지 않는다**(R22). 어느 쪽이든 타인의 topic은 §5 규칙으로만 읽는다.
+`topic_id`는 요청자가 **가진** topic이어야 한다. 아니면 404(요청자의 topic 목록에 없음) — 자손은 섹션이 펼치는 것이지 이 route가 받는 것이 아니다. 펼치는 범위는 위와 같다. 요청자 자신의 topic 목록은 요청 시 topic-api 내부 route로 읽는다(R27 — 나중에 미러로 바꿀 수 있다). 읽는 범위는 본인의 `public`·`friends`·`private`이고 **`hidden`은 읽지 않는다**(R22). 어느 쪽이든 타인의 topic은 §5 규칙으로만 읽는다.
 
 ### 2-3. 타입 ③ `GET /discover/for-you`
 
@@ -119,7 +126,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
     {
       "topic_id": "…",
       "label": "캠핑",              // 요청 lang의 라벨 하나 (R40)
-      "requested": true,           // 타입 ①: 뽑힌 topic 중 하나인가. 타입 ②: 섹션 topic이면 true
+      "requested": true,           // 타입 ①: 뽑힌 topic 중 하나인가. 타입 ②: 섹션 topic이면 true, 그 자손으로 맞았으면 false (R65)
       "owner_note": "…"            // 소유자가 그 topic에 쓴 한 문장(topic-api 유저 topic의 descriptions에서 lang의 것 하나, R40). 응답 직전 hydration으로 채움. 선택, null 가능
     }
   ],
@@ -137,6 +144,20 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 예약된 필드: `talked_before`(타입 ③, R28의 "소진 뒤 재등장" 표식). 코드는 계산하고 결정 로그에 남기지만 **응답에는 넣지 않는다** — 표시 기획이 요청하면 같은 `contract_version`으로 연다.
 
 `owner_note`는 소유자가 쓴 글이다. **응답에 싣는 것으로 끝이다.** 로그, 예외, 결정 로그, Sentry에 들어가지 않는다.
+
+**`requested`는 타입 ②에서 실제로 갈린다**(R65). 섹션이 펼쳐지기 전에는 이 필드가 늘 참이었다 — 맞은 것이 곧 물어본 것이었으니까. 이제 `false`는 **"섹션 topic의 1 hop 자손으로 맞았다"**는 뜻이고, 1 hop만 펼치므로 그 이상의 거리를 말할 값이 필요 없다.
+
+```json
+{ "topic_id": "…", "label": "커피", "has_next": false, "next_cursor": null,
+  "agents": [
+    { "…": "…", "matched_topics": [ {"topic_id": "…", "label": "커피",   "requested": true,  "owner_note": "…"} ] },
+    { "…": "…", "matched_topics": [ {"topic_id": "…", "label": "핸드드립", "requested": false, "owner_note": null} ] }
+  ] }
+```
+
+**섹션에서 유도할 수 있는데도 싣는다.** `section.topic_id`와 비교하면 같은 것을 알 수 있지만, 이 계약은 `empty`와 `has_next`에서 이미 같은 선택을 했다 — 유도할 수 있어도 응답에 담아 주고, **한 곳에서 유도해 어긋날 수 없게 한다.** 클라이언트가 두 값을 조합하게 만들지 않는 쪽이 이 문서의 습관이다.
+
+**타입 ②의 `matched_topics`는 비지 않는다.** 섹션 topic이든 그 자손이든 카드에는 언제나 맞은 이유가 있고, 응답 직전 재확인에서 전부 사라진 소유자는 카드가 비는 것이 아니라 **답에서 빠진다**(불변식 4). 비는 것은 타입 ③뿐이다 — 거기서는 인기도·CF가 topic을 근거로 뽑지 않아 이름 붙일 것이 애초에 없다.
 
 **타입 ②③의 요소 `DiscoverAgent`** — 위의 모든 필드에 표시 블록 둘을 더한다.
 
@@ -322,7 +343,10 @@ class Ranker(Protocol):
     def score(self, f: Features) -> float: ...
 ```
 
-타입 ①은 `score` 앞에 커버리지 정렬이 온다: `(coverage desc, score desc)`. 타입 ②③은 `score desc`. 처음엔 가중합(가중치는 설정 레지스터 `agent_discovery_settings.md` §2), 로그가 쌓이면 학습 모델로 교체하되 인터페이스는 같다. feature 이름은 §7이 전부이고 예약 feature(`persona_similarity`, R42)도 같은 경로로 들어온다 — 입력이 없으면 값 0, `present`에 없음. 예약 feature가 실제로 켜지는 것은 설정값과 입력 경로가 갖춰졌을 때의 일이고 인터페이스는 바뀌지 않는다.
+타입 ①은 `score` 앞에 커버리지 정렬이 온다: `(coverage desc, score desc)`. 타입 ②③은 `score desc`.
+
+**타입 ②에서 자손으로 맞은 hit의 `topic_score`에는 `content.decay_per_hop`이 곱해진다**(R65). 그러지 않으면 정확히 맞춘 사람과 자손만 가진 사람이 같은 무게가 되고, 자손을 여럿 가진 사람이 `max(topic_score)`를 타고 오히려 앞설 수 있다. 상수는 타입 ③의 content 소스가 쓰는 것을 그대로 빌린다 — 새로 지어내지 않는다. 1 hop만 펼치므로 지수는 언제나 1이고, 가중치가 아니라 **feature에 들어가기 전의 값**에 걸리므로 §7의 이름은 바뀌지 않는다.
+ 처음엔 가중합(가중치는 설정 레지스터 `agent_discovery_settings.md` §2), 로그가 쌓이면 학습 모델로 교체하되 인터페이스는 같다. feature 이름은 §7이 전부이고 예약 feature(`persona_similarity`, R42)도 같은 경로로 들어온다 — 입력이 없으면 값 0, `present`에 없음. 예약 feature가 실제로 켜지는 것은 설정값과 입력 경로가 갖춰졌을 때의 일이고 인터페이스는 바뀌지 않는다.
 
 **타입 ③은 정렬 뒤 점수 구간 안에서만 섞는다**(R20). 구간 경계는 설정(예 상위 5·다음 15·다음 30), seed는 `recommendation_id`. `cursor`가 첫 페이지의 `recommendation_id`를 실어 오므로 다음 페이지도 같은 seed로 순서를 잇는다(§2-4, best-effort). 결정 로그는 `ranked`에 섞기 **전** 순서를, `shuffle`에 seed와 구간 경계를 남겨 서빙 순서를 재현한다. 타입 ①②는 섞지 않는다.
 
@@ -487,4 +511,5 @@ class Ranker(Protocol):
 - **타입 ③에서 소스 하나를 못 읽었을 때의 응답.** §3-4에 값이 없다. 구현(1-7)은 요청자 topic 조회(R27)가 실패하면 **503**으로 끝낸다 — 타입 ②와 같은 처리이고, "봤는데 없다"가 아니라 "못 봤다"이기 때문이다(§3-3). 다만 타입 ②와 달리 타입 ③에서 요청자 topic은 세 소스 중 하나의 입력일 뿐이라, 인기도만으로도 완전한 목록이 나온다 — 그쪽을 택하면 `degraded`에 "content를 못 읽었다"에 해당하는 값이 필요하고, 그 값은 요청자 개인에 대한 사실을 드러내지 않는다(§3-4의 조건을 만족한다). 어느 쪽이든 계약이 정할 일이라 코드에서 지어내지 않았다. 실측(1-9)에서 topic-api 장애가 이 화면을 얼마나 자주 멈추는지를 보고 정하는 것이 낫다.
 - **게이트가 재는 "군집 다양성"의 실서비스 입력.** R35는 ALS와 인기도를 HR@10과 **같은 군집 비율**로 비교하라고 하고, 검증 §3-1은 합성 모집단의 persona 군집 라벨로 그것을 쟀다. 실서비스에는 그 라벨이 없다 — R42로 persona를 읽지 않고, R27로 요청자 topic을 저장하지 않는다. 1-8 구현은 가진 입력으로 같은 질문을 하는 **대리 지표**를 쓴다: 추천된 소유자가 **요청자 본인이 공개한 topic**을 공개하고 있으면 개인화 쪽으로 센다. 두 방법에 같은 자를 대므로 비교 자체는 성립하지만, 눈금이 다르다 — persona 군집은 굵은 분할이고 topic 겹침은 잘게 나뉘며 인기 소유자가 인기 topic을 갖는다(10만 실측: 인기도 0.345, ALS 0.249). 지금의 대리 지표로는 `gate.min_cluster_gain` 1.5를 넘길 수 없다. 실측(1-9)에서 두 지표를 나란히 재고, 임계를 다시 정하거나 지표를 계약에 명시하는 것이 낫다. 설정 레지스터 §4에도 같은 내용을 적어 뒀다.
 - **목록 카드가 실제로 무엇을 그리는가.** §3-1의 `owner`·`agent` 필드 목록은 **디자인이 나오기 전의 기준값이지 확정이 아니다**(오너, 2026-09-22). 필드를 더하거나 빼는 것은 §3-1과 hydration 한 곳만 고치면 되는 변경이라 싸다. **비싼 쪽은 따로 있다**: 목록 단계에서 "친구예요" 같은 **뷰어에 따라 달라지는 값**을 그리기로 하면 전제 자체가 깨진다 — 우리가 친구 미러로 답하거나(그러면 불변식 3의 fail-closed가 표시 필드까지 지배한다), 클라이언트가 한 페이지마다 최대 `for_you.limit_max`번 읽거나 둘 중 하나다. 요청서 `requests/client.md` §3의 4번으로 물어 뒀다.
+- **섹션을 1 hop보다 깊이 펼칠 것인가**(R65 후속). 지금은 1 hop이라 `requested: false`가 곧 "직계 자손"이고 거리를 실을 필요가 없다. 2 hop 이상으로 늘리면 그 한 비트가 자식과 손자를 구분하지 못하므로, 그때 거리를 응답에 더한다 — 필드를 더하는 것은 `contract_version`을 올리지 않는다(§10). **미리 만들지 않는다.**
 - 섹션 한 개 페이지(`GET /discover/by-topic/{topic_id}`)의 응답 envelope. §3-2가 인쇄하지 않는다. 구현(1-3c에서 읽고 **1-5에서 그대로 냈다**)은 **타입 ②의 envelope에 섹션 하나**로 답한다 — 클라이언트가 `sections[0].next_cursor`를 꺼내야 하는 비용이 있다. 전용 envelope(`topic_id`·`label`·`agents`·`has_next`·`next_cursor`를 최상위에)로 정하면 §3-2에 인쇄하고 이 항목을 지운다. 클라이언트가 붙기 전이라 지금 바꾸는 값은 코드뿐이다.
