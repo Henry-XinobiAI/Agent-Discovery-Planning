@@ -355,7 +355,7 @@
   2. `DecisionLogStore.append_impressions()` — `append_page()`와 같은 조건에 **카드 수 상한** 한 절을 더한다. 조건 실패는 예외가 아니라 "안 적혔다"로 답한다.
   3. `AnswerJournal.record_impressions()` — 저널의 기존 쓰기 예산·삼킴 규칙 그대로.
   4. `POST /recommendations/shown` — `PUBLIC_PREFIX` 아래 두 번째 route. 조건 실패도 204 + 구조화 로그.
-  5. 마이그레이션 0010 — `attributions`에 `section_topic_id`(`String(64)`, null)·`position`(int, null). `AttributionReport`에 선택 필드 둘, 라우트가 그대로 넘긴다. **워커 조인은 안 읽는다**(측정용).
+  5. 마이그레이션 0010 — `attributions`에 `section_topic_id`(`String(64)`, null)·`position`(int, null). `RecommendationOpened`(그때 이름은 `AttributionReport`)에 선택 필드 둘, 라우트가 그대로 넘긴다. **워커 조인은 안 읽는다**(측정용).
 
   요청서 client 전달은 코드 커밋이 아니라 기획 쪽 일이다.
 

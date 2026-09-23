@@ -235,7 +235,7 @@ null인 필드가 키째 사라지면, 클라이언트는 그 필드가 그 카�
 
 **표시 필드는 우리가 채우고, 뷰어에 따라 달라지는 것은 클라이언트가 읽는다**(R63). 값은 요청 시 내부 route 둘(`GET /api/internal/users?ids=`, `GET /api/internal/agents?ids=`)을 배치로 읽어 채우고, 미러하지 않는다(§6). 못 채우면 그 필드는 null이고 `degraded`에 `hydration_partial`이 붙는다 — 상태는 200이고 카드는 id만 가진 채로 그려진다. **필드 목록은 디자인이 정해지기 전의 기준값이다**(§11).
 
-**id는 최상위에만 있고 블록에는 없다.** `agent_id`·`owner_user_id`가 이 계약의 키다 — 카드를 누른 시점의 조회와 §2-5 어트리뷰션 보고가 그것을 쓴다. 블록 안에 되풀이하면 한 카드에 같은 값이 세 번 적힌다.
+**id는 최상위에만 있고 블록에는 없다.** `agent_id`·`owner_user_id`가 이 계약의 키다 — 카드를 누른 시점의 조회와 §2-5 대화 시작 보고가 그것을 쓴다. 블록 안에 되풀이하면 한 카드에 같은 값이 세 번 적힌다.
 
 **`agent`는 혼자서도 null이 될 수 있다.** bourbon-api는 사람과 agent를 두 row로 답하고, 사람 쪽만 오는 경우가 있다. 둘이 같이 null이면 하이드레이션 실패이고, 그때만 `hydration_partial`이 붙는다.
 
@@ -505,7 +505,7 @@ class Ranker(Protocol):
 
 ## 8. 결정 로그
 
-목록마다 한 건 — 첫 페이지에 발급된 `recommendation_id`가 PK고, 다음 페이지 요청은 같은 항목에 `pages[]`로 덧붙인다(§2-4). 오프라인 평가의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18·R44, key space는 §6-1): `REC#{recommendation_id}` / `LOG`(어트리뷰션 보고 §2-5의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 날짜·타입별로 읽도록 GSI `served-day-index`(`served_day_key = {type}#{YYYY-MM-DD}#{shard}`, shard 병합), 보존은 TTL(`decision_log.ttl_days`). 집계는 SQL이 아니라 평가 배치의 코드다.
+목록마다 한 건 — 첫 페이지에 발급된 `recommendation_id`가 PK고, 다음 페이지 요청은 같은 항목에 `pages[]`로 덧붙인다(§2-4). 오프라인 평가의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18·R44, key space는 §6-1): `REC#{recommendation_id}` / `LOG`(대화 시작 보고 §2-5의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 날짜·타입별로 읽도록 GSI `served-day-index`(`served_day_key = {type}#{YYYY-MM-DD}#{shard}`, shard 병합), 보존은 TTL(`decision_log.ttl_days`). 집계는 SQL이 아니라 평가 배치의 코드다.
 
 ```json
 {
@@ -533,7 +533,8 @@ class Ranker(Protocol):
                                                   // 와이어의 `items[]`가 여기서는 `cards`다 — 바깥은 클라이언트의 말, 안쪽은 우리 말(R67)
     {"at": "2026-09-23T…Z",                       // 보고가 우리에게 닿은 때. 우리 시계다 (§2-5의 reported_at과 같은 이유)
      "cards": [{"owner_user_id": "uuid", "position": 3, "section_topic_id": "topic_food"}]}
-  ]
+  ],
+  "impression_cards": 42                          // 위 `cards`의 누계. 조건이 `SET`이 덧붙일 목록을 셀 수 없어 따로 둔다(R66 개정)
 }
 ```
 

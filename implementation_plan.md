@@ -57,7 +57,7 @@
 PostgreSQL: `visible_topic_rows`(+ `descriptions` JSON, hydration용), `agents`, `friends`, `interactions`, `room_turns`(R49), `attributions`(R47), `catalog_edges`, `population_stats`. 인기도는 `interactions`에서 요청 시 계산(30일 창이라 작다) — 별도 테이블은 p95가 나빠지면.
 DynamoDB(계약 §6-1): `USER#…/CF_CANDIDATES`, `REC#…/LOG`, `EVT#…`, `CONFIG/CF_GATE`.
 
-리스너(전부 `worker/`에 한 흐름씩): `topics_updated`·`topic_visibility_changed`(R55) → 같은 debounce → 재조회 task(`consistent=true`로 읽고 row 통째 교체, `agents` 없으면 생성, **같은 트랜잭션에서 `discoverable` 파생** — R57); 그 방의 첫 `message_created`(→ `interactions`, 소유자는 추천 시점에 계산해 둔 room id로, `attributions` 보고가 예측보다 우선, `agents.last_active_at` — R51·R53); `message_created`(`room_type`·`sender_type` 필터 → `room_turns[room_id]` +1, `room_created`와 순서 무관 — R49); `friendship_changed`; `user_registered`(agent id 결정론적 계산, `email` 읽지 않음); `user_deactivated`. 모든 리스너가 `event_log`에 append. 어트리뷰션 보고 route `POST /recommendations/opened`(계약 §2-5, R47)는 이 단계에서 같이 만든다 — `room_created` 리스너가 조인하는 상대다.
+리스너(전부 `worker/`에 한 흐름씩): `topics_updated`·`topic_visibility_changed`(R55) → 같은 debounce → 재조회 task(`consistent=true`로 읽고 row 통째 교체, `agents` 없으면 생성, **같은 트랜잭션에서 `discoverable` 파생** — R57); 그 방의 첫 `message_created`(→ `interactions`, 소유자는 추천 시점에 계산해 둔 room id로, `attributions` 보고가 예측보다 우선, `agents.last_active_at` — R51·R53); `message_created`(`room_type`·`sender_type` 필터 → `room_turns[room_id]` +1, `room_created`와 순서 무관 — R49); `friendship_changed`; `user_registered`(agent id 결정론적 계산, `email` 읽지 않음); `user_deactivated`. 모든 리스너가 `event_log`에 append. 대화 시작 보고 route `POST /recommendations/opened`(계약 §2-5, R47·R67)는 이 단계에서 같이 만든다 — `room_created` 리스너가 조인하는 상대다.
 
 CLI: `python -m cli publish <event> …` 이벤트마다 하나.
 
