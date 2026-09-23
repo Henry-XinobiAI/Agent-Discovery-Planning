@@ -70,8 +70,7 @@
 | `cf.factors` | ALS 잠재 차원 | 올리면 희소한 로그에서 나빠진다(검증 §3: 64f가 16f보다 전부 나쁨). 유저·대화가 크게 늘면 다시 잰다 | 검증 §3, R33 |
 | `cf.regularization` | ALS 정규화 | 내리면 과적합, 올리면 인기도와 같아진다 | 검증 §3 |
 | `cf.iterations` | ALS 반복 수 | 올리면 fit 시간이 비례해 늘고 품질은 수렴 뒤 그대로 | `implicit` 기본값 |
-| `cf.confidence_alpha` | 학습 입력 confidence `1 + α·log(1 + turns) + β·reopen_count`의 α | 올리면 긴 대화가 짧은 대화보다 훨씬 강한 신호가 된다 | 식은 R16·계약 §7 `cf_score`, 값은 분석(walkthrough §5-3 예시와 같다) |
-| `cf.confidence_beta` | 위 식의 β | 올리면 다시 찾은 대화가 강한 신호가 된다 | 식은 R16, 값은 분석 |
+| `cf.confidence_alpha` | 학습 입력 confidence `1 + α·log(1 + turns)`의 α (2026-09-24 개정: R46이 `reopened`를 빼면서 β·reopen_count 항이 없어졌고, 코드의 `cf.confidence_beta`도 삭제했다) | 올리면 긴 대화가 짧은 대화보다 훨씬 강한 신호가 된다 | 식은 R16을 R46이 줄인 것·계약 §7 `cf_score`, 값은 분석(walkthrough §5-3 예시와 같다) |
 | `cf.pool_k` | 유저별 `cf_candidates`에 저장하는 후보 수(R20의 pool) | 올리면 항목이 커지고(K가 200이면 항목 하나가 약 12~13 KB) 구간 섞기의 재료가 늘어난다. 내리면 R28의 소진이 빨라진다 | R20 |
 | `cf.overfetch_factor` | tier를 모르는 소스(외부 엔진)에서 `limit`의 몇 배를 받나. 지금 구현에는 그런 소스가 없다 | 올리면 필터 뒤 부족으로 재요청하는 일이 줄고 소스 비용이 는다 | 계약 §4-2 |
 
