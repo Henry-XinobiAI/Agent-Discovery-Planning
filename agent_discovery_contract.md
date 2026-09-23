@@ -345,7 +345,9 @@ class Ranker(Protocol):
 
 타입 ①은 `score` 앞에 커버리지 정렬이 온다: `(coverage desc, score desc)`. 타입 ②③은 `score desc`.
 
-**타입 ②에서 자손으로 맞은 hit의 `topic_score`에는 `content.decay_per_hop`이 곱해진다**(R65). 그러지 않으면 정확히 맞춘 사람과 자손만 가진 사람이 같은 무게가 되고, 자손을 여럿 가진 사람이 `max(topic_score)`를 타고 오히려 앞설 수 있다. 상수는 타입 ③의 content 소스가 쓰는 것을 그대로 빌린다 — 새로 지어내지 않는다. 1 hop만 펼치므로 지수는 언제나 1이고, 가중치가 아니라 **feature에 들어가기 전의 값**에 걸리므로 §7의 이름은 바뀌지 않는다.
+**타입 ②에서 자손으로 맞은 hit의 `topic_score`에는 `content.decay_per_hop`이 곱해진다**(R65). 그러지 않으면 정확히 맞춘 사람과 자손만 가진 사람이 같은 무게가 된다. 상수는 타입 ③의 content 소스가 쓰는 것을 그대로 빌린다 — 새로 지어내지 않는다. 1 hop만 펼치므로 지수는 언제나 1이고, 가중치가 아니라 **feature에 들어가기 전의 값**에 걸리므로 §7의 이름은 바뀌지 않는다.
+
+**그리고 펼치는 섹션의 `topic_score`는 matched 중 합이 아니라 최대다**(R65, §7). 감쇠만으로는 부족하기 때문이다 — 섹션은 topic 하나를 묻고 §3-4의 합은 물어본 수로 나누므로, 분모가 1이 되어 자손이 그냥 더해진다. 실측(2026-09-23): 0.9짜리 자손 둘은 감쇠 뒤 0.54씩이지만 합이 1.08이라 topic을 정확히 1.0으로 공개한 사람(0.500)을 0.540으로 제쳤고, `topic_score`도 §7이 정한 0~1을 벗어났다. 최대로 접으면 자손은 사람을 **선반에 올릴 수는 있어도 정확히 맞춘 사람을 넘지는 못한다.** **후보를 자르는 쿼리도 같은 방식으로 접는다** — 자르는 쪽과 순위 매기는 쪽이 다르게 접으면, 랭커는 이미 빠진 사람이 없는 목록을 받는다.
  처음엔 가중합(가중치는 설정 레지스터 `agent_discovery_settings.md` §2), 로그가 쌓이면 학습 모델로 교체하되 인터페이스는 같다. feature 이름은 §7이 전부이고 예약 feature(`persona_similarity`, R42)도 같은 경로로 들어온다 — 입력이 없으면 값 0, `present`에 없음. 예약 feature가 실제로 켜지는 것은 설정값과 입력 경로가 갖춰졌을 때의 일이고 인터페이스는 바뀌지 않는다.
 
 **타입 ③은 정렬 뒤 점수 구간 안에서만 섞는다**(R20). 구간 경계는 설정(예 상위 5·다음 15·다음 30), seed는 `recommendation_id`. `cursor`가 첫 페이지의 `recommendation_id`를 실어 오므로 다음 페이지도 같은 seed로 순서를 잇는다(§2-4, best-effort). 결정 로그는 `ranked`에 섞기 **전** 순서를, `shuffle`에 seed와 구간 경계를 남겨 서빙 순서를 재현한다. 타입 ①②는 섞지 않는다.
@@ -420,8 +422,8 @@ class Ranker(Protocol):
 
 | feature | 정의 | 범위 | 출처 | 타입 |
 |---|---|---|---|---|
-| `coverage` | 뽑힌 topic 중 가진 수 | 0~3 | topic_index | ① (1차 정렬 키) |
-| `topic_score` | 소유자 쪽 preference 강도, matched topic 합 또는 최대. **topic-api의 `score`는 0~100이고 이 feature는 0~1이다** — 변환은 `providers/topic_api/adapter.py`에서 한 번 한다(그쪽 단위가 우리 단위로 넘어오는 유일한 지점). 원본 스케일 그대로 두면 `rank.*.w_topic_score` 하나가 나머지 feature 전부의 100배가 되어 가중합에 항이 하나만 남는다(1-6에서 발견) | 0~1 | visible_topic_rows | ①② |
+| `coverage` | **물어본** topic 중 가진 수. 섹션이 펼쳐져도 자손은 세지 않는다 — 물어본 것이 아니고, 세면 이 칸의 범위를 벗어난다(R65) | 0~3 | topic_index | ① (1차 정렬 키) |
+| `topic_score` | 소유자 쪽 preference 강도. **타입 ①은 matched topic 합을 물어본 topic 수로 나눈 값**(§3-4의 `합/2`), **펼치는 타입 ②는 matched 중 최대**(R65 — 섹션은 topic 하나를 묻기 때문에 합은 나누는 수가 1이라 자손 둘이면 그냥 더해져 이 칸의 범위를 벗어난다). **topic-api의 `score`는 0~100이고 이 feature는 0~1이다** — 변환은 `providers/topic_api/adapter.py`에서 한 번 한다(그쪽 단위가 우리 단위로 넘어오는 유일한 지점). 원본 스케일 그대로 두면 `rank.*.w_topic_score` 하나가 나머지 feature 전부의 100배가 되어 가중합에 항이 하나만 남는다(1-6에서 발견) | 0~1 | visible_topic_rows | ①② |
 | `topic_maturity` | matched topic 성숙도 최대 | 0~1 | visible_topic_rows (임시값 → 컴포넌트) | ①②③ |
 | `agent_maturity` | agent 성숙도 | 0~1 | agents | ①②③ |
 | `popularity` | R29: 최근 30일 창의 대화 시작을 반감기 7일로 감쇠해 합산, 시작마다 `cf_score`와 같은 confidence 가중, 전체 최대로 정규화 — 여기까지가 §6의 주기 집계이고, 대화가 0건이라 행이 없는 소유자에게 `popularity.new_agent_prior`를 넣는 것은 랭커다. 값은 설정 레지스터 | 0~1 | popularity | ③ (①②는 약한 가중) |
