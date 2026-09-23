@@ -420,7 +420,7 @@
 - ~~`k8s/overlays/dev` Redis DB 10은 할당받지 않은 번호다(인프라 요청서 §3) — 1-10.~~ **dev는 13을 받았다**(2026-09-17, 구두). 코드 #49에서 반영. **prod는 아직 답이 없다** — §3이 dev·prod를 한 문장으로 요청했고 절반만 온 것이라, prod 오버레이는 `REPLACE_WITH_PROD_DEFERQ_REDIS_URL` 그대로 둔다.
 - `popularity`는 계약 §6의 일곱째 집합인데 만들지 않았다 — 레지스터 행이 **감쇠 집계**를 말하므로 저장 스칼라·머티리얼라이즈드 뷰·`interactions` 직접 쿼리 중 무엇인지가 타입 ③ 결정이다(1-7). 입력은 이미 다 있다(`interactions.started_at`, `room_turns.turns`).
 - `interactions`는 계약이 정한 `(actor, owner, room_id)` PK를 그대로 둔다 — `started_at` 월 파티셔닝을 하려면 그 컬럼이 키에 들어가야 하고, #23에서 더한 `UNIQUE (room_id)`가 그 자리를 대신 맡을 수 있다. 계약 편집이라 오너 판단.
-- 완료 조건의 "`topic_revision` 복제 지연 시 재시도"는 하지 않았다 — topic-api의 목록 응답에 revision이 없고, 디바운스는 이벤트의 revision을 **설계상** 버린다(유저당 uid 하나짜리 슬롯을 upsert하므로 최댓값을 합칠 자리가 없다). 코드로 흉내 내는 대신 topic-api에 대한 요청으로 남긴다.
+- 완료 조건의 "`topic_revision` 복제 지연 시 재시도"는 하지 않았다 — ~~topic-api의 목록 응답에 revision이 없고~~ **(2026-09-24 정정: 있다.** topic-api의 목록 항목 `UserTopicItemBase.revision`은 #40~#44부터 있었고 이벤트 정의서도 그렇게 적는다. 버리는 쪽은 **우리** wire 모델 `UserTopicItem`이다 — 이 문장을 믿고 코드 docstring이 한 번 틀렸고 코드 #69의 리뷰가 잡았다.) 디바운스는 이벤트의 revision을 **설계상** 버린다(유저당 uid 하나짜리 슬롯을 upsert하므로 최댓값을 합칠 자리가 없다). 그리고 재조회가 `consistent=true`로 읽어(R56) 낡은 답을 받을 일이 드물다. 그래서 여전히 하지 않는다 — 막힌 것은 topic-api가 아니라 우리 쪽 두 가지다.
 - 오버레이가 `SETTINGS_OVERRIDES_PATH`에 파일을 마운트하는 날 `test_the_worker_pod_outlives_the_delivery_it_may_be_draining`이 조용히 무의미해진다 — 테스트는 레지스터의 **코드 기본값**을 읽고 `worker/app.py`는 `get_settings()`를 읽는다. 테스트 docstring에 적어뒀고, 오버레이가 실제로 마운트하는 PR에서 고친다.
 - ~~`agents`에 `visibility_changed_at`을 더했다(마이그레이션 0003)~~ — **13-2에서 지운다**(R57): 플래그가 재조회의 파생값이 되면서 비교할 이벤트 둘이 없어졌다. 원래 이유는 아래 그대로 둔다. 순서 없는 이벤트 둘을 비교할 자리가 필요해서지 새 의미가 아니다.
 - ~~**읽기가 `agents.discoverable`을 조인해야 한다**(1-5)~~ — **했다**(항목 10). 계약 §6의 후보 조회 쿼리에는 그 조인이 없지만, 플래그가 false로 시작하고 topic 이벤트가 그보다 먼저 row를 만들므로 `visible_topic_rows`에는 비공개 소유자의 row가 정상적으로 존재한다. 후보 조회와 응답 직전 재확인 둘 다 `agents`를 INNER JOIN 하고 `discoverable`을 조건에 넣으며(`agents` row 자체가 없으면 "말 안 한" 것이지 허락한 것이 아니다), 공개 row를 가진 비공개 소유자(walkthrough의 F)로 라이브 테스트가 그것을 지킨다. 타입 ③ 소스도 같은 조건을 써야 한다(1-7).
@@ -439,14 +439,17 @@
 
   **리뷰 3회가 잡은 것**(위 셋을 고친 커밋들에 대해): 거절 메시지가 "content similarity가 0점이 된다"고 했는데 **거짓이었다**(`storage/content.py`가 요청자 topic을 hop 0으로 무조건 시드해서, 빈 테이블은 소스를 **정확 일치만으로 축소**한다 — 실측 29행/hops [0,2] 대 20행/hops [0]). 순서를 고정한다던 테스트가 가드를 `remade` 뒤로 옮겨도 **전부 초록**이었다. "고정했다"고 한 `_one_hop_down`이 **과소집계에 대해 전혀 고정돼 있지 않았다**(부모당 첫 자식만 남기면 3,120개 중 2,682개가 사라지는데 통과 — 이 브랜치가 고치는 바로 그 버그다). 그리고 **"이 생성기로는 못 잡는다"고 단언한 seam은 잡을 수 있었다** — `_by_topic`이 건드리는 세 가지만 스텁으로 세우고 엣지 하나를 심으면 된다. 그게 정당한 이유는 그 모양이 이 생성기가 못 그리는 모양이면서 **dev 데이터의 모양**이기 때문이다.
 
-- **전체 리뷰(항목 21)가 찾았지만 이번에 고치지 않은 것.** 설계가 필요하거나(22·23) 범위 밖이어서 남겼다. 모두 재현했거나 코드로 추적한 것이다.
-  - `seed_local --replay`·`cli publish`가 **가드 없이 브로커에 publish한다** — `require_disposable`은 PostgreSQL만 본다. 터널로 연결된 dev 브로커도 `localhost`이고, 스트림에는 `user_deactivated`가 있다.
-  - 확장 프롬프트의 head noun 안전망 예시(`cat`, `tea`)가 **4자 미만이라 length guard에 항상 버려진다.** 확장 예산도 그 guard 전에 쓴다.
-  - 요청 경로의 DynamoDB 장애(`CfEngineSource.pool`)는 여전히 500이다. 503으로 매핑하려면 #63의 `dynamodb.is_transient`가 필요해 #64와 따로 뒀다.
-  - prod 오버레이의 `SENTRY_DSN: REPLACE_WITH_…`는 `BadDsn`으로 api·worker가 CrashLoop한다 — Redis URL placeholder와 달리 의도된 정지라고 적혀 있지 않다.
-  - SIGTERM 뒤 prefetch된 메시지가 세마포어 뒤에서 늦게 시작해 강제 취소될 수 있다(드레인 중 DB가 느릴 때만).
-  - dev 스냅샷 로더가 **한쪽만 등록한 친구 관계를 친구로** 넣는다.
-  - `retention.py`의 ctid 삭제에 `FOR UPDATE`가 없다 — **미검증**, PG 18 동작을 라이브로 확인할 것.
-  - per-source `latency_ms`가 세 소스 모두 같은 값이다(단계 전체 시간).
-  - 가독성: HTTP 재시도 루프가 세 벌(topic_api·bourbon_api·llm — bourbon_api 주석이 "셋째가 생기면 합쳐라"고 적어 뒀다), `by_topic`·`for_you`의 helper 넷 중복, `PopulationRepository.register`가 `register_agent`를 인라인 복제해 테스트가 안 쓰이는 사본을 고정한다(변이가 1,991개를 통과), stale 주석 몇.
+- **전체 리뷰(항목 21)가 찾았지만 그때 고치지 않은 것 — 2026-09-24에 대부분 닫았다**(코드 #68 동작 · #69 가독성, 각 PR에 적대적 리뷰 1회).
+  - ~~`seed_local --replay`·`cli publish`가 가드 없이 브로커에 publish한다~~ — 닫음(#68). compose `init`이 로컬 브로커에 `agent-discovery.disposable` exchange를 선언하고(`scripts/local_broker_marker.py`, compose 네트워크의 `rabbitmq`에만 닿아 터널 너머 dev에는 심을 수 없다), 두 경로가 passive declare로 확인해 없으면 거부한다. `init`과 그 뒤의 `api`가 rabbitmq healthy를 기다리게 됐다.
+  - ~~dev 스냅샷 로더가 한쪽만 등록한 친구 관계를 친구로 넣는다~~ — 닫음(#68). bourbon-api는 친구 관계를 행 하나로 두고 두 목록을 거기서 답하므로, 한쪽만 등록은 **스냅샷이 두 목록을 다른 시각에 읽어서만** 생긴다(읽는 사이 끊기거나 맺어짐). 양쪽이 다 가진 쌍만 적재하고 한쪽만은 보고한다. 지금까지 스냅샷 6개 모두 0건.
+  - ~~`retention.py`의 ctid 삭제에 `FOR UPDATE`가 없다 — 미검증~~ — **검증했다, 결함이 아니다**(#68). PG 18.6에서 삭제가 lock을 기다리는 사이 재수락된 친구 행은 남는다(새 버전은 주소가 달라 ctid 재검사에서 빠진다). 반대로 **예전의 기본키 모양이었다면 지워졌다** — 라이브 테스트가 그 변이를 잡는다. dev는 18.4라 그 서버에서는 이 테스트가 답한다.
+  - ~~per-source `latency_ms`가 세 소스 모두 같은 값~~ — 닫음(#68). 소스마다 따로 잰다.
+  - ~~확장 예산을 length guard 전에 쓴다~~ — 닫음(#68). guard에 걸릴 probe는 R3 슬롯을 쓰지 않는다.
+  - ~~가독성: stale 주석, `register`의 인라인 복제, `by_topic`·`for_you` helper 넷 중복~~ — 닫음(#69). 옛 `TypeVar`도 PEP 695로.
+  - **남은 것**(판단이나 값이 필요해서):
+    - prod 오버레이의 `SENTRY_DSN: REPLACE_WITH_…`는 `BadDsn`으로 api·worker가 CrashLoop한다 — **prod go-live 전에 값이 필요하다.**
+    - 확장 프롬프트의 head noun 안전망 예시(`cat`, `tea`)가 4자 미만이라 length guard에 항상 버려진다 — 3자 명사를 guard의 예외로 둘지는 R5·R8 규칙의 판단이고, 효과는 LLM 라이브로만 잰다.
+    - SIGTERM 뒤 prefetch된 메시지가 세마포어 뒤에서 늦게 시작해 강제 취소될 수 있다(드레인 중 DB가 느릴 때만) — deferq에 요청할지, grace를 늘릴지.
+    - 요청 경로의 DynamoDB 장애(`CfEngineSource.pool`)는 여전히 500이다 — 503으로 매핑할 수 있게 됐다(`dynamodb.is_transient`, #63).
+    - HTTP 재시도 루프 세 벌(topic_api·bourbon_api·llm)의 통합 — 세 transport의 404·3xx 처리가 조금씩 달라 따로 할 일. `explicit_recommend`의 데드라인을 나머지 둘과 맞추는 것도(동작이 바뀐다).
 
