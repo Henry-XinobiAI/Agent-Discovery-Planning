@@ -306,7 +306,7 @@ GET /api/internal/svc/topic/catalog/graph
 
 1. ~~agent DM의 친구 게이트~~ **답 있음(2026-09-08), 그리고 실제로 내려갔다(2026-09-13, bourbon-api #325·#326)**: 친구이거나 상대 agent가 public이면 열린다. `public`은 "public topic이 1개 이상 있나"의 파생 상태다. §2-4.
 2. ~~agent 공개 여부의 필드~~ **답 있었으나 그 필드는 만들어지지 않았다(R57, 2026-09-13)**: bourbon-api가 둔 것은 파생 상태 `agents.public`이고 이벤트도 없다. 우리 `discoverable`은 재조회가 파생한다. §2-3. 옵트인을 따로 두는 것은 O22.
-3. ~~`recommendation_id`의 전달 경로~~ **답 있음(2026-09-09, R24 → 2026-09-10 R47로 개정)**: 클라이언트가 우리 route `POST /attributions`에 직접 보고한다. 계약 §2-5.
+3. ~~`recommendation_id`의 전달 경로~~ **답 있음(2026-09-09, R24 → 2026-09-10 R47로 개정)**: 클라이언트가 우리 route `POST /recommendations/opened`에 직접 보고한다. 계약 §2-5.
 4. ~~재조회 tier 범위~~ **답 있음(2026-09-09, R22)**: 타인 row는 `visibility=public&visibility=friends`만 조회해 저장한다. 요청자 자신의 프로필은 `public`·`friends`·`private`이고 `hidden`은 읽지 않는다. 어디서 읽나는 R27 — 요청 시 topic-api 조회. 소유자 키 아래에만 두는 미러는 지연 시간이 문제될 때의 대안.
 5. **topic-api 워커 0 replicas**: prod에서 persona 동기화가 안 돌면 `topics_updated`도 없다. 우리 테스트는 dev에서 하되, prod 시점에는 이 전제가 풀려 있어야 한다.
 6. ~~재활성 이벤트가 없다~~ **답 있음(2026-09-09, R38)**: 탈퇴 뒤 재가입은 신규 가입으로 본다. 재활성 기획이 생기면 수정. bourbon-api에는 `user_registered`(활성화 전이)와 `user_deactivated`만 있고, 탈퇴 뒤 돌아오는 유저를 알리는 이벤트는 없다. 조용히 재활성되는 경로가 있으면 우리 `agents` row가 없는 채로 topic 이벤트가 오므로, 재조회 task가 `agents` row를 **없으면 만든다**로 방어한다.
@@ -321,7 +321,7 @@ GET /api/internal/svc/topic/catalog/graph
 |---|---|---|
 | topic-api | ~~api 프로세스 AMQP 연결 + visibility 변경 신호 발행~~ **완료**(#68·#69 — `topic_visibility_changed`, `consistent=true`). 카탈로그 route는 보류(R26) | — |
 | bourbon-api | ~~`personal_agent_visibility_changed`~~ 철회(R57), ~~친구 게이트 해제~~ **완료**(#325·#326). 방 생성 이벤트는 철회(R51). **남은 것은 요청이 아니라 알림 셋** — 백필이 없다는 것, 리컨사일에 재시도가 없다는 것, 게이트의 조건 셋을 우리가 못 본다는 것(요청서 §2) | — |
-| 클라이언트 | 카드에서 대화를 시작할 때 우리 route `POST /attributions`에 `recommendation_id`·`owner_user_id`·`entry`와 `section_topic_id`·`position`(R66) 보고(R47). 타입 ②③은 우리 응답에서, 타입 ①은 bourbon-agent 카드의 meta에서 받는다 | R47·R66 |
-| 클라이언트 | 카드를 **실제로 화면에 그렸을 때** 우리 route `POST /attributions/impressions`에 그려진 카드들을 보고(R66). 이벤트가 아니라 route인 이유는 R47과 같다 — 우리만 읽는 측정값이다 | R66 |
+| 클라이언트 | 카드에서 대화를 시작할 때 우리 route `POST /recommendations/opened`에 `recommendation_id`·`owner_user_id`·`entry`와 `section_topic_id`·`position`(R66) 보고(R47). 타입 ②③은 우리 응답에서, 타입 ①은 bourbon-agent 카드의 meta에서 받는다 | R47·R66 |
+| 클라이언트 | 카드를 **실제로 화면에 그렸을 때** 우리 route `POST /recommendations/shown`에 그려진 카드들을 보고(R66). 이벤트가 아니라 route인 이유는 R47과 같다 — 우리만 읽는 측정값이다 | R66 |
 | bourbon-agent | 타입 ① 호출을 새 계약으로(요청자 = 실제 말한 사람. 자기 agent에게 묻는 경우 소유자와 같다. 타인의 agent 방에서 묻는 경우가 제품에 있다면 그 사람이어야 하는데, 지금 코드는 항상 agent 소유자를 보낸다), 응답의 `recommendation_id`를 카드 meta에 실어 전달(R24·R47 — 클라이언트가 meta에서 읽어 우리 route에 보고한다). **HEXACO 성향 벡터를 싣는 이벤트 필드는 이 묶음에 넣지 않는다** — 이벤트로 받는다는 방향만 있고(R42, bourbon-agent에 API는 열지 않는다) 무엇을 내보낼지·동의 범위가 O20에서 정해진 뒤 별도 요청 | 계약 확정 · R47 · (HEXACO는 O20 뒤) |
 | 성숙도 컴포넌트 | `agent_maturity_changed` | 컴포넌트 존재 |

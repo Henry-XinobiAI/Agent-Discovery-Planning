@@ -129,8 +129,8 @@ topic-api ──topic_visibility_changed {user_id, topic_id} (R55)──▶ 워�
               ▼
      한 트랜잭션: visible_topic_rows를 통째로 교체 (없어진 row 삭제, 새 row upsert)
                 + agents.discoverable = (교체한 집합에 public row가 있나)   (R57)
-클라이언트 ──POST /attributions/impressions {recommendation_id, cards[]}──▶ REC#{id}/LOG 의 impressions[] 에 append (R66)
-클라이언트 ──POST /attributions {recommendation_id, owner_user_id, entry, section_topic_id, position}──▶ attributions insert (R47·R66)
+클라이언트 ──POST /recommendations/shown {recommendation_id, items[]}──▶ REC#{id}/LOG 의 impressions[] 에 append (R66)
+클라이언트 ──POST /recommendations/opened {recommendation_id, owner_user_id, entry, section_topic_id, position}──▶ attributions insert (R47·R66)
 bourbon-api ──message_created {room_id, sender_id, room_type=agent_dm}──▶ room_turns +1, 첫 turn이면 ROOM#{room_id} 조회 ──▶ interactions insert (attributions와 (actor, owner)로 조인), popularity 증가
 bourbon-api ──message_created {room_id, room_type=agent_dm, sender_type=user}──▶ interactions.turns += 1
 bourbon-api ──friendship_changed {user_low, user_high, action}──▶ friends 미러 갱신 (accepted 삽입 / removed 삭제)
@@ -268,7 +268,7 @@ B: 0.5·0.75 + 0.2·0.9 + 0.2·0.8 + 0.1·0.04 = 0.719
  "served_at": "2026-09-08T…Z"}
 ```
 
-R이 이 응답에서 B의 agent와 대화를 시작하면 클라이언트가 `POST /attributions`에 `entry=recommend_explicit, recommendation_id=rec-7f…`를 보고하고(R47 — 타입 ①은 bourbon-agent 카드의 meta에서 읽는다), 이어 그 방의 첫 `message_created`가 오면 둘을 (R, B) 쌍으로 이어 `interactions`에 쌓인다(R51).
+R이 이 응답에서 B의 agent와 대화를 시작하면 클라이언트가 `POST /recommendations/opened`에 `entry=recommend_explicit, recommendation_id=rec-7f…`를 보고하고(R47 — 타입 ①은 bourbon-agent 카드의 meta에서 읽는다), 이어 그 방의 첫 `message_created`가 오면 둘을 (R, B) 쌍으로 이어 `interactions`에 쌓인다(R51).
 
 ---
 

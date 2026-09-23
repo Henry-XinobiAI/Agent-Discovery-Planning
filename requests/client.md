@@ -1,6 +1,6 @@
 # 클라이언트 요청서 — 탐색 탭 호출과 `recommendation_id` 전달
 
-> 결정: R07(탐색 탭은 우리 API 직접 호출), R47(어트리뷰션은 우리 route에 직접 보고 — R24 개정), **R66(노출도 보고 — §3 신설, §2에 필드 둘)**, R40(`lang`). bourbon-api 요청서와 **같이** 보낸다 — 방 생성 이벤트와 이 보고가 맞아야 어트리뷰션이 이어진다.
+> 결정: R07(탐색 탭은 우리 API 직접 호출), R47(어트리뷰션은 우리 route에 직접 보고 — R24 개정), **R66(노출도 보고 — §3 신설, §2에 필드 둘)**, **R67(두 route 이름 — 클라이언트가 한 일로)**, R40(`lang`). bourbon-api 요청서와 **같이** 보낸다 — 방 생성 이벤트와 이 보고가 맞아야 어트리뷰션이 이어진다.
 
 ## 1. 탐색 탭 → 우리 API 직접 호출
 
@@ -19,12 +19,12 @@ topic-api의 `/api/svc/topic`과 같은 형태로 `/api/svc/agent-discovery` 아
 
 정확한 스키마는 `agent_discovery_contract.md` §2·§3. 타입 ①(자기 agent에게 free text로 묻기)은 클라이언트가 호출하지 않는다 — bourbon-agent가 내부 API로 부른다.
 
-## 2. 추천 카드에서 대화를 시작할 때 우리에게 보고
+## 2. 추천 카드에서 **대화를 시작할 때** 우리에게 보고
 
 추천 카드에서 대화 시작을 누르면, bourbon-api의 대화 시작 요청과 **별개로** 우리 route를 한 번 호출해 주시면 된다. bourbon-api 요청에는 아무것도 추가하지 않는다.
 
 ```
-POST /api/svc/agent-discovery/attributions
+POST /api/svc/agent-discovery/recommendations/opened
 { "recommendation_id": "<uuid>", "owner_user_id": "<uuid>", "entry": "discover_for_you",
   "section_topic_id": null, "position": 3 }
 → 204
@@ -44,14 +44,14 @@ POST /api/svc/agent-discovery/attributions
 
 **왜**: 이 값이 없으면 "추천이 대화를 만들었는가"를 영구히 알 수 없다. 추천 품질 측정과 CF 가중 게이트(R35)가 이 조인에 기댄다. bourbon-api를 거치지 않는 이유는 우리만 읽는 값을 다른 서비스의 요청과 이벤트에 얹지 않기 위해서다(플랫폼 이벤트 기준, R47).
 
-## 3. 카드를 **화면에 그렸을 때** 우리에게 보고 (신규 — R66)
+## 3. 카드를 **화면에 그렸을 때** 우리에게 보고 (신규 — R66·R67)
 
 §2가 "눌렀다"라면 이쪽은 "보였다"입니다. **미리 fetch해 두신다는 것을 전제로 생긴 route입니다.**
 
 ```
-POST /api/svc/agent-discovery/attributions/impressions
+POST /api/svc/agent-discovery/recommendations/shown
 { "recommendation_id": "<uuid>",
-  "cards": [ { "owner_user_id": "<uuid>", "position": 1, "section_topic_id": "<sections[].topic_id>" },
+  "items": [ { "owner_user_id": "<uuid>", "position": 1, "section_topic_id": "<sections[].topic_id>" },
              { "owner_user_id": "<uuid>", "position": 2, "section_topic_id": "<sections[].topic_id>" } ] }
 → 204
 ```
