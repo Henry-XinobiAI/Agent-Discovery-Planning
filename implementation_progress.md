@@ -389,7 +389,7 @@
 
   **미정으로 남기는 것**: 노출을 **랭킹에 먹이는 것**(피로도·중복 억제)은 이 데이터가 쌓인 뒤 실측으로 내릴 별개 결정이다. R66은 측정 전용이고, 지금 임계를 고르면 짐작이다.
 
-- [ ] **21. 전체 코드 리뷰(2026-09-23, main `6edeca2`)가 찾은 결함 수정** 🔴 — PR 올림, 머지 대기
+- [x] **21. 전체 코드 리뷰(2026-09-23, main `6edeca2`)가 찾은 결함 수정** 🔴 — 머지 2026-09-24, dev 배포 `ec35005`
   영역 여섯(storage·migrations / discovery·cf·pipelines / stages·providers / api·k8s / worker·cli·scripts / evaluation·synthetic)을 병렬로 읽고, **재현하거나 구체적으로 추적한 것만** 남겼다. 그중 설계 판단이 필요 없는 것을 PR 넷으로 고쳤고, 각 PR에 적대적 리뷰를 한 번 더 붙여 그 지적을 브랜치 끝 커밋으로 반영했다. 네 브랜치를 합친 상태로 단위 2,051 통과, 라이브 2,282 통과·7 skip.
 
   - **A 불변 조건** (코드 #63): provider 네 곳의 `from exc`가 pydantic 오류를 cause로 달아 **보유자 글이 워커 traceback과 Sentry로** 나갔다. Sentry 트랜잭션 span의 `?q=`(사용자 글)는 breadcrumb hook이 공유 dict를 고친 **우연** 덕에만 지워지고 있었다. 재시도 사다리가 DynamoDB·Redis 장애를 몰라 **탈퇴 삭제의 DynamoDB 절반이 유실**될 수 있었다(TTL 없는 CF pool이 영구히 남는다). debounce 실패를 삼켜 **비공개 전환이 유실**될 수 있었다 — "다음 write가 다시 묻는다"는 기존 결정의 근거가 비공개 전환에는 성립하지 않아 뒤집었다.
@@ -399,7 +399,9 @@
 
   **리뷰가 잡은 것 중 적어 둘 것**: 로그 테스트 둘이 **아무것도 캡처하지 못한 채 통과하고** 있었다(lifespan이 structlog를 다시 설정한다 — 이미 알던 함정을 반대 방향으로 밟았다). 그리고 "요청 경로에서 이 클래스 말고는 올 게 없다"는 주장을 **호출 경로를 따라가지 않고** 커밋 메시지에 썼다.
 
-  PR: 코드 #63 · #64 · #65 · #66 · 기획 #123
+  PR: 코드 #63 · #64 · #65 · #66 · 기획 #123 · #124. 곁가지로 코드 #67 — `seed_local_from_dev`가 로컬에서 요청해 볼 사용자 id를 한 줄 출력한다(OpenAPI 예제는 **일부러** 문서 전용 id라, 시드한 스택에서는 모두 빈 답이다).
+
+  **dev 배포 확인**(2026-09-24, `deploy/2609` = main `ec35005`): api·worker 기동, `/ready` 200. 실제 사용자로 for-you 3장(`basis: content`)·by-topic 2섹션, **`degraded` 없음** — dev에서는 bourbon-api에 닿아 `owner` 블록이 채워진다(로컬에서만 `hydration_partial`). `POST /recommendations/opened`가 `section_topic_id`·`position`을 실어 204, `attributions` 행에 두 칸이 들어갔다 — 0010 컬럼에 앱 계정이 쓴다. 워커 주기 잡은 전부 실패 없이 돌았고, dev에 대화가 아직 0건이라 popularity 0행·게이트 `not_enough_traffic`·CF는 빈 모델로 예상대로다.
 
 - [ ] **22. 탈퇴한 사용자가 늦은 이벤트로 되살아난다** 🔴 — 설계 대기
   리뷰어 둘이 따로 찾았다. `conversations.started`의 `touch_agent`, 비어 있지 않은 refresh(`holdings.replace`), 늦게 오거나 재전달된 `user_registered`가 erase 뒤에 오면 `agents` 행을 **다시 만든다** — CF 스윕이 TTL 없는 pool을 새로 쓰고, 익명화되지 않은 `interactions`가 생긴다. 행이 없던 친구 쌍의 `accepted`도 erase 뒤면 INSERT된다(`erasure.py`의 "더 오래된 이벤트는 모두 거절한다"는 행이 있는 쌍에만 참이다). 막힌 곳은 빈 refresh(`refresh_found_nothing`) 하나뿐이다. **탈퇴 기록(tombstone)을 두고 모든 쓰기 경로가 확인하는 방식**이 후보지만, 어디에 두고 얼마나 보존하는가(§9-1 삭제 의무와의 관계)는 **정하지 않았다.**
