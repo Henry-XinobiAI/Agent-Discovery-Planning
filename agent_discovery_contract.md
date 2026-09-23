@@ -127,7 +127,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
       "topic_id": "…",
       "label": "캠핑",              // 요청 lang의 라벨 하나 (R40)
       "requested": true,           // 타입 ①: 뽑힌 topic 중 하나인가. 타입 ②: 섹션 topic이면 true, 그 자손으로 맞았으면 false (R65)
-      "owner_note": "…"            // 소유자가 그 topic에 쓴 한 문장(topic-api 유저 topic의 descriptions에서 lang의 것 하나, R40). 응답 직전 hydration으로 채움. 선택, null 가능
+      "owner_note": "…"            // 소유자가 그 topic에 쓴 한 문장(유저 topic의 descriptions에서 lang의 것 하나, R40). 항상 있고, 안 썼으면 null
     }
   ],
   "signals": {                     // 왜 여기 있나 — 랭커 feature 중 보여줘도 되는 것 (§7)
@@ -144,6 +144,16 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 예약된 필드: `talked_before`(타입 ③, R28의 "소진 뒤 재등장" 표식). 코드는 계산하고 결정 로그에 남기지만 **응답에는 넣지 않는다** — 표시 기획이 요청하면 같은 `contract_version`으로 연다.
 
 `owner_note`는 소유자가 쓴 글이다. **응답에 싣는 것으로 끝이다.** 로그, 예외, 결정 로그, Sentry에 들어가지 않는다.
+
+**답의 필드는 키가 빠지지 않는다 — 값이 `null`이거나 비어 있을 뿐이다.** 널 가능한 쪽이
+`owner_note`, `fit`, `signals`의 다섯, `next_cursor`, 타입 ②③의 `owner`·`agent`이고, 널이 아닌 쪽도
+같다 — `matched_topics`는 `null`이 아니라 `[]`이고, `degraded`도 비었으면 `[]`이며,
+`contract_version`은 늘 실린다. 클라이언트가 "없는 키"와 "null인 값"을 구분할 이유가 없도록 한쪽으로
+고정한 것이다. **발행 스키마와 발행 예제도 그렇게 말한다** — 스키마의 `required`가 빠뜨리거나 예제에서
+null인 필드가 키째 사라지면, 클라이언트는 그 필드가 그 카드에 없다고 읽는다.
+
+**`owner_note`가 null인 것은 degraded가 아니다.** 소유자가 그 topic에 아무것도 안 썼다는 사실이고,
+그건 답이 덜 채워진 것이 아니라 완전한 답이다(불변식 5).
 
 **`requested`는 타입 ②에서 실제로 갈린다**(R65). 섹션이 펼쳐지기 전에는 이 필드가 늘 참이었다 — 맞은 것이 곧 물어본 것이었으니까. 이제 `false`는 **"섹션 topic의 1 hop 자손으로 맞았다"**는 뜻이고, 1 hop만 펼치므로 그 이상의 거리를 말할 값이 필요 없다.
 
@@ -260,7 +270,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 |---|---|
 | `friends_unavailable` | 친구 집합을 못 읽어 friends tier를 후보에서 뺐다. public만 답했다. R17·R18 배치에서는 실제로 나오지 않는 예약 값이다 — §5 불변식 3 |
 | `expansion_partial` | 타입 ①: 개념 확장 일부가 답을 못 받아 topic이 덜 뽑혔을 수 있다 |
-| `hydration_partial` | 표시 필드를 다 못 채웠다 — 라벨·owner_note(topic-api)이거나 `owner`·`agent`(bourbon-api, R63)다. **어느 쪽인지는 응답이 말하지 않는다**: 값 하나가 두 업스트림을 덮으므로 호출자가 보는 것은 "덜 채워졌다" 하나이고, 어느 업스트림이 답하지 않았는지는 로그에 남는다. 호출자가 그 구분으로 할 수 있는 일이 없어서 나누지 않았다 |
+| `hydration_partial` | 표시 필드를 다 못 채웠다 — 라벨(커밋된 카탈로그에 그 topic의 이름이 없다)이거나 `owner`·`agent`(bourbon-api, R63)다. **`owner_note`가 null인 것은 여기 해당하지 않는다** — 소유자가 안 쓴 것이다. **어느 쪽인지는 응답이 말하지 않는다**: 값 하나가 두 원인을 덮으므로 호출자가 보는 것은 "덜 채워졌다" 하나이고, 무엇이 비었는지는 로그에 남는다. 호출자가 그 구분으로 할 수 있는 일이 없어서 나누지 않았다 |
 | `cf_candidates_stale` | 타입 ③: 사전 계산 결과가 **있는데** TTL의 몇 배(R36: 7일) 이상 오래됐다. TTL을 넘긴 정도는 정상 경로(그대로 서빙하고 스윕이 갱신, R19)라 붙이지 않는다. 항목이 없어서 인기도·content로 답한 경우는 이 값이 아니다 — `basis`가 그것을 말한다 |
 
 "몇 개가 가려졌다"는 어떤 형태로도 응답에 없다(§5).
@@ -352,7 +362,14 @@ class Ranker(Protocol):
 
 ### 4-5. 응답 조립
 
-요소를 만들고 표시 필드를 채운다(hydration). 업스트림 둘을 읽는다 — 라벨·owner_note는 topic-api, 타입 ②③의 `owner`·`agent`는 bourbon-api 내부 route 배치(R63). 둘 다 응답 직전이고, 어느 쪽이 실패해도 그 필드만 null이 된 채 `hydration_partial`이 붙는다. 타입 ①에는 뒤쪽이 아예 없다.
+요소를 만들고 표시 필드를 채운다(hydration). **요청 시에 읽는 업스트림은 하나뿐이다** — 타입 ②③의
+`owner`·`agent`를 bourbon-api 내부 route 배치로 읽는다(R63). 실패하면 그 필드만 null이 된 채
+`hydration_partial`이 붙고, 타입 ①에는 이 단계가 아예 없다.
+
+나머지 둘은 이미 우리 쪽에 있다: **라벨은 커밋된 카탈로그**(R26)에서 읽고 — topic-api를 답마다 부르면
+파일이 바뀔 때만 변하는 값 때문에 그쪽 가용성이 답 경로에 올라온다 — **`owner_note`는 재확인이 되읽는
+우리 행의 `descriptions`**에서 온다(§4-2의 두 번째 읽기). 그래서 이 둘은 업스트림 장애로 비지 않는다:
+라벨이 비면 카탈로그에 그 topic의 이름이 없다는 뜻이고, 노트가 비면 소유자가 안 썼다는 뜻이다.
 
 **답 하나에 한 번이지 선반마다 한 번이 아니다.** 타입 ②는 섹션 단위로 조립하므로 거기서 채우면 한 페이지가 섹션 수만큼의 업스트림 호출이 되고, 요청자의 topic 여럿을 가진 소유자를 그 수만큼 다시 묻게 된다. 그래서 답 전체의 row를 모아 한 번 묻고, 같은 소유자를 여러 선반에 되돌려 놓는다.
 
