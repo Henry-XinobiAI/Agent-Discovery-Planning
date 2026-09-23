@@ -47,5 +47,14 @@ POST /api/svc/agent-discovery/attributions
 1. 탐색 탭 두 화면의 첫 버전 노출 순서와 "더 보기" 상호작용(섹션 커서를 어떻게 쓰는지).
 2. 카드 meta에서 `recommendation_id`를 읽는 위치 — bourbon-agent 요청서 §2와 맞춘다. §2의 보고 호출을 대화 시작 요청과 같은 탭 핸들러에서 보내는지.
 3. `lang`을 앱 언어 설정에서 가져오는지, 대화 언어에서 가져오는지(우리는 어느 쪽이든 받는다).
-4. **목록 카드 한 장에 무엇이 그려지는가**(R63, 계약 §3-1·§11). 기준값으로 `owner` 블록을 **bourbon-api `GET /api/users`의 `UserOut`과 같은 모양**으로 잡아 두었다 — `id`·`name`·`picture`·`handle`과 중첩된 `personal_agent`(`agent_id`·`owner_user_id`·`enabled`·`public`·`name`·`picture`). 이미 쓰고 계신 유저 카드 렌더러에 그대로 들어가게 하려는 것이고, **디자인이 나오면 고칠 생각으로 잡은 값이다.** 필드를 더하거나 빼는 것은 우리 쪽에서 싼 변경이니 편하게 말씀 주시면 된다.
+4. **목록 카드 한 장에 무엇이 그려지는가**(R63, 계약 §3-1·§11). 탐색 화면(`/discover/…`)의 카드 한 장은 이렇게 나간다 — id는 최상위에 하나씩, 그리는 값은 블록 둘:
+
+   ```json
+   { "agent_id": "…", "owner_user_id": "…", "position": 1,
+     "matched_topics": [ … ], "signals": { … }, "fit": null,
+     "owner": { "name": "지원", "picture": "…", "handle": "jiwon" },
+     "agent": { "name": "지원의 에이전트", "picture": "…", "public": true } }
+   ```
+
+   `agent.public`은 친구가 아닌 사람에게 DM 진입을 그려도 되는지다. 두 블록은 못 채우면 null이고(그때 `degraded`에 `hydration_partial`), 카드는 id만으로도 그려져야 한다. **디자인이 나오면 고칠 생각으로 잡은 필드 목록이다** — 더하거나 빼는 것은 우리 쪽에서 싼 변경이니 편하게 말씀 주시면 된다.
    **다만 한 가지는 싸지 않다**: 뷰어에 따라 달라지는 값(친구 관계, 이미 열려 있는 DM 방 id)은 싣지 않았고, 카드를 누른 시점에 공개 `GET /users/{user_id}` 한 번으로 읽는 것으로 뒀다 — 방 안의 `agent_profiles_v1` 카드가 지금 하는 것과 같다. **목록 단계에서 "친구예요" 같은 배지를 그릴 계획이면 지금 알려 주셔야 한다.** 그러면 전제가 깨지고, 우리가 친구 미러로 답하거나 클라이언트가 한 페이지마다 최대 20건(상한 50)을 따로 읽거나 둘 중 하나가 된다.
