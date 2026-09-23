@@ -129,7 +129,8 @@ topic-api ──topic_visibility_changed {user_id, topic_id} (R55)──▶ 워�
               ▼
      한 트랜잭션: visible_topic_rows를 통째로 교체 (없어진 row 삭제, 새 row upsert)
                 + agents.discoverable = (교체한 집합에 public row가 있나)   (R57)
-클라이언트 ──POST /attributions {recommendation_id, owner_user_id, entry}──▶ attributions insert (R47)
+클라이언트 ──POST /attributions/impressions {recommendation_id, cards[]}──▶ REC#{id}/LOG 의 impressions[] 에 append (R66)
+클라이언트 ──POST /attributions {recommendation_id, owner_user_id, entry, section_topic_id, position}──▶ attributions insert (R47·R66)
 bourbon-api ──message_created {room_id, sender_id, room_type=agent_dm}──▶ room_turns +1, 첫 turn이면 ROOM#{room_id} 조회 ──▶ interactions insert (attributions와 (actor, owner)로 조인), popularity 증가
 bourbon-api ──message_created {room_id, room_type=agent_dm, sender_type=user}──▶ interactions.turns += 1
 bourbon-api ──friendship_changed {user_low, user_high, action}──▶ friends 미러 갱신 (accepted 삽입 / removed 삭제)

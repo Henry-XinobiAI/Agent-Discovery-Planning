@@ -97,7 +97,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 - **페이지가 있는 답은 `has_next`와 `next_cursor`를 같이 준다**(R64). bourbon-api의 목록 봉투(`GET /api/users`의 `UserListOut`)와 같은 모양이라, 클라이언트가 두 종류의 목록에 한 가지 페이지 로직을 쓴다. **둘은 언제나 일치한다** — `has_next`가 참인 것과 `next_cursor`가 있는 것은 같은 말이고, 그 불변은 봉투를 만드는 한 곳이 지킨다. 중복인 것을 알고 두는 것이다: 한 값만 보는 클라이언트가 어느 쪽을 골라도 맞게 하려는 것이고, 값이 갈리면 그것은 우리 결함이지 상태가 아니다. 커서가 없는 답(타입 ①)에는 둘 다 없다.
 - 요청자 본인의 agent는 어느 타입에서도 결과에 없다.
 
-### 2-5. 어트리뷰션 보고 `POST /attributions` (R47)
+### 2-5. 어트리뷰션 보고 `POST /attributions` (R47·R66)
 
 클라이언트가 추천 카드에서 대화를 시작할 때 우리에게 직접 알린다. 다른 서비스의 route나 이벤트에 우리 필드를 얹지 않는다(플랫폼 이벤트 기준, 이벤트 정의서 §0).
 
@@ -106,8 +106,44 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 | `recommendation_id` | UUID | 그 카드가 속한 응답 envelope의 값. 타입 ①은 bourbon-agent가 카드 meta에 실어 준 값 |
 | `owner_user_id` | UUID | 대화를 시작하는 상대 agent의 소유자(카드의 값) |
 | `entry` | `recommend_explicit` \| `discover_by_topic` \| `discover_for_you` | 어느 화면에서 |
+| `section_topic_id` | string \| null | **(R66)** 그 카드가 서 있던 선반의 topic. 타입 ②만 채우고 ①③은 null이다 |
+| `position` | int \| null | **(R66)** 그 카드의 `position`(§3-1). 타입 ②는 선반마다 1부터 다시 세므로 `section_topic_id`와 짝일 때만 카드 하나를 가리킨다 |
 
 요청자는 edge-auth의 `x-user-id`. 응답 204. 추천을 거치지 않은 대화 시작(`direct`)은 보고하지 않는다. 우리는 `attributions`(§6)에 적고 **`reported_at`은 우리 시계로 찍는다** — 이 payload에는 시각이 없다. 그 방의 첫 `message_created`가 같은 `(actor, owner)` 쌍으로 오면 `attribution.window_hours` 안의 최근 보고 하나를 `interactions.entry`·`recommendation_id`에 채우고 `attributed_by = report`를 남긴다(R51·R53). 보고가 없으면 예측 room 인덱스가 대신하고(`predicted`), 그것도 없으면 `entry = direct`다. 보고는 best-effort다 — 측정용 값이라 빠져도 추천은 영향이 없다.
+
+**뒤의 두 칸이 생긴 이유(R66).** `(recommendation_id, owner_user_id)`만으로는 **어느 선반에서 눌렀는지 알 수 없다** — R65 이후 한 소유자가 한 화면의 두 선반에 동시에 선다(정확히 맞은 선반과 자손으로 맞은 선반). 둘은 같은 카드가 아닌데 보고는 같은 모양이 되고, 그러면 §2-6의 분모는 선반별로 갈리는데 분자가 안 갈린다 — R65가 답하려던 "자손으로 맞은 카드가 실제로 대화가 되는가"를 영영 못 재게 된다. **둘 다 없어도 보고는 유효하다**: 지금 모양으로 보내는 클라이언트의 보고는 그대로 받고 두 칸이 null이 된다.
+
+### 2-6. 노출 보고 `POST /attributions/impressions` (R66)
+
+카드를 **실제로 화면에 그렸을 때** 클라이언트가 알린다. §2-5가 분자면 이것이 분모다.
+
+**왜 필요한가.** 클라이언트는 목록을 미리 fetch해 두고 나중에 그린다. 그래서 §8의 `served_at`은 "우리가 답한 때"이지 "사람이 본 때"가 아니고, 받아만 놓고 스크롤하지 않은 목록이 전부 분모에 들어간다. 노출 보고가 없으면 "추천이 대화를 만들었는가"는 **fetch 수로 나눈 값**이라 계속 낮게 읽히고, **그 왜곡의 크기조차 알 수 없다.** 타입 ②에서 더 크다 — 선반이 세로로 쌓여 있어 아래 선반은 대개 눈에 닿지 않는다.
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `recommendation_id` | UUID | 그 카드들을 만들어 낸 응답 envelope의 값 |
+| `cards[]` | 배열 | 이번에 화면에 그려진 카드들. 빈 배열은 422, **한 응답이 낼 수 있는 카드 수보다 길어도 422** — 가장 큰 경우가 타입 ②의 `sections`×`per_section` = 10×20이므로 200장이다. 한 번에 다 보낼 필요는 없다(아래) |
+| `cards[].owner_user_id` | UUID | 카드의 값 |
+| `cards[].position` | int | 카드의 `position`(§3-1) |
+| `cards[].section_topic_id` | string \| null | 그 카드가 선 선반의 topic. 타입 ②만 |
+
+요청자는 edge-auth의 `x-user-id`. 응답 204.
+
+**`entry`는 받지 않는다.** 결정 로그 항목이 `type`을 이미 갖고 있다. 두 곳에 적으면 갈릴 수 있고, 갈렸을 때 어느 쪽이 맞는지 정할 근거가 없다.
+
+**적히는 곳은 결정 로그다**(§8·§6-1). **노출 쪽에는** 새 테이블도 새 스윕도 마이그레이션도 없다(§2-5의 두 칸은 다르다 — 거기엔 컬럼 둘이 붙는다): `REC#{recommendation_id}`/`LOG` 항목의 `impressions[]`에 `pages[]`와 같은 방식으로 덧붙고, 보존은 그 항목의 TTL(`decision_log.ttl_days`)을 그대로 탄다. 읽는 쪽이 평가 배치 하나뿐이고 **조인 상대가 없어서다** — §2-5가 PostgreSQL에 있는 이유(워커가 `message_created`와 조인한다)가 여기엔 없다.
+
+**이 서비스에서 조건이 붙는 유일한 보고다.** append는 `attribute_exists(PK) AND requester_user_id = :requester` 아래에서만 일어난다(§8의 `pages[]`가 쓰는 조건과 같다). 우리가 낸 적 없는 목록에도, 남의 목록에도 적히지 않는다. §2-5는 대조할 상대가 없어 무엇이든 받지만(R47), 이쪽은 **우리가 그 목록을 누구에게 냈는지 이미 알고 있다.**
+
+**조건에 걸려도 204다.** 404는 "그 `recommendation_id`가 존재하는가"를 묻는 도구가 되고, 클라이언트는 어차피 할 수 있는 것이 없다(fire-and-forget). 대신 구조화 로그가 남는다.
+
+**한 목록에 여러 번 온다.** 스크롤을 따라 같은 `recommendation_id`에 append가 이어지므로 항목이 자란다. 클라이언트는 한 목록 안에서 **카드 하나를 처음 보일 때 한 번만** 보고하고, 서버는 `attribution.max_impression_reports`를 넘기면 더 붙이지 않는다(DynamoDB 항목 400 KB 상한).
+
+**"보여줬다"의 기준은 클라이언트가 정한다.** 뷰포트 몇 %·몇 초인지는 우리가 볼 수 없는 값이고, 그 정의가 분모의 의미를 통째로 정한다. 요청서 client §4의 질문이고, **정해지면 여기에 적는다.**
+
+**`impressions[].at`은 우리 시계다.** payload에 시각이 없는 것도, 그 이유도 §2-5의 `reported_at`과 같다 — 클라이언트의 시계는 아무것도 증명하지 않는다. 읽을 때도 같게 읽는다: "그들이 본 때"가 아니라 "보고가 우리에게 닿은 때"다.
+
+보고는 §2-5와 같이 best-effort다. 빠져도 추천은 영향이 없다.
 
 ---
 
@@ -414,7 +450,7 @@ class Ranker(Protocol):
 | `cf_candidates` | `user_id` | `candidates: [(owner_user_id, score)]` top-K, `computed_at`, `model_version`(어느 전역 학습으로 만들었나 — 재현·갱신 판단용) | 워커의 주기 스윕이 배치로 쓴다 — 조건은 R19. K는 설정 레지스터 `cf.pool_k`(R20의 pool). **DynamoDB**(R18·R44 — `USER#{user_id}` / `CF_CANDIDATES`, §6-1, **TTL 없음**): 서빙은 단건 GetItem, 조인은 없다(재확인은 PostgreSQL `visible_topic_rows`에서). 오래된 항목도 그대로 서빙한다. 항목이 없는 요청자는 §2-3의 콜드스타트 경로 |
 | `interactions` | `(actor_user_id, owner_user_id, room_id)` | `started_at`, `entry`, `recommendation_id`, **`attributed_by`**(R53) (`turns`는 `room_turns`에서 조인) | **그 방의 첫 `message_created`로 생성**(R51 — `room_created` 요청은 철회했다). 소유자는 예측 인덱스 `ROOM#{room_id}`에서 오고, 거기 없는 방은 기록하지 않는다(R52). `entry`·`recommendation_id`는 `attributions` 보고가 먼저·예측 인덱스가 다음이고 `attributed_by`가 어느 쪽인지 남긴다(R53). CF 학습 입력. 자기 agent 방·user DM·group은 행 없음. 탈퇴: owner 행 삭제, actor 행은 actor 익명화(R49) |
 | `room_turns` (R49) | `room_id` | `turns`, `last_turn_at` | `message_created`(`room_type == agent_dm`, `sender_type == user`)마다 +1. 같은 이벤트가 `interactions`도 만들지만(R51) 예측하지 않은 방은 turn만 세므로 방 키로 독립시킨다. `interactions` 행이 없는 방은 읽기 조인에서 빠지고 `room_turns.orphan_ttl_days` 뒤 정리 |
-| `attributions` (R47) | `(requester_user_id, owner_user_id, reported_at)` | `recommendation_id`, `entry` | 클라이언트의 §2-5 보고로 생성하고 `reported_at`은 우리가 찍는다. 그 방의 첫 `message_created`가 오면 `attribution.window_hours` 안의 최근 것 하나를 `interactions`에 옮긴다(R51). 보존은 `decision_log.ttl_days`와 같게 |
+| `attributions` (R47·R66) | `(requester_user_id, owner_user_id, reported_at)` | `recommendation_id`, `entry`, `section_topic_id`·`position`(R66, nullable — 어느 선반의 어느 카드였나. 측정용이라 아래 조인은 읽지 않는다) | 클라이언트의 §2-5 보고로 생성하고 `reported_at`은 우리가 찍는다. 그 방의 첫 `message_created`가 오면 `attribution.window_hours` 안의 최근 것 하나를 `interactions`에 옮긴다(R51). 보존은 `decision_log.ttl_days`와 같게 |
 
 ### 6-1. DynamoDB key space — 테이블 하나 (R44)
 
@@ -423,7 +459,7 @@ class Ranker(Protocol):
 | 항목 | PK | SK | 읽기 | TTL |
 |---|---|---|---|---|
 | `cf_candidates` | `USER#{user_id}` | `CF_CANDIDATES` | 단건 GetItem. `candidates[(owner_user_id, score)]`, `computed_at`, `model_version` | 없음(R18) |
-| 결정 로그(§8) | `REC#{recommendation_id}` | `LOG` | 단건 GetItem(어트리뷰션 조인, 디버깅). 페이지는 같은 항목의 `pages[]`에 append | `decision_log.ttl_days` |
+| 결정 로그(§8) | `REC#{recommendation_id}` | `LOG` | 단건 GetItem(어트리뷰션 조인, 디버깅). 페이지는 같은 항목의 `pages[]`에, 노출 보고(§2-6)는 `impressions[]`에 append | `decision_log.ttl_days` |
 | 결정 로그 평가용 GSI `served-day-index` | `served_day_key = {type}#{YYYY-MM-DD}#{shard}` | `served_at` | 하루·타입 단위 Query를 shard 수만큼 병합. `KEYS_ONLY` — 본문은 PK로 다시 읽는다 | — |
 | `event_log` | `EVT#{YYYY-MM-DD}#{shard}` | `{occurred_at}#{event_id}` | 하루 단위 Query 병합(이벤트 리플레이·보정, 합성 스펙 §8-2). 이벤트 이름·`occurred_at`·payload JSON. 유저의 글·`email`은 payload에 없다 | `event_log.ttl_days` |
 | 예측 room 인덱스(R51) | `ROOM#{room_id}` | `PREDICTED` | 단건 GetItem. 추천을 낼 때 `room_id = uuid5(DM_NAMESPACE, "dm:user:{requester}:agent:{agent_id}")`로 미리 계산해 `requester`, `owner_user_id`, `recommendation_id`, `entry`, `served_at`을 쓴다. 그 방의 첫 turn에서 한 번 읽는다 | `attribution.predicted_room_ttl_hours` |
@@ -482,11 +518,17 @@ class Ranker(Protocol):
   "shuffle": {"seed": "rec-…", "bands": [5, 20, 50]},   // ③ R20. bands = 구간의 누적 상한(1~5, 6~20, 21~50). 구간 안 순서를 재현하는 재료
   "latency_ms": {"query": 640, "sources": 9, "filter": 3, "rank": 1, "assemble": 12, "total": 665},
   "served_at": "2026-09-08T…Z",
-  "pages": [ {"cursor": "…", "positions": [21, 40], "served_at": "…"} ]   // 다음 페이지 요청마다 한 항목(§2-4). 첫 페이지는 위 필드들
+  "pages": [ {"cursor": "…", "positions": [21, 40], "served_at": "…"} ],   // 다음 페이지 요청마다 한 항목(§2-4). 첫 페이지는 위 필드들
+  "impressions": [                                // 실제로 화면에 그려진 카드(§2-6, R66). 스크롤을 따라 한 목록에 여러 건 온다
+    {"at": "2026-09-23T…Z",                       // 보고가 우리에게 닿은 때. 우리 시계다 (§2-5의 reported_at과 같은 이유)
+     "cards": [{"owner_user_id": "uuid", "position": 3, "section_topic_id": "topic_food"}]}
+  ]
 }
 ```
 
 `filter.out`은 로그에만 있다. 응답에 실리면 불변식 5를 깬다.
+
+**`served_at`은 답한 때이고 본 때가 아니다**(R66). 클라이언트가 미리 fetch하므로 둘은 다르고, 본 때를 말하는 것은 `impressions[]`뿐이다. 노출당 비율을 잴 때 분모는 `ranked[]`가 아니라 `impressions[]`이고, `impressions[]`가 비어 있는 항목은 **분모 0**이지 전환 0이 아니다 — 보고가 best-effort라 "안 봤다"와 "보고가 안 왔다"를 우리는 구별하지 못한다. 그 둘의 비를 재려면 클라이언트 버전별 보고율을 따로 봐야 한다.
 
 ---
 

@@ -321,6 +321,7 @@ GET /api/internal/svc/topic/catalog/graph
 |---|---|---|
 | topic-api | ~~api 프로세스 AMQP 연결 + visibility 변경 신호 발행~~ **완료**(#68·#69 — `topic_visibility_changed`, `consistent=true`). 카탈로그 route는 보류(R26) | — |
 | bourbon-api | ~~`personal_agent_visibility_changed`~~ 철회(R57), ~~친구 게이트 해제~~ **완료**(#325·#326). 방 생성 이벤트는 철회(R51). **남은 것은 요청이 아니라 알림 셋** — 백필이 없다는 것, 리컨사일에 재시도가 없다는 것, 게이트의 조건 셋을 우리가 못 본다는 것(요청서 §2) | — |
-| 클라이언트 | 카드에서 대화를 시작할 때 우리 route `POST /attributions`에 `recommendation_id`·`owner_user_id`·`entry` 보고(R47). 타입 ②③은 우리 응답에서, 타입 ①은 bourbon-agent 카드의 meta에서 받는다 | R47 |
+| 클라이언트 | 카드에서 대화를 시작할 때 우리 route `POST /attributions`에 `recommendation_id`·`owner_user_id`·`entry`와 `section_topic_id`·`position`(R66) 보고(R47). 타입 ②③은 우리 응답에서, 타입 ①은 bourbon-agent 카드의 meta에서 받는다 | R47·R66 |
+| 클라이언트 | 카드를 **실제로 화면에 그렸을 때** 우리 route `POST /attributions/impressions`에 그려진 카드들을 보고(R66). 이벤트가 아니라 route인 이유는 R47과 같다 — 우리만 읽는 측정값이다 | R66 |
 | bourbon-agent | 타입 ① 호출을 새 계약으로(요청자 = 실제 말한 사람. 자기 agent에게 묻는 경우 소유자와 같다. 타인의 agent 방에서 묻는 경우가 제품에 있다면 그 사람이어야 하는데, 지금 코드는 항상 agent 소유자를 보낸다), 응답의 `recommendation_id`를 카드 meta에 실어 전달(R24·R47 — 클라이언트가 meta에서 읽어 우리 route에 보고한다). **HEXACO 성향 벡터를 싣는 이벤트 필드는 이 묶음에 넣지 않는다** — 이벤트로 받는다는 방향만 있고(R42, bourbon-agent에 API는 열지 않는다) 무엇을 내보낼지·동의 범위가 O20에서 정해진 뒤 별도 요청 | 계약 확정 · R47 · (HEXACO는 O20 뒤) |
 | 성숙도 컴포넌트 | `agent_maturity_changed` | 컴포넌트 존재 |
