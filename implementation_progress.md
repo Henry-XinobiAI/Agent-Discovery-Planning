@@ -65,7 +65,7 @@
   이 둘이 남긴 것: `identity.py`가 room id도 계산하고(벡터는 bourbon-api의 함수로 직접 뽑았다), 마이그레이션 0004·0005, 그리고 **예측 인덱스를 쓰는 쪽은 1-5**라는 이음매 — 그게 붙기 전까지는 어떤 대화도 기록되지 않는다.
 
 - [x] **9. 1-4e 첫 공개 route** 🔴
-  `POST /api/svc/agent-discovery/attributions`(계약 §2-5), `PUBLIC_PREFIX`, 라우터를 `api/routers/internal/`·`public/`으로 분리. `test_surface_boundary.py`를 "route는 모듈이 말하는 prefix 아래에만, 내부 route는 `x-user-id`를 읽지 않는다"로 재작성.
+  `POST /api/svc/agent-discovery/recommendations/opened`(계약 §2-5), `PUBLIC_PREFIX`, 라우터를 `api/routers/internal/`·`public/`으로 분리. `test_surface_boundary.py`를 "route는 모듈이 말하는 prefix 아래에만, 내부 route는 `x-user-id`를 읽지 않는다"로 재작성.
   완료 조건: 공개 route가 edge-auth 헤더로 요청자를 잡고 내부 route에는 헤더 의존이 없다는 테스트.
   PR: #28 (머지 2026-09-11). 커밋 넷 — 저장소 쓰기, 라우터 분리, 공개 surface와 route, CORS. **두 surface는 정반대 규칙을 갖고, 그 규칙을 지키는 것은 테스트뿐이다.** 내부 prefix에서는 공유 정책이 edge-auth를 건너뛰므로 `x-user-id`가 호출자가 쓴 값이고 아무도 읽지 않는다. 공개 prefix에서는 사이드카가 그 헤더를 **덮어쓰므로** 요청자는 반드시 헤더이고 body에 같은 뜻의 필드가 있으면 안 된다. 어디에 마운트하느냐가 검사 여부를 정하는 전부인데 메시 정책은 잘못 놓인 route를 알아채지 못한다 — 그래서 route가 **정의된 패키지**를 읽는 경계 테스트로 옮겼고(목록이 아니라), 라우터를 `api/routers/internal/`·`public/`으로 가른 것이 그 때문이다. 헤더가 없으면 **403이지 401이 아니다** (계약 §1): 사이드카는 허용한 모든 요청에 넣으므로 없다는 건 "검사를 지나오지 않음"이고, 세션 갱신은 도움이 안 되며 우리는 자격증명을 읽지도 못한다. **`reported_at`은 우리 시계다** — §2-5 payload에 시각이 없다. 읽는 쪽이 이것을 bourbon-api가 찍은 대화 시작 시각과 `<=`로 자르므로 시계가 둘이고, 비용은 한쪽으로만 간다: 우리가 앞서면 보고가 자기 대화를 놓치고 예측(R51)이나 `direct`가 답할 뿐, 아직 나가지 않은 추천에 대화가 붙지는 않는다. 204는 "미뤘다"가 아니라 "답할 게 없다"이고, 쓰기가 실패하면 500이다 — best-effort는 클라이언트가 답을 무시해도 된다는 뜻이지 우리가 지어내도 된다는 뜻이 아니다. **계획에 없던 커밋 하나를 넣었다(CORS).** 실측으로 preflight가 405에 CORS 헤더 0개였다. edge-auth는 preflight를 검사에서 빼므로 위쪽 누구도 답하지 않고, 브라우저는 거기서 멈춘다 — 만들어 놓고 브라우저가 못 부르는 surface였다. 셋을 코드로 막았다: `*`는 버리고(Starlette이 `*`+credentials를 "물어본 origin을 되돌려준다"로 읽어, 우리가 소유하지 않은 ConfigMap의 한 글자가 세션 실은 cross-site POST를 막는 유일한 장치를 무력화한다), **공개 prefix에만** 답하고(`CORSMiddleware`는 라우터를 안 봐서 그냥 붙이면 edge-auth가 건너뛰어지는 내부 prefix에도 답한다), 가장 바깥에 둔다. **리뷰 3회 지적 40건 전부 반영, 블로커 둘 다 내가 쓰려던 코드 밖에 있었다.** 하나는 **단위 테스트가 아무것도 검사하지 않던 것** — 컴파일된 SQL 문자열에서는 모든 값이 `%(name)s` 자리표시자라, user id 쌍을 뒤바꾸든 `reported_at`을 안 쓰든 `entry`를 상수로 박든 네 변이가 전부 초록이었다(바인딩된 파라미터를 통째로 비교하도록 바꾸고 네 변이를 실제로 만들어 확인). 다른 하나는 **배포 순서**: API가 DB 클라이언트가 되면서 boot이 막히는데 Secret은 손으로 넣는 것이고 `optional: true`였다 — 키 없는 네임스페이스에서 CrashLoopBackOff이고 내부 `/recommend`까지 같이 못 뜨며 이유는 어디에도 안 적힌다. `optional`을 빼서 kubelet이 **없는 키 이름을 말하며** 거부하게 했다(단, 이건 *없는* 경우만 잡는다 — 엔진 생성은 아무 데도 연결하지 않고 readiness는 DB를 묻지 않으므로 틀린 DSN은 멀쩡히 뜬다). 나머지 지적의 가장 큰 묶음은 **"규칙이 빈 집합 위에서 참"**이었다: body 필드 워커가 `Report | None`과 중첩 모델을 못 봄, 헤더 워커가 `request.headers.get()`을 구조로 못 봄(텍스트로 막음), 공개 route가 `OPTIONS`를 받으면 안 된다는 규칙 부재(preflight는 검사 면제라 그 헤더가 클라이언트 것인데 기존 단언은 그런 route를 **승인**한다), 가드 없는 단언 하나, 공개 테스트가 fake를 빠뜨리면 진짜 DB에 쓰던 것. 새 가드는 전부 변이로 확인했다. 1176 tests(라이브 포함 1259). **남는 전제 둘**: dev·prod Secret의 `DATABASE_URL` 확인(머지 전), 그리고 bourbon-api 경로 레지스트리에 공개 prefix 등록(요청서 §2-2, PR #70) — 없으면 밖에서는 SPA catch-all로 떨어져 HTML이 돌아온다. CORS 커밋이 그 등록보다 **먼저** 머지돼야 한다.
 
@@ -187,7 +187,7 @@
 
   **2026-09-17에 더한 것 — 문서 페이지와, 그것을 쓰다 나온 결함 하나**(코드 #50). 세 리더(Scalar·Swagger UI·ReDoc)가 한 OpenAPI 문서를 읽는데 그 문서가 두 군데서 틀려 있었다.
   - **누를 것이 없었다.** 새 계약의 모든 라우트가 쿼리·경로·`x-user-id`·본문 어디에도 예제가 없어서 "Test Request"가 `{}`를 보냈다. 전부 채웠고, 세 답에는 응답 예제도 붙였다. 두 키에 동시에 쓴다 — `examples`(JSON Schema 2020-12, Scalar가 읽는다)와 `example`(OpenAPI 3.0의 단수형, 나머지 둘이 파라미터 상자를 채울 때 본다). 숫자와 언어는 `shown_from()`이 스키마를 만드는 시점에 레지스터에서 읽는다(R39) — 리터럴로 적으면 오버라이드 파일이 행을 옮기는 순간 문서가 서비스가 거부하는 요청을 안내한다. **얼어붙은 `POST /recommend`만 예외다**: 그 모델의 상한은 레지스터 행이 아니라 자기 리터럴(`le=20`, `Literal["en","ko"]`)이라 레지스터를 읽으면 자기 모델이 거부하는 예제가 나온다.
-  - **일어날 수 없는 실패를 문서화하고 있었다.** `ErrorResponse`가 손으로 쓴 봉투 넷을 들고 있었고 앱이 그 모델을 모든 라우트의 4XX/5XX로 등록하므로, **문서의 모든 오퍼레이션이**(헬스 프로브 둘까지) 타입 ①의 grounding 실패를 광고했다 — `POST /attributions`가 `grounding_failed`를 말하고 있었다. 이제 각 라우터가 자기 파이프라인이 닿을 수 있는 것만 나열하고, 봉투는 `AppError` 클래스에서 유도한다. 앱 수준 와일드카드는 라우트가 나열할 수 없는 것(없는 경로, 안 받는 메서드)용으로 남고 그렇게 말한다.
+  - **일어날 수 없는 실패를 문서화하고 있었다.** `ErrorResponse`가 손으로 쓴 봉투 넷을 들고 있었고 앱이 그 모델을 모든 라우트의 4XX/5XX로 등록하므로, **문서의 모든 오퍼레이션이**(헬스 프로브 둘까지) 타입 ①의 grounding 실패를 광고했다 — `POST /recommendations/opened`가 `grounding_failed`를 말하고 있었다. 이제 각 라우터가 자기 파이프라인이 닿을 수 있는 것만 나열하고, 봉투는 `AppError` 클래스에서 유도한다. 앱 수준 와일드카드는 라우트가 나열할 수 없는 것(없는 경로, 안 받는 메서드)용으로 남고 그렇게 말한다.
   - 그 표를 쓰다 **둘이 드러났다**: **타입 ②는 요청마다 topic-api를 읽는다**(요청자 본인의 holdings, R27) — "저장소와 카탈로그 파일만 읽는다"고 적어둔 주석이 틀렸고, 두 by-topic 라우트 모두 `upstream_unavailable`을 낼 수 있다. 그리고 `topic_id`는 어느 모델에도 속하지 않는 경로 파라미터라 `safe_validation_errors`가 가려서 422가 `path.<undeclared>`로 나갔다 — 우리가 지은 이름이므로 `PATH_FIELDS`에 등록했다.
   - **그리고 결함 하나.** 타입 ③은 소스를 `asyncio.TaskGroup` 둘에서 읽는데, 그룹은 자식의 실패를 `ExceptionGroup`으로 감싼다. 핸들러 디스패치는 예외 자신의 타입을 따라가고 `ExceptionGroup`은 무엇을 담았든 `ProviderError`가 아니라서, **topic-api 장애가 500 `internal_server_error`로, 트레이스백과 함께 나갔다.** 남의 장애를 우리 결함으로 접수한 것도 문제지만 더 나쁜 것은 그 트레이스백이다 — `UpstreamContractViolation`의 텍스트는 topic-api가 보낸 본문을 인용하고, 그건 사람이 자기 에이전트에 대해 쓴 문장이다. **invariant 7을 우회하는 경로였다.** `pipelines/errors.alone()`이 그룹을 벗겨 그 실패 자체를 넘기고, 여럿이 동시에 실패한 그룹은 `to_app_error`가 멤버를 읽어 답하며 트레이스백 없는 핸들러로 간다. 덤으로 `_bounded`의 규칙을 반대 방향에도 적용했다 — 우리 마감이 만료된 뒤에 나온 것은 무엇이든 그 예산의 결과이지, 답을 멈춘 데이터베이스가 아니다.
   - **알람 임계에 영향이 있다**(R60의 관측 항목과 같이 읽을 것): 이 고침 전에는 타입 ③의 topic-api 장애가 `unhandled error` 500으로 보였고 이제는 503 `upstream_unavailable`로 보인다. 로그에서 세는 자리가 달라진다.
@@ -342,7 +342,7 @@
 
   PR: 코드 #59 · 기획 #116 · 기획 #117
 
-- [ ] **20. 노출도 보고받는다 — `POST /attributions/impressions`**(R66) 🟡
+- [ ] **20. 노출도 보고받는다 — `POST /recommendations/shown`**(R66·R67) 🟡
 
   **왜**: 클라이언트가 목록을 **미리 fetch해 두고 나중에 그린다.** 그래서 `served_at`은 "답한 때"이지 "본 때"가 아니고, 화면에 닿지도 않은 목록이 전부 분모에 들어간다 — R47이 재려던 비율이 fetch 수로 나눈 값이 되고, **왜곡의 크기조차 알 수 없다.** 항목 19가 남긴 질문("자손으로 맞은 카드가 사람 눈에 닿기는 하는가")도 이 데이터 없이는 못 잰다: dev 데이터에서 그 요청자의 자손 매칭 선반은 4~7번째였고 기본값은 `sections=3`이다.
 
@@ -350,15 +350,24 @@
 
   **기획**(이 커밋): 계약 §2-5(필드 둘)·§2-6(신설)·§6·§6-1·§8, 레지스터 §9 한 행, 요청서 client §2·§3·§4, walkthrough, 이벤트 정의서 §2-4. 결정은 R66.
 
-  **코드**, 커밋 단위:
-  1. 마이그레이션 0010 — `attributions`에 `section_topic_id`(text, null)·`position`(int, null). `AttributionReport`에 선택 필드 둘, 라우트가 그대로 넘긴다. **워커 조인은 안 읽는다**(측정용).
-  2. `DecisionLogStore.append_impressions()` — `append_page()`와 같은 조건에 `size(#impressions) < :cap` 하나 더. 조건 실패는 예외가 아니라 "안 적혔다"로 답한다.
+  **코드**, 의존 순서대로 다섯 커밋(계획에 적었던 순서와 다르다 — 마이그레이션이 1번이었는데 마지막이 됐다):
+  1. 레지스터 행 ↔ `settings.py`(`attribution.max_impression_cards`).
+  2. `DecisionLogStore.append_impressions()` — `append_page()`와 같은 조건에 **카드 수 상한** 한 절을 더한다. 조건 실패는 예외가 아니라 "안 적혔다"로 답한다.
   3. `AnswerJournal.record_impressions()` — 저널의 기존 쓰기 예산·삼킴 규칙 그대로.
-  4. `POST /attributions/impressions` — `PUBLIC_PREFIX` 아래 두 번째 route. 조건 실패도 204 + 구조화 로그.
-  5. 레지스터 행 ↔ `settings.py`(`attribution.max_impression_reports`).
-  6. 요청서 client 전달.
+  4. `POST /recommendations/shown` — `PUBLIC_PREFIX` 아래 두 번째 route. 조건 실패도 204 + 구조화 로그.
+  5. 마이그레이션 0010 — `attributions`에 `section_topic_id`(`String(64)`, null)·`position`(int, null). `RecommendationOpened`(그때 이름은 `AttributionReport`)에 선택 필드 둘, 라우트가 그대로 넘긴다. **워커 조인은 안 읽는다**(측정용).
 
-  **완료 조건**(넷 다 `LOCAL_STACK=1` 라이브): 남의 `recommendation_id`로 보낸 보고가 **적히지 않고 204**, 없는 id도 같은 것, `cap`을 넘기면 append가 멈추는 것, 타입 ② 한 화면의 두 선반에 선 **같은 소유자가 보고에서 구별되는 것**.
+  요청서 client 전달은 코드 커밋이 아니라 기획 쪽 일이다.
+
+  **리뷰 뒤에 붙은 커밋 넷**(리뷰어 넷: 저장소·저널 / API 표면·보안 / PostgreSQL·마이그레이션 / 계약 일치):
+  6. `position`에 컬럼 상한 — 없을 때 **로그인한 아무나 500**을 낼 수 있었다(`int4` 초과 → `DataError`는 핸들러가 없다). 두 새 컬럼에 non-null을 쓰는 라이브 테스트가 없어서 안 보였다.
+  7. cap이 **카드 수**를 센다 — 건수 상한은 항목 크기를 안 묶었고(실측 13건), 넘긴 항목은 같은 목록의 `pages[]`까지 막는다. fake가 조건을 실제로 평가하게 만들었다 — 그 전엔 `requester_user_id` 절을 지워도 기본 스위트가 **전부 초록**이었다.
+  8. 거짓이던 docstring 여섯을 고치고, "조인은 안 넓혔다"를 주석에서 **단언으로** 바꿨다(모든 라이브 보고가 null을 넘겨서 좁혀진 조인이 통과하고 있었다). 분모가 **클라이언트 위조 가능**이라는 것도 적었다 — 목록은 검증되지만 카드는 안 된다.
+  9. 한 보고의 상한 200 → 50(가장 긴 목록 한 페이지).
+  10. R67 — route 이름을 클라이언트가 한 일로 바꿨다.
+
+  **완료 조건**: 남의 `recommendation_id`로 보낸 보고가 **적히지 않고 204**, 없는 id도 같은 것, 카드 수 상한을 넘기면 append가 멈추는 것(셋 다 `LOCAL_STACK=1` 라이브), 그리고 타입 ② 한 화면의 두 선반에 선 **같은 소유자가 보고에서 구별되는 것**.
+  마지막 것은 라이브가 아니라 컴파일된 statement로 본다 — 같은 `(요청자, 소유자)`의 두 보고는 `reported_at` 해상도로만 갈리고, 같은 마이크로초에 들어온 둘은 `on_conflict_do_nothing`이 먼저 온 것을 남긴다(계약 §6). 선반은 PK에 넣을 수 없다: 두 칸 다 nullable이고 PostgreSQL 키는 null을 담지 않는다.
 
   **여기서는 못 재는 것**: 합성 인구에는 클라이언트가 없으니 노출이 없다. 항목 19와 같은 종류의 공백이고(메모리 참조), 숫자는 dev·prod에서만 나온다.
 

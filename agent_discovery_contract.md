@@ -97,9 +97,11 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 - **페이지가 있는 답은 `has_next`와 `next_cursor`를 같이 준다**(R64). bourbon-api의 목록 봉투(`GET /api/users`의 `UserListOut`)와 같은 모양이라, 클라이언트가 두 종류의 목록에 한 가지 페이지 로직을 쓴다. **둘은 언제나 일치한다** — `has_next`가 참인 것과 `next_cursor`가 있는 것은 같은 말이고, 그 불변은 봉투를 만드는 한 곳이 지킨다. 중복인 것을 알고 두는 것이다: 한 값만 보는 클라이언트가 어느 쪽을 골라도 맞게 하려는 것이고, 값이 갈리면 그것은 우리 결함이지 상태가 아니다. 커서가 없는 답(타입 ①)에는 둘 다 없다.
 - 요청자 본인의 agent는 어느 타입에서도 결과에 없다.
 
-### 2-5. 어트리뷰션 보고 `POST /attributions` (R47·R66)
+### 2-5. 대화 시작 보고 `POST /recommendations/opened` (R47·R66·R67)
 
 클라이언트가 추천 카드에서 대화를 시작할 때 우리에게 직접 알린다. 다른 서비스의 route나 이벤트에 우리 필드를 얹지 않는다(플랫폼 이벤트 기준, 이벤트 정의서 §0).
+
+**경로가 "어트리뷰션"이 아닌 이유(R67).** 클라이언트가 아는 것은 "추천에서 대화를 열었다" 하나다. 귀속은 그 뒤에 워커가 이 보고를 그 방의 첫 메시지에 이으면서 생기고, `attributed_by`가 셋 중 어느 길이었는지 적는다 — **우리가 돌기 전에는 없는 명사**다. 저장소 쪽은 계속 `attributions`다: 바깥 이름은 클라이언트가 한 일을, 안쪽 이름은 우리가 그걸로 하는 일을 말한다.
 
 | 필드 | 타입 | 의미 |
 |---|---|---|
@@ -113,7 +115,7 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 
 **뒤의 두 칸이 생긴 이유(R66).** `(recommendation_id, owner_user_id)`만으로는 **어느 선반에서 눌렀는지 알 수 없다** — R65 이후 한 소유자가 한 화면의 두 선반에 동시에 선다(정확히 맞은 선반과 자손으로 맞은 선반). 둘은 같은 카드가 아닌데 보고는 같은 모양이 되고, 그러면 §2-6의 분모는 선반별로 갈리는데 분자가 안 갈린다 — R65가 답하려던 "자손으로 맞은 카드가 실제로 대화가 되는가"를 영영 못 재게 된다. **둘 다 없어도 보고는 유효하다**: 지금 모양으로 보내는 클라이언트의 보고는 그대로 받고 두 칸이 null이 된다.
 
-### 2-6. 노출 보고 `POST /attributions/impressions` (R66)
+### 2-6. 노출 보고 `POST /recommendations/shown` (R66·R67)
 
 카드를 **실제로 화면에 그렸을 때** 클라이언트가 알린다. §2-5가 분자면 이것이 분모다.
 
@@ -122,14 +124,16 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 | 필드 | 타입 | 의미 |
 |---|---|---|
 | `recommendation_id` | UUID | 그 카드들을 만들어 낸 응답 envelope의 값 |
-| `cards[]` | 배열 | 이번에 화면에 그려진 카드들. 빈 배열은 422, **한 응답이 낼 수 있는 카드 수보다 길어도 422** — 가장 큰 경우가 타입 ②의 `sections`×`per_section` = 10×20이므로 200장이다. 한 번에 다 보낼 필요는 없다(아래) |
-| `cards[].owner_user_id` | UUID | 카드의 값 |
-| `cards[].position` | int | 카드의 `position`(§3-1) |
-| `cards[].section_topic_id` | string \| null | 그 카드가 선 선반의 topic. 타입 ②만 |
+| `items[]` | 배열 | 이번에 화면에 그려진 카드들. 빈 배열은 422, **50장을 넘어도 422**(아래). 한 번에 다 보낼 필요는 없다 |
+| `items[].owner_user_id` | UUID | 카드의 값 |
+| `items[].position` | int | 카드의 `position`(§3-1) |
+| `items[].section_topic_id` | string \| null | 그 카드가 선 **선반**의 topic — `DiscoverSection.topic_id`(또는 섹션 route의 경로 파라미터)다. 타입 ②만 |
 
 요청자는 edge-auth의 `x-user-id`. 응답 204.
 
-**`entry`는 받지 않는다.** 결정 로그 항목이 `type`을 이미 갖고 있다. 두 곳에 적으면 갈릴 수 있고, 갈렸을 때 어느 쪽이 맞는지 정할 근거가 없다.
+**`section_topic_id`는 카드에서 읽는 값이 아니다.** 셋 중 둘(`owner_user_id`·`position`)만 카드에 있고, 선반 topic은 **카드를 감싼 섹션**에 있다. 카드에 있는 유일한 topic id는 `matched_topics[].topic_id`인데 **R65 이후 그건 대개 선반의 자손**이다("커피" 선반의 카드가 `핸드드립`을 든다 — §2-2). 거기서 읽으면 자손 id가 보고되고, **검증을 통과하고 그대로 적힌다** — 그 값을 우리가 아는 선반에 맞춰 보는 곳이 없으므로 선반별 분모가 틀린 채 아무도 모른다. 요청서 client §3이 이 문장을 그대로 싣는다.
+
+**`entry`는 받지 않는다 — 무시가 아니라 422다.** 결정 로그 항목이 `type`을 이미 갖고 있다. 두 곳에 적으면 갈릴 수 있고, 갈렸을 때 어느 쪽이 맞는지 정할 근거가 없다. **요청 모델이 선언하지 않은 키를 거부하므로**(§2의 모든 요청과 같다) §2-5의 본문을 복사해 `entry`를 남겨 두면 **모든 보고가 422**가 된다 — 그리고 fire-and-forget이라 클라이언트가 알아채지 못한 채 그 분모가 영영 빈다.
 
 **적히는 곳은 결정 로그다**(§8·§6-1). **노출 쪽에는** 새 테이블도 새 스윕도 마이그레이션도 없다(§2-5의 두 칸은 다르다 — 거기엔 컬럼 둘이 붙는다): `REC#{recommendation_id}`/`LOG` 항목의 `impressions[]`에 `pages[]`와 같은 방식으로 덧붙고, 보존은 그 항목의 TTL(`decision_log.ttl_days`)을 그대로 탄다. 읽는 쪽이 평가 배치 하나뿐이고 **조인 상대가 없어서다** — §2-5가 PostgreSQL에 있는 이유(워커가 `message_created`와 조인한다)가 여기엔 없다.
 
@@ -137,9 +141,15 @@ GET /discover/for-you?limit=20&cursor=…&lang=ko                // limit 기본
 
 **조건에 걸려도 204다.** 404는 "그 `recommendation_id`가 존재하는가"를 묻는 도구가 되고, 클라이언트는 어차피 할 수 있는 것이 없다(fire-and-forget). 대신 구조화 로그가 남는다.
 
-**한 목록에 여러 번 온다.** 스크롤을 따라 같은 `recommendation_id`에 append가 이어지므로 항목이 자란다. 클라이언트는 한 목록 안에서 **카드 하나를 처음 보일 때 한 번만** 보고하고, 서버는 `attribution.max_impression_reports`를 넘기면 더 붙이지 않는다(DynamoDB 항목 400 KB 상한).
+**`items[]`의 상한은 한 요청을 묶는 값이지 한 응답의 크기가 아니다.** 처음에 "한 응답이 낼 수 있는 카드 수"(타입 ②의 `sections`×`per_section`)로 유도했는데 **틀렸다** — 클라이언트는 스크롤을 따라 보고하고 다음 페이지는 같은 `recommendation_id`를 이어 가므로, **한 섹션을 끝까지 읽은 정직한 보고가 어느 한 응답보다 길다.** 요청을 묶는 값은 **한 번에 그려질 수 있는 양**이고 그건 한 페이지다 — 가장 긴 목록이 `for_you.limit_max`(50)이므로 50이다. 레지스터 행이 아니고 그 행에서 계산하지도 않는다: 레지스터를 좁히는 것은 배포가 할 수 있는 일이고, 같이 움직이는 요청 상한은 정직한 보고를 거절하기 시작한다. 넘으면 나눠 보내면 된다.
+
+**한 목록에 여러 번 온다.** 스크롤을 따라 같은 `recommendation_id`에 append가 이어지므로 항목이 자란다. 클라이언트는 한 목록 안에서 **카드 하나를 처음 보일 때 한 번만** 보고하고, 서버는 그 목록에 보고된 **카드 수**가 `attribution.max_impression_cards`를 넘기면 더 붙이지 않는다.
+
+**cap이 세는 것은 보고 건수가 아니라 카드 수다.** 건수를 세면 크기가 안 묶인다 — 보고 하나가 카드 50장을 실을 수 있어서, 건수 상한만으로는 항목이 **DynamoDB의 400 KB를 넘는다**(실측: 13건). 그리고 넘긴 항목은 **그 뒤 아무것도 못 받는다** — 같은 항목의 `pages[]`까지 막히는데 그건 답변 경로의 기록이다. 게다가 그 실패는 거절이 아니라 오류라서, 그 목록에 대한 이후 모든 요청이 **장애처럼 생긴 로그**를 남긴다. cap은 **보고 하나만큼의 여유**를 갖는다: 상한 직전에 닿은 보고는 통째로 들어간다(크기를 이유로 보고를 쪼개 거절하는 것보다 싸다).
 
 **"보여줬다"의 기준은 클라이언트가 정한다.** 뷰포트 몇 %·몇 초인지는 우리가 볼 수 없는 값이고, 그 정의가 분모의 의미를 통째로 정한다. 요청서 client §4의 질문이고, **정해지면 여기에 적는다.**
+
+**같은 카드가 두 번 실릴 수 있고, 읽는 쪽이 distinct로 센다.** append는 멱등이 아니고 전송 계층이 재시도한다 — 쓰기가 닿은 뒤 응답이 끊기면 같은 보고가 두 번 들어간다. 클라이언트 재시도와 스크롤 왕복도 같다. 그래서 **분모는 `impressions[]`의 항목 수가 아니라 그 안의 서로 다른 `(owner_user_id, section_topic_id, position)` 수**다. 쓰기 시점에 막지 않는 이유는 그러려면 보고마다 id를 들려 보내거나 항목을 읽어야 하는데, 읽는 쪽에서 한 번 세는 것이 같은 답을 더 싸게 주기 때문이다.
 
 **`impressions[].at`은 우리 시계다.** payload에 시각이 없는 것도, 그 이유도 §2-5의 `reported_at`과 같다 — 클라이언트의 시계는 아무것도 증명하지 않는다. 읽을 때도 같게 읽는다: "그들이 본 때"가 아니라 "보고가 우리에게 닿은 때"다.
 
@@ -225,7 +235,7 @@ null인 필드가 키째 사라지면, 클라이언트는 그 필드가 그 카�
 
 **표시 필드는 우리가 채우고, 뷰어에 따라 달라지는 것은 클라이언트가 읽는다**(R63). 값은 요청 시 내부 route 둘(`GET /api/internal/users?ids=`, `GET /api/internal/agents?ids=`)을 배치로 읽어 채우고, 미러하지 않는다(§6). 못 채우면 그 필드는 null이고 `degraded`에 `hydration_partial`이 붙는다 — 상태는 200이고 카드는 id만 가진 채로 그려진다. **필드 목록은 디자인이 정해지기 전의 기준값이다**(§11).
 
-**id는 최상위에만 있고 블록에는 없다.** `agent_id`·`owner_user_id`가 이 계약의 키다 — 카드를 누른 시점의 조회와 §2-5 어트리뷰션 보고가 그것을 쓴다. 블록 안에 되풀이하면 한 카드에 같은 값이 세 번 적힌다.
+**id는 최상위에만 있고 블록에는 없다.** `agent_id`·`owner_user_id`가 이 계약의 키다 — 카드를 누른 시점의 조회와 §2-5 대화 시작 보고가 그것을 쓴다. 블록 안에 되풀이하면 한 카드에 같은 값이 세 번 적힌다.
 
 **`agent`는 혼자서도 null이 될 수 있다.** bourbon-api는 사람과 agent를 두 row로 답하고, 사람 쪽만 오는 경우가 있다. 둘이 같이 null이면 하이드레이션 실패이고, 그때만 `hydration_partial`이 붙는다.
 
@@ -495,7 +505,7 @@ class Ranker(Protocol):
 
 ## 8. 결정 로그
 
-목록마다 한 건 — 첫 페이지에 발급된 `recommendation_id`가 PK고, 다음 페이지 요청은 같은 항목에 `pages[]`로 덧붙인다(§2-4). 오프라인 평가의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18·R44, key space는 §6-1): `REC#{recommendation_id}` / `LOG`(어트리뷰션 보고 §2-5의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 날짜·타입별로 읽도록 GSI `served-day-index`(`served_day_key = {type}#{YYYY-MM-DD}#{shard}`, shard 병합), 보존은 TTL(`decision_log.ttl_days`). 집계는 SQL이 아니라 평가 배치의 코드다.
+목록마다 한 건 — 첫 페이지에 발급된 `recommendation_id`가 PK고, 다음 페이지 요청은 같은 항목에 `pages[]`로 덧붙인다(§2-4). 오프라인 평가의 정답 로그다. **유저의 글은 없다.** 저장은 **DynamoDB**(R18·R44, key space는 §6-1): `REC#{recommendation_id}` / `LOG`(대화 시작 보고 §2-5의 `recommendation_id`가 단건으로 찾아온다), 평가 배치가 날짜·타입별로 읽도록 GSI `served-day-index`(`served_day_key = {type}#{YYYY-MM-DD}#{shard}`, shard 병합), 보존은 TTL(`decision_log.ttl_days`). 집계는 SQL이 아니라 평가 배치의 코드다.
 
 ```json
 {
@@ -512,7 +522,7 @@ class Ranker(Protocol):
   },
   "sources": [ {"name": "topic_index", "hits": 20, "latency_ms": 6} ],
   "filter": {"in": 20, "out": 0, "friends_used": true, "degraded": []},   // 개수는 로그에만. 응답엔 없음. 조건이 쿼리에 있어 out은 보통 0(R17) — 응답 직전 재확인에서 빠진 수만 여기 선다
-  "ranked": [ {"owner_user_id": "uuid", "position": 1, "features": {…}, "score": 0.83, "talked_before": false} ],   // 섞기 전(랭커) 순서. 서빙 순서는 shuffle로 재현. talked_before는 R28의 재등장 표식(응답에는 없음)
+  "ranked": [ {"owner_user_id": "uuid", "position": 1, "topics": ["…"], "features": {…}, "score": 0.83, "talked_before": false} ],   // 섞기 전(랭커) 순서. 서빙 순서는 shuffle로 재현. talked_before는 R28의 재등장 표식(응답에는 없음). topics는 이 소유자가 어느 topic으로 순위에 들었나 — 타입 ②는 선반들을 이어 붙인 목록이라 이것이 없으면 선반 경계를 복구할 수 없다(R65)
   "basis": "content",                             // ③
   "cf_model_version": "fit-2026-09-08T03Z",       // ③ 어느 cf_candidates 스냅샷으로 답했나
   "shuffle": {"seed": "rec-…", "bands": [5, 20, 50]},   // ③ R20. bands = 구간의 누적 상한(1~5, 6~20, 21~50). 구간 안 순서를 재현하는 재료
@@ -520,9 +530,11 @@ class Ranker(Protocol):
   "served_at": "2026-09-08T…Z",
   "pages": [ {"cursor": "…", "positions": [21, 40], "served_at": "…"} ],   // 다음 페이지 요청마다 한 항목(§2-4). 첫 페이지는 위 필드들
   "impressions": [                                // 실제로 화면에 그려진 카드(§2-6, R66). 스크롤을 따라 한 목록에 여러 건 온다
+                                                  // 와이어의 `items[]`가 여기서는 `cards`다 — 바깥은 클라이언트의 말, 안쪽은 우리 말(R67)
     {"at": "2026-09-23T…Z",                       // 보고가 우리에게 닿은 때. 우리 시계다 (§2-5의 reported_at과 같은 이유)
      "cards": [{"owner_user_id": "uuid", "position": 3, "section_topic_id": "topic_food"}]}
-  ]
+  ],
+  "impression_cards": 42                          // 위 `cards`의 누계. 조건이 `SET`이 덧붙일 목록을 셀 수 없어 따로 둔다(R66 개정)
 }
 ```
 

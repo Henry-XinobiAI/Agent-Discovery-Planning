@@ -65,11 +65,11 @@ personal_agent_visibility_changed = Event("bourbon.personal_agent_visibility_cha
 
 `feature/edge-auth-anonymous`(`cb63b92`)를 읽었다. 익명 allow 경로에서 `x-envoy-auth-headers-to-remove`에 `x-user-id`를 더하신 것이 이 변경의 안전을 떠받치는 한 줄이라고 본다 — 그것이 없으면 클라이언트가 보낸 `x-user-id`가 검증된 것처럼 우리에게 도착하고, 우리 public surface 전체가 위장 가능해진다. 제대로 돼 있다.
 
-**우리 쪽 선행 작업은 없었다.** public route 넷(`discover/for-you`, `discover/by-topic`, `discover/by-topic/{topic_id}`, `attributions`)이 전부 필수 identity 의존성을 이미 갖고 있었다. PR 본문 서비스 표에 우리가 "`get_requester_id` → 401"로 적혀 있는데 **오늘 기준으로는 403**이고, 지금 401 `authorization_error`로 옮겼다(R62) — 표가 가정하신 쪽으로 맞춘 것이다. 가이드가 요구하시는 route-table 테스트도 넣었다. 기존 테스트가 "route가 `x-user-id` 파라미터를 선언했는가"만 보고 있어서, 헤더를 optional로 읽고 익명을 그냥 서빙하는 route를 통과시킨다는 것을 적대적 리뷰에서 실제로 확인했다. 가이드의 *"the test is what catches the route someone forgot"*이 정확했다.
+**우리 쪽 선행 작업은 없었다.** public route 넷(`discover/for-you`, `discover/by-topic`, `discover/by-topic/{topic_id}`, `attributions` — 현재 이름은 `recommendations/opened`·`recommendations/shown`, R67)이 전부 필수 identity 의존성을 이미 갖고 있었다. PR 본문 서비스 표에 우리가 "`get_requester_id` → 401"로 적혀 있는데 **오늘 기준으로는 403**이고, 지금 401 `authorization_error`로 옮겼다(R62) — 표가 가정하신 쪽으로 맞춘 것이다. 가이드가 요구하시는 route-table 테스트도 넣었다. 기존 테스트가 "route가 `x-user-id` 파라미터를 선언했는가"만 보고 있어서, 헤더를 optional로 읽고 익명을 그냥 서빙하는 route를 통과시킨다는 것을 적대적 리뷰에서 실제로 확인했다. 가이드의 *"the test is what catches the route someone forgot"*이 정확했다.
 
 **묻고 싶은 것 하나 — 웹 클라이언트의 401 인터셉터.** 가이드는 클라이언트에 "401이면 `GET /api/auth/session`으로 갱신하고 재시도"를 지시하고, 같은 문서가 authorizer 장애를 401이 아니라 503으로 답하는 이유로 *"a 401 would send every web client into a session-refresh loop over a problem no client can fix"*를 듭니다. **"처음부터 로그인하지 않았다"도 갱신으로 풀리지 않는 것**인데, 필수 identity route에서는 그것이 401이 됩니다. 클라이언트 쪽에서 "익명이라 401"과 "세션이 만료돼 401"을 구분할 방법이 준비돼 있는지(예: 로컬에 토큰이 없으면 갱신을 시도하지 않는다) 알려 주시면, 우리 쪽 메시지 문구를 거기에 맞추겠습니다. 우리가 보내는 것은 `{request_id, error_code: "authorization_error", message: "x-user-id header is missing"}`입니다.
 
-**알려 드릴 것 하나 — 익명 트래픽의 rate limit.** `POST /attributions`는 요청마다 PostgreSQL row 하나를 쓰고, 이 서비스 안에는 볼륨을 제한하는 것이 없습니다(그것이 edge의 일이라고 route docstring에 적어 뒀습니다). 토큰 없는 요청에도 edge rate limit이 걸리는지 확인이 필요합니다. 안 걸린다면 우리 쪽에서 이 route만 따로 막는 방법을 생각하겠습니다.
+**알려 드릴 것 하나 — 익명 트래픽의 rate limit.** `POST /recommendations/opened`는 요청마다 PostgreSQL row 하나를 쓰고, 이 서비스 안에는 볼륨을 제한하는 것이 없습니다(그것이 edge의 일이라고 route docstring에 적어 뒀습니다). 토큰 없는 요청에도 edge rate limit이 걸리는지 확인이 필요합니다. 안 걸린다면 우리 쪽에서 이 route만 따로 막는 방법을 생각하겠습니다.
 
 **`/api/webhooks/svc/`**: 우리에게는 오늘 쓸 데가 없습니다 — 우리가 받는 것은 전부 이벤트입니다. 등록 블록이 `x-user-id`를 제거한다는 점만 확인했습니다.
 
@@ -136,7 +136,7 @@ room_created = Event("bourbon.room_created", RoomCreatedPayload)
               number: 80
 ```
 
-**왜**: 클라이언트가 추천 카드에서 대화를 시작할 때 우리에게 보고하는 route `POST /api/svc/agent-discovery/attributions`
+**왜**: 클라이언트가 추천 카드에서 대화를 시작할 때 우리에게 보고하는 route `POST /api/svc/agent-discovery/recommendations/opened`
 (계약 §2-5, R47)와, 이어질 탐색 탭 route(타입 ②③)가 이 prefix에 있습니다. 등록이 없으면 SPA의 catch-all로 떨어져
 HTML이 돌아옵니다.
 
