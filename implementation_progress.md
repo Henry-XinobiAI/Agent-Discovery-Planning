@@ -303,8 +303,8 @@
 
   **앞으로 정해야 할 것 하나**: 카탈로그가 계속 바뀐다면 지금의 "복사해 커밋하고 배포 때 적재" 방식은 배포 주기만큼 뒤처진다. 이번에 3주 뒤처진 채였고 아무것도 알려주지 않았다. 주기 작업으로 topic-api에서 직접 읽는 쪽과 비교해 정해야 하는데, **dev에서 실제 변경 빈도를 보고 정하는 게 맞다** — 지금은 근거가 한 번의 관측뿐이다.
 
-- [ ] **18. 탐색 응답이 그려질 수 있는 상태로 나간다 — `owner`·`agent` 표시 블록**(R63, R64) 🟡
-  **구현 끝, PR 대기.** 계약 §3-1의 요소 둘(`RecommendedAgent` / `DiscoverAgent`), `has_next`(R64), `providers/bourbon_api/`, `discovery/owners.py`, 세 파이프라인 배선. 커밋 열, 1,924 tests.
+- [x] **18. 탐색 응답이 그려질 수 있는 상태로 나간다 — `owner`·`agent` 표시 블록**(R63, R64) 🟡
+  **머지 2026-09-23.** 계약 §3-1의 요소 둘(`RecommendedAgent` / `DiscoverAgent`), `has_next`(R64), `providers/bourbon_api/`, `discovery/owners.py`, 세 파이프라인 배선. 커밋 열, 1,924 tests.
 
   **이 서비스의 첫 bourbon-api HTTP 의존이다.** 모양은 `providers/topic_api/`와 bourbon-topic-api의 `topic/visibility/friends.py` 둘을 따랐다 — base ConfigMap에 origin만, 경로는 모듈 한 곳, 자격증명 없음, 헤더는 request id 하나.
 
@@ -319,6 +319,8 @@
   **물은 것 넷 중 셋은 답이 왔다**(요청서 bourbon-api §5): 호출량 괜찮고, `GET /api/internal/agents`를 요청 경로에서 써도 되고, **`enabled`는 안 봐도 된다**. 남은 하나(네트워크가 닿는지)는 dev 파드에서 직접 확인한다. 클라이언트 쪽 열린 질문(목록에 뷰어 의존 값이 필요한가)은 계약 §11 · 요청서 client §3의 4번.
 
   **덤**: go-live 백필이 쓰려던 bourbon-api 클라이언트가 여기서 먼저 생겼다(항목 15의 여섯째 주기 잡). 지금 연 것은 `ids` 배치뿐이고 열거 셀렉터는 그때.
+
+  PR: 기획 #113 · 코드 #58 · 기획 #114
 
 
 ## 미룬 소소한 것 (해당 PR에서 되짚기)
