@@ -350,15 +350,17 @@
 
   **기획**(이 커밋): 계약 §2-5(필드 둘)·§2-6(신설)·§6·§6-1·§8, 레지스터 §9 한 행, 요청서 client §2·§3·§4, walkthrough, 이벤트 정의서 §2-4. 결정은 R66.
 
-  **코드**, 커밋 단위:
-  1. 마이그레이션 0010 — `attributions`에 `section_topic_id`(text, null)·`position`(int, null). `AttributionReport`에 선택 필드 둘, 라우트가 그대로 넘긴다. **워커 조인은 안 읽는다**(측정용).
-  2. `DecisionLogStore.append_impressions()` — `append_page()`와 같은 조건에 `size(#impressions) < :cap` 하나 더. 조건 실패는 예외가 아니라 "안 적혔다"로 답한다.
+  **코드**, 의존 순서대로 다섯 커밋(계획에 적었던 순서와 다르다 — 마이그레이션이 1번이었는데 마지막이 됐다):
+  1. 레지스터 행 ↔ `settings.py`(`attribution.max_impression_cards`).
+  2. `DecisionLogStore.append_impressions()` — `append_page()`와 같은 조건에 **카드 수 상한** 한 절을 더한다. 조건 실패는 예외가 아니라 "안 적혔다"로 답한다.
   3. `AnswerJournal.record_impressions()` — 저널의 기존 쓰기 예산·삼킴 규칙 그대로.
   4. `POST /attributions/impressions` — `PUBLIC_PREFIX` 아래 두 번째 route. 조건 실패도 204 + 구조화 로그.
-  5. 레지스터 행 ↔ `settings.py`(`attribution.max_impression_reports`).
-  6. 요청서 client 전달.
+  5. 마이그레이션 0010 — `attributions`에 `section_topic_id`(`String(64)`, null)·`position`(int, null). `AttributionReport`에 선택 필드 둘, 라우트가 그대로 넘긴다. **워커 조인은 안 읽는다**(측정용).
 
-  **완료 조건**(넷 다 `LOCAL_STACK=1` 라이브): 남의 `recommendation_id`로 보낸 보고가 **적히지 않고 204**, 없는 id도 같은 것, `cap`을 넘기면 append가 멈추는 것, 타입 ② 한 화면의 두 선반에 선 **같은 소유자가 보고에서 구별되는 것**.
+  요청서 client 전달은 코드 커밋이 아니라 기획 쪽 일이다.
+
+  **완료 조건**: 남의 `recommendation_id`로 보낸 보고가 **적히지 않고 204**, 없는 id도 같은 것, 카드 수 상한을 넘기면 append가 멈추는 것(셋 다 `LOCAL_STACK=1` 라이브), 그리고 타입 ② 한 화면의 두 선반에 선 **같은 소유자가 보고에서 구별되는 것**.
+  마지막 것은 라이브가 아니라 컴파일된 statement로 본다 — 같은 `(요청자, 소유자)`의 두 보고는 `reported_at` 해상도로만 갈리고, 같은 마이크로초에 들어온 둘은 `on_conflict_do_nothing`이 먼저 온 것을 남긴다(계약 §6). 선반은 PK에 넣을 수 없다: 두 칸 다 nullable이고 PostgreSQL 키는 null을 담지 않는다.
 
   **여기서는 못 재는 것**: 합성 인구에는 클라이언트가 없으니 노출이 없다. 항목 19와 같은 종류의 공백이고(메모리 참조), 숫자는 dev·prod에서만 나온다.
 
