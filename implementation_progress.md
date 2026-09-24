@@ -403,8 +403,9 @@
 
   **dev 배포 확인**(2026-09-24, `deploy/2609` = main `ec35005`): api·worker 기동, `/ready` 200. 실제 사용자로 for-you 3장(`basis: content`)·by-topic 2섹션, **`degraded` 없음** — dev에서는 bourbon-api에 닿아 `owner` 블록이 채워진다(로컬에서만 `hydration_partial`). `POST /recommendations/opened`가 `section_topic_id`·`position`을 실어 204, `attributions` 행에 두 칸이 들어갔다 — 0010 컬럼에 앱 계정이 쓴다. 워커 주기 잡은 전부 실패 없이 돌았고, dev에 대화가 아직 0건이라 popularity 0행·게이트 `not_enough_traffic`·CF는 빈 모델로 예상대로다.
 
-- [ ] **22. 탈퇴한 사용자가 늦은 이벤트로 되살아난다** 🔴 — 설계 대기
+- [ ] **22. 탈퇴한 사용자가 늦은 이벤트로 되살아난다** 🔴 — 설계 확정(R68, 2026-09-24), 구현 대기
   리뷰어 둘이 따로 찾았다. `conversations.started`의 `touch_agent`, 비어 있지 않은 refresh(`holdings.replace`), 늦게 오거나 재전달된 `user_registered`가 erase 뒤에 오면 `agents` 행을 **다시 만든다** — CF 스윕이 TTL 없는 pool을 새로 쓰고, 익명화되지 않은 `interactions`가 생긴다. 행이 없던 친구 쌍의 `accepted`도 erase 뒤면 INSERT된다(`erasure.py`의 "더 오래된 이벤트는 모두 거절한다"는 행이 있는 쌍에만 참이다). 막힌 곳은 빈 refresh(`refresh_found_nothing`) 하나뿐이다. **탈퇴 기록(tombstone)을 두고 모든 쓰기 경로가 확인하는 방식**이 후보지만, 어디에 두고 얼마나 보존하는가(§9-1 삭제 의무와의 관계)는 **정하지 않았다.**
+  **정했다(2026-09-24, R68)**: PostgreSQL `departed_users(user_id)`에 **무기한**, id만 남긴다 — §9-1의 유일한 예외다. bourbon-api v1에는 재활성화가 없고 돌아온 사람은 새 id로 가입하므로(R38) 해제할 일이 없다. 늦은 이벤트는 전달 지연에서만 오지 않는다: topic-api는 계정 삭제에 재시도가 없고, 진행 중이던 persona 동기화가 삭제 뒤에 row를 다시 쓸 수 있다(그쪽 `runtime/account_wipe.py`) — 그러면 몇 달 뒤에도 새 이벤트가 온다. 쓰기 전에 bourbon-api에 묻는 방식은 확인과 erase 사이의 경합을 닫지 못해 기각했다. 구현은 erase와 네 쓰기가 사용자 단위 잠금에서 서로 기다리게 한다 — 잠금 없이 묻기만 하면 erase와 같은 순간에 시작한 쓰기가 아직 커밋되지 않은 기록을 못 본다.
 
 - [ ] **23. `user_registered`의 email이 Redis에 적힌다** 🔴 — 판단 대기
   deferq가 `redis=`와 `amqp_url=`을 둘 다 받은 Worker에서 **역직렬화 전의 raw body**를 `run:*` hash에 기록한다(`_record_running`). 우리 mirror가 `extra="ignore"`로 email을 버리는 것은 그 뒤라, 모든 가입 이벤트의 email이 리스너가 도는 동안 Redis에 있고, 키에 TTL이 없어 SIGKILL·ack 실패 뒤에는 **남는다**. 우리 코드 안에서는 못 막는다 — deferq에 기록을 끄는 옵션을 요청할지, 우리 Worker 구성을 바꿀지는 **정하지 않았다.**

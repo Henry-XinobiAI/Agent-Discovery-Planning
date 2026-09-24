@@ -461,6 +461,7 @@ class Ranker(Protocol):
 | `interactions` | `(actor_user_id, owner_user_id, room_id)` | `started_at`, `entry`, `recommendation_id`, **`attributed_by`**(R53) (`turns`는 `room_turns`에서 조인) | **그 방의 첫 `message_created`로 생성**(R51 — `room_created` 요청은 철회했다). 소유자는 예측 인덱스 `ROOM#{room_id}`에서 오고, 거기 없는 방은 기록하지 않는다(R52). `entry`·`recommendation_id`는 `attributions` 보고가 먼저·예측 인덱스가 다음이고 `attributed_by`가 어느 쪽인지 남긴다(R53). CF 학습 입력. 자기 agent 방·user DM·group은 행 없음. 탈퇴: owner 행 삭제, actor 행은 actor 익명화(R49) |
 | `room_turns` (R49) | `room_id` | `turns`, `last_turn_at` | `message_created`(`room_type == agent_dm`, `sender_type == user`)마다 +1. 같은 이벤트가 `interactions`도 만들지만(R51) 예측하지 않은 방은 turn만 세므로 방 키로 독립시킨다. `interactions` 행이 없는 방은 읽기 조인에서 빠지고 `room_turns.orphan_ttl_days` 뒤 정리 |
 | `attributions` (R47·R66) | `(requester_user_id, owner_user_id, reported_at)` | `recommendation_id`, `entry`, `section_topic_id`·`position`(R66, nullable — 어느 선반의 어느 카드였나. 측정용이라 아래 조인은 읽지 않는다) | 클라이언트의 §2-5 보고로 생성하고 `reported_at`은 우리가 찍는다. 그 방의 첫 `message_created`가 오면 `attribution.window_hours` 안의 최근 것 하나를 `interactions`에 옮긴다(R51). 보존은 `decision_log.ttl_days`와 같게 |
+| `departed_users` (R68) | `user_id` | — (id뿐) | `bourbon.user_deactivated`의 erase가 같은 트랜잭션에서 쓴다. **지우지 않는다** — 재활성화가 없어(R38) 해제할 일이 없고, 기한을 두면 그 뒤의 늦은 이벤트가 떠난 사람을 되살린다. `agents`·`visible_topic_rows`·`interactions`·`friends`를 쓰는 모든 경로가 먼저 묻고, 있으면 쓰지 않는다 |
 
 ### 6-1. DynamoDB key space — 테이블 하나 (R44)
 
@@ -558,7 +559,7 @@ class Ranker(Protocol):
 | ~~`bourbon.room_created`~~ | **요청 철회**(R51). bourbon-api가 기각하고 내부 route `GET /api/internal/rooms/{id}/agent-context`를 대안으로 줬는데, 우리에게 필요한 소유자 하나를 얻자고 이용자들의 메시지 본문을 받게 된다. 대신 추천 시점에 room id를 계산해 둔다 | — | `message_created`가 이 자리를 대신한다 |
 | `bourbon.message_created` | **있음** (bourbon-api) | `room_id, message_id, sender_id, sender_type, type, room_type` | `room_type == agent_dm`인 유저 메시지마다 `room_turns[room_id]` +1(R49 — `room_created`와 순서 무관). 읽을 때 `interactions`와 `room_id`로 조인. 새 turn 이벤트 불필요 |
 | `bourbon.user_registered` | **있음** (bourbon-api, 활성화 전이) | `user_id, email` | `agents` row 생성(`discoverable=false` — 첫 재조회가 뒤집는다). `email`은 읽지 않는다. 탈퇴 뒤 재가입도 같은 경로 — 신규로 본다(R38) |
-| `bourbon.user_deactivated` | **있음** (bourbon-api) | `user_id` | 그 유저의 모든 데이터 삭제. `interactions`의 actor 쪽만 익명화 |
+| `bourbon.user_deactivated` | **있음** (bourbon-api) | `user_id` | 그 유저의 모든 데이터 삭제. `interactions`의 actor 쪽만 익명화. (2026-09-24 개정: **예외 하나** — 탈퇴한 id를 `departed_users`에 남기고, 그 id에 관한 늦은 쓰기를 모두 거절한다(R68). id 말고는 아무것도 남기지 않는다) |
 
 진행 방식은 우리가 먼저 미러·발행·테스트하고 그 뒤 요청한다. 재조회 tier 범위는 정해져 있다 — 타인 row는 `public`·`friends`(위 표), 요청자 자신의 프로필은 `public`·`friends`·`private`(R22). 요청자 프로필은 요청 시 topic-api 내부 route로 읽는다(R27).
 
