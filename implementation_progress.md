@@ -411,8 +411,10 @@
   **erase는 이제 친구 관계를 지운다**(끝내지 않는다). 끝낸 행이 늦은 `accepted`를 막던 역할(R50)은 탈퇴 기록이 시각 비교보다 먼저 거절하면서 없어졌고, 남겨 두면 아무도 읽지 않는 id 두 개를 30일 들고 있을 뿐이다. 그래서 위의 #26 기록("탈퇴도 같은 이유로 친구관계를 지우지 않고 끝낸다"), 1-4 보존 기록의 "`storage/erasure.py`가 이 장치에 기대고 있다", `load_dev` 기록의 "`erasure.py`가 막던 부활 경로가 다시 열린다"는 **그때의 사실**이고 지금은 이 항목이 대체한다.
   **dev 배포 전 마이그레이션 0011이 먼저다** — 모든 쓰기가 `departed_users`를 읽고, 테이블이 없으면 42P01로 재시도 없이 실패한다. 0011 이전에 erase된 dev 사용자는 id가 남아 있지 않아 소급 기록할 수 없다.
 
-- [ ] **23. `user_registered`의 email이 Redis에 적힌다** 🔴 — 판단 대기
+- [ ] **23. `user_registered`의 email이 Redis에 적힌다** 🔴 — **미룸**(오너 2026-09-25)
   deferq가 `redis=`와 `amqp_url=`을 둘 다 받은 Worker에서 **역직렬화 전의 raw body**를 `run:*` hash에 기록한다(`_record_running`). 우리 mirror가 `extra="ignore"`로 email을 버리는 것은 그 뒤라, 모든 가입 이벤트의 email이 리스너가 도는 동안 Redis에 있고, 키에 TTL이 없어 SIGKILL·ack 실패 뒤에는 **남는다**. 우리 코드 안에서는 못 막는다 — deferq에 기록을 끄는 옵션을 요청할지, 우리 Worker 구성을 바꿀지는 **정하지 않았다.**
+  **2026-09-25 재확인과 결정.** deferq 0.7.0 기준으로 그대로다: `_on_event_message`가 역직렬화 전에 `_record_running(payload=raw)`를 부르고, `RUN_START_SCRIPT`가 raw body를 `deferq:run:args:{리스너}`에 `HSET`한다(TTL 없음). 정상이면 리스너가 끝날 때 `finally`의 `_ack_running`이 지우므로 **몇 ms만 머문다.** 영구로 남는 것은 리스너 도중 파드가 죽거나(SIGKILL·OOM·노드 교체) best-effort ack가 실패할 때이고, 오래된 `run:*` 기록을 치우는 정리는 deferq에 없다. Redis 스냅샷(RDB/AOF)이 그 순간을 찍으면 백업에도 남는다. **bourbon-api 자기 워커도 같은 이유로 자기 Redis에 적는다**(origin/main `078eeeb` 기준: 같은 deferq v0.7.0이고, `cli/worker.py`가 `Worker(redis, redis_tasks=..., amqp_url=...)`로 둘 다 넘기며, `user_registered`를 `bootstrap_personal_agent`와 자동 초대 리스너가 구독한다) — email은 그쪽 자동 초대 리스너(`users/events.py`의 `_should_auto_invite`)가 쓰는 필드라 이벤트에서 빼 달라기도 어렵다.
+  선택지는 셋이었다: **A** deferq에 리스너(또는 Worker) 단위로 payload를 기록하지 않는 옵션 요청(원인에서 막고 bourbon-api도 같이 풀린다, 다른 팀 일정), **B** 우리 Worker를 이벤트용(`redis=` 없음 — 그러면 기록 자체를 안 한다)과 Redis 작업용 둘로 쪼갬(당장 막히지만 health·drain·`worker/budget.py`가 둘이 되고 bourbon-api 쪽은 그대로), **C** bourbon-api에 email 제거 요청(그쪽이 쓰는 필드라 약하다). 추천은 A였다. **오너 판단: 적어 두고 미룬다** — 평소 노출은 ms 단위고 영구 잔여는 드문 사고에서만 생긴다. 다시 볼 때는 A의 요청서(`docs/deferq-worker-readiness.md`와 같은 형식)부터.
 
 ## 미룬 소소한 것 (해당 PR에서 되짚기)
 
