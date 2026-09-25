@@ -1,7 +1,7 @@
 # 사람에게 물어야 하는 질문의 agent 추천
 
 > 상태: **기획 초안, 결정 아님**
-> 범위: 새 추천 타입(타입 ④ 후보)과 그것을 위한 새 서비스(가칭 `bourbon-firsthand-api`), 그리고 `bourbon-agent-discovery-api` · `bourbon-agent` · `bourbon-api` · `bourbon-memory-api-v2` · `bourbon-topic-api`와의 경계
+> 범위: 새 추천 타입(타입 ④ 후보)과 그것을 위한 새 서비스 `bourbon-lived-knowledge-api`, 그리고 `bourbon-agent-discovery-api` · `bourbon-agent` · `bourbon-api` · `bourbon-memory-api-v2` · `bourbon-topic-api`와의 경계
 > 비범위: 타입 ①·②·③의 계약 변경, 추천받은 agent의 실제 답변과 종합(경계만 정한다)
 > **기획 단계에서 빼 둔 것**(오너, 2026-09-26): 공개 범위·동의(`consultable`)·방 범위. 설계와 실험에는 조건을 걸지 않고, 실 서비스화할 때 다룬다. 나중에 붙일 자리만 남긴다(§12).
 > 선행 문서: `personal-knowledge-agent-recommendation.md`(2026-09-18 ~ 09-21). 그 문서는 memory-api personal build의 결과를 topic에 조인해 근거로 썼다. 이 문서는 **추천만을 위한 데이터를 새 서비스에 따로 두고**, 메시지 하나하나를 보낸 사람의 경험으로 저장한다. 무엇이 달라졌는지는 §16에 모았다.
@@ -326,7 +326,7 @@ memory-api에는 인증이 없다(`verify_token`은 있지만 어느 router도 �
 
 ## 7. 새 서비스 설계
 
-가칭 `bourbon-firsthand-api`. **firsthand**는 "직접 겪어 아는"이라는 뜻이다 — 이 서비스가 저장하는 것은 사용자가 직접 겪은 경험, 취향, 요령, 사정이다. 일반 사실은 저장하지 않고, 전해 들은 것은 기본적으로 저장하지 않는다(전해 들은 사정을 `insider`로 둘지는 열린 항목 6). 이름은 열린 항목 1이다.
+`bourbon-lived-knowledge-api`. **lived knowledge**는 "직접 살아 보며 얻은 앎"이라는 뜻이다 — 이 서비스가 저장하는 것은 사용자가 직접 겪은 경험, 취향, 요령, 사정이고, 사전·백과에 있는 사실과 대비된다. 일반 사실은 저장하지 않고, 전해 들은 것은 기본적으로 저장하지 않는다(전해 들은 사정을 `insider`로 둘지는 열린 항목 6).
 
 ### 7-1. 입력과 사전 필터
 
@@ -343,7 +343,7 @@ memory-api에는 인증이 없다(`verify_token`은 있지만 어느 router도 �
 LLM 한 번에 메시지 하나(+ 앞 턴 문맥)를 넣고, **보낸 사람 본인에 관한** 경험 기록 0~N개를 받는다.
 
 ```text
-firsthand_records
+lived_knowledge_records
   record_id           uuid
   person_id           uuid        보낸 사람 = 이 기록의 소유자
   kind                text        experienced | prefers | practiced | insider
@@ -447,7 +447,7 @@ discovery 한 곳을 위한 조회 route 하나를 둔다(§10-2). **discovery�
 
 | | 관심 소스 | 경험 소스 |
 |---|---|---|
-| 데이터 | discovery의 `visible_topic_rows` | 새 서비스의 `firsthand_records` |
+| 데이터 | discovery의 `visible_topic_rows` | 새 서비스의 `lived_knowledge_records` |
 | 어디서 오나 | topic-api가 persona의 preferences에서 뽑은 topic | 새 서비스가 메시지에서 뽑은 경험 기록 |
 | 아는 것 | "이 분야에 관심을 드러냈다"와 관심 강도 | "이것을 겪었다·좋아한다·해 봤다·안다"와 언제, 어땠는지 |
 | 찾는 기준 | topic | 엔티티, 상위 엔티티, topic, 요약문 텍스트 |
@@ -641,7 +641,7 @@ feature(설정 레지스터에 올린다):
 ### 10-2. 새 서비스 — discovery가 부르는 조회
 
 ```http
-POST /api/internal/svc/firsthand/candidates
+POST /api/internal/svc/lived-knowledge/candidates
 ```
 
 ```json
@@ -840,7 +840,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 
 ## 15. 열린 항목
 
-1. 새 서비스의 이름(가칭 `bourbon-firsthand-api`), repo, 배포 단위.
+1. 새 서비스의 repo와 배포 단위.
 2. 저장소 — PostgreSQL을 권하되(§7-6), 요약문 검색 품질에 따라 검색만 OpenSearch로 옮길지.
 3. 사전 필터의 방식 — 규칙, 작은 분류기, 작은 LLM(§7-1).
 4. 추출에 넣을 앞 턴의 수.
