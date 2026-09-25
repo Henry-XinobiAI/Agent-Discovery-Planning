@@ -1,7 +1,7 @@
 # Personal knowledge 기반 답변 가능 agent 추천
 
 > 상태: **설계 초안, 결정 아님**
-> **대체됨(2026-09-26)**: 구조는 `knowledge-agent-recommendation.md`가 대체한다 — 근거를 memory-api personal build 파생본이 아니라 새 서비스의 경험 projection(메시지 단위, 발신자 귀속, 요약문, 원문 없음)으로 두고, 사람이 필요한 질문만 추천한다. 이 문서는 personal build 파생본을 topic에 조인하던 설계의 기록으로 본문을 그대로 둔다.
+> **대체됨(2026-09-26)**: 구조는 `knowledge-agent-recommendation.md`가 대체한다 — 근거를 memory-api personal build의 결과가 아니라 새 서비스의 경험 기록(메시지 단위, 보낸 사람 기준, 요약문, 원문 없음)으로 두고, 사람이 필요한 질문만 추천한다. 이 문서는 personal build 파생본을 topic에 조인하던 설계의 기록으로 본문을 그대로 둔다.
 > 범위: `bourbon-agent` · `bourbon-agent-discovery-api` · `bourbon-memory-api-v2` · `bourbon-topic-api` 사이의 새 추천 타입(타입 ④ 후보)
 > 비범위: 타입 ①·②·③의 계약 변경, 선택된 agent들의 실제 답변 실행과 종합(이 문서는 경계만 정한다)
 > 개정 이력: 1차 초안 2026-09-18 → 2차 2026-09-21 세 서비스의 코드를 읽고 전면 재작성 → 2차 보정 2026-09-21 외부 리뷰 반영(동의 경계, export route 선행, bounded map, coverage 상태, 슬라이스 순서) → 2차 보정 2 2026-09-21 두 번째 리뷰 반영(authorship은 결정 대기·자리만, need별 후보 pool, coverage 상태 비노출, 완전 scan 뒤 삭제) → 2차 보정 3 2026-09-21 세 번째 리뷰 반영(authorship 네 갈래 분류와 양쪽 입장 기록, `text_hit`, incremental/full 분리, `consultable` 미러 fail-closed, 슬라이스 1은 명시적 경로만, 결정적 절단)
