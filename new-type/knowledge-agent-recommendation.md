@@ -4,7 +4,7 @@
 > 범위: 새 추천 타입(타입 ④ 후보)과 그것을 위한 새 서비스 `bourbon-lived-knowledge-api`, 그리고 `bourbon-agent-discovery-api` · `bourbon-agent` · `bourbon-api` · `bourbon-memory-api-v2` · `bourbon-topic-api`와의 경계
 > 비범위: 타입 ①·②·③의 계약 변경, 추천받은 agent의 실제 답변과 종합(경계만 정한다)
 > **기획 단계에서 빼 둔 것**(오너, 2026-09-26): 공개 범위·동의(`consultable`)·방 범위. 설계와 실험에는 조건을 걸지 않고, 실 서비스화할 때 다룬다. 나중에 붙일 자리만 남긴다(§12).
-> 선행 문서: `personal-knowledge-agent-recommendation.md`(2026-09-18 ~ 09-21). 그 문서는 memory-api personal build의 결과를 topic에 조인해 근거로 썼다. 이 문서는 **추천만을 위한 데이터를 새 서비스에 따로 두고**, 메시지 하나하나를 보낸 사람의 경험으로 저장한다. 무엇이 달라졌는지는 §17에 모았다.
+> 선행 문서: `archive/2026-09-26_knowledge-type-first-draft/personal-knowledge-agent-recommendation.md`(2026-09-18 ~ 09-21, 아카이브). 그 문서는 memory-api personal build의 결과를 topic에 조인해 근거로 썼다. 이 문서는 **추천만을 위한 데이터를 새 서비스에 따로 두고**, 메시지 하나하나를 보낸 사람의 경험으로 저장한다. 무엇이 달라졌는지는 §17에 모았다.
 > 이 문서의 "현재"는 각 repo의 HEAD 기준이다 — bourbon-agent `61f84aea`(origin/main, 09-25), bourbon-api `078eeeb`(origin/main, 09-21), memory-api-v2 `8c6a937`(origin/main, 09-19), topic-api `ffc62bf`(09-22), agent-discovery-api `bac5de9`(09-24)
 
 ---
@@ -954,7 +954,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 
 ## 17. 선행 문서와 달라진 것
 
-| 선행 문서(`personal-knowledge-agent-recommendation.md`) | 이 문서 | 이유 |
+| 선행 문서(아카이브된 `personal-knowledge-agent-recommendation.md`) | 이 문서 | 이유 |
 |---|---|---|
 | 근거는 memory-api personal build의 결과 | 추천만을 위한 경험 기록, 새 서비스(경험 소스). personal build는 건드리지 않는다 | personal build는 각 사용자 자신의 agent가 기억해 답하기 위한 그래프라 말한 사람·시각·엔티티 동일성·사실 비중이 이 목적과 맞지 않는다(§6-2, §5-2) |
 | 사용자의 memory 단위, authorship은 결정 대기 정책 | 메시지 단위, 보낸 사람 기준 | "누가 겪었나"가 정의상 맞게 된다. authorship 질문이 대부분 사라진다(§12) |

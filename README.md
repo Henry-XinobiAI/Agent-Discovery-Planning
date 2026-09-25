@@ -17,7 +17,7 @@
 | 9 | [`implementation_plan.md`](implementation_plan.md) | 구현 단계와 완료 조건(R43): 갭 정리 → 로컬 스택 → 설정·계약 → 저장·적재 → 타입 ①② → 생성기·시드 스크립트·CLI → 타입 ③ → CF → 검증 → 배포 준비. 순서의 이유와 열린 구현 판단 | 계획 |
 | 9-1 | [`implementation_progress.md`](implementation_progress.md) | PR 단위 체크리스트 — 끝난 것·남은 것·작은 모델로 진행 가능한 PR 표시(🟢/🟡/🔴). PR이 머지되면 체크하고 번호를 적는다 | 진행 중 |
 | 10 | [`requests/`](requests/README.md) | 받는 곳별 요청서(인프라·bourbon-api·클라이언트·bourbon-agent·topic-api). 이벤트 정의서 §6의 묶음을 그대로 붙여 넣을 수 있는 문장으로. 보내는 시점은 1차 배포 즈음 | 초안 |
-| 참고 | [`archive/`](archive/) | 이전 문서 전부. `2026-09-08_pre-redesign/README.md`가 그 안에서 사실·실측·단가·코드 독해로 남는 것을 안내한다 | 아카이브 |
+| 참고 | [`archive/`](archive/) | 이전 문서 전부. `2026-09-08_pre-redesign/README.md`가 그 안에서 사실·실측·단가·코드 독해로 남는 것을 안내한다. `2026-09-26_knowledge-type-first-draft/`는 새 추천 타입의 첫 초안이다 | 아카이브 |
 
 새 문서는 이전 결정 번호(D, C, S, K …)를 인용하지 않는다. 필요한 제약은 본문에 글로 풀어 쓴다.
 
