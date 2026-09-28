@@ -154,7 +154,7 @@ bourbon-api ── bourbon.message_created (id, 보낸 사람, 방 종류) ─�
 7. 원문은 이 흐름 안에서만 메모리에 있고 저장하지 않는다.
 8. 이와 별도로 lived-knowledge의 워커 둘이 돈다 — 지시어로만 남은 기록의 대상을 웹 검색으로 해소하는 워커(§7-3), 그리고 topic visibility를 모든 tier로 미러하는 워커(§7-7).
 
-**관심 소스는 이미 있다.** topic-api가 persona의 preferences에서 사용자의 관심 topic을 뽑고, discovery 워커가 `bourbon.topics_updated`를 받아 공개된 topic을 `visible_topic_rows`에 미러한다. 타입 ①②③이 쓰는 그 테이블이다. 이 흐름에서 바뀌는 것은 topic-api 응답의 `knowledge` facet과 `confidence`를 컬럼으로 더하는 것뿐이다.
+**관심 소스는 이미 있다.** topic-api가 persona의 preferences에서 사용자의 관심 topic을 뽑고, discovery 워커가 `bourbon.topics_updated`를 받아 공개된 topic을 `visible_topic_rows`에 미러한다. 타입 ①②③이 쓰는 그 테이블이고, 이 흐름에서 바뀌는 것은 없다. 관심 강도는 이미 미러하고 있는 `topic_score`·`topic_maturity`를 쓴다. topic-api `score_detail`의 `knowledge` facet과 `confidence`는 지금 소비자 계약이 아니라서 쓰지 않고, 안정적인 값이 정해지면 그때 더한다(오너, 2026-09-28, §15 요청 7).
 
 ### 4-2. 추천 흐름 — discovery
 
@@ -623,7 +623,7 @@ question:    글렌드로낙 21 팔리아먼트(글렌드로낙 신상) 마셔 �
 
 ### T3. 후보 모으기
 
-**관심 소스 — discovery DB.** `visible_topic_rows`에서 need의 topic(+ `catalog_edges`로 펼친 하위 topic)을 공개한 사람. topic-api `score_detail`의 `knowledge` facet과 `confidence`를 컬럼으로 더한다.
+**관심 소스 — discovery DB.** `visible_topic_rows`에서 need의 topic(+ `catalog_edges`로 펼친 하위 topic)을 공개한 사람. 관심 강도는 `topic_score`·`topic_maturity`다(§4-1).
 
 **경험 소스 — lived-knowledge 조회 1회**(§10-2). need마다 topic id 목록(discovery가 하위 topic까지 펼쳐서), 엔티티 이름과 `entity_type`, `kind`, `stance`, `recency_days`, `condition`을 넘기면, lived-knowledge가 네 경로로 경험 기록을 찾아 사람별로 묶어 돌려준다.
 
@@ -690,7 +690,7 @@ feature(설정 레지스터에 올린다):
 - 최근성: `recency: recent`인 need는 `observed_at`의 반감기를 짧게(오래된 기록을 빨리 낮춤), 아니면 길게
 - `specificity`, 같은 need에 대한 경험의 폭 — 기록 수가 아니라 서로 다른 엔티티 수·서로 다른 날짜 수의 log, 상한 있음(§7-5)
 - 요약문 매칭의 **need 안에서의 순위**(점수 자체는 need끼리 비교하지 않는다)
-- 관심 소스: `knowledge` facet, `confidence`, tier
+- 관심 소스: `topic_score`, `topic_maturity`, tier. `knowledge` facet·`confidence`는 안정적인 값이 정해지면 더한다(§15 요청 7)
 - 두 소스가 같은 사람을 가리키는가, `agent_maturity`
 
 **곱셈식을 쓰지 않는다.** 곱하면 관심 소스만 있는 후보는 0이 되고, lived-knowledge가 답하지 않으면 전원이 0이 된다. coverage 상태별 가중 합이고, 측정되지 않은 feature는 없는 것으로 둔다(discovery의 `Features.present`가 이미 그 구분을 한다). 구현은 타입 ①의 `Ranker.features/score`와 같은 구조다.
@@ -1026,7 +1026,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 
 - **목표**: 새 추천 route를 먼저 열어 둔다. lived-knowledge 없이 지금 있는 데이터로.
 - **추천하는 사람**: 이 분야에 관심을 드러낸 사람(`prior_only`). "겪어 본 사람"이 아니라 "관심 있는 사람"이다. 이 단계에서는 `prior_only`가 need를 채운 것으로 본다(§9 T3). UI와 문구도 "관심 있는 agent"로 유지한다.
-- **만드는 것**: `POST /recommend/knowledge` route와 응답 형식, T1 질문 분석(새 필드를 전부 뽑아 decision log에 남긴다), 사실 질문 판정(`people_needed`), topic-api `knowledge` facet 컬럼, 순위.
+- **만드는 것**: `POST /recommend/knowledge` route와 응답 형식, T1 질문 분석(새 필드를 전부 뽑아 decision log에 남긴다), 사실 질문 판정(`people_needed`), 순위.
 - **필요한 것**: 없음. discovery 안에서 끝난다.
 - **내보내는 범위**: 관심 기반 추천이라 사용자가 명시적으로 "추천해 달라"고 할 때만 쓴다.
 
@@ -1103,7 +1103,9 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 **topic-api**
 
 7. `score_detail` block의 facet 이름과 `confidence`를 소비자 계약으로 삼아도 되는지(관심 소스).
+   - **답(2026-09-28)**: 지금은 계약으로 삼지 않는다. 관심 소스는 `topic_score`·`topic_maturity`로 순위를 매기고, 안정적인 값이 정해지면 그때 쓴다(§4-1).
 8. 제품·브랜드 노드는 요청하지 않는다. 엔티티는 lived-knowledge의 레지스트리가 맡는다.
+   - **확정(2026-09-28)**: 요청하지 않는다.
 8-a. lived-knowledge가 내부 route로 사용자 topic을 **모든 tier**(`private`·`hidden` 포함)로 읽고, `topics_updated`·`topic_visibility_changed`에 큐를 바인딩해도 되는지(§12). 읽는 것은 id와 tier뿐이다.
 8-b. 사용자 topic의 기본 visibility를 소비자가 알 방법(route나 계약 값). 지금은 임시로 public이고 나중에 private이 된다(§12).
 
