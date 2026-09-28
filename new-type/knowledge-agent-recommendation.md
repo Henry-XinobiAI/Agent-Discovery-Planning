@@ -72,7 +72,7 @@ need는 질문이 요구하는 것 하나하나다. 여러 개면 한 사람이 
 | **요청자** | recommend tool을 부른 agent의 owner. 요청의 `user_id`다. 개인 방에서는 질문한 사람과 같지만, 그룹 방에서는 다른 참가자가 질문했어도 요청자는 agent의 owner다 — bourbon-agent가 `requester_user_id=payload.owner_user_id`로 보낸다(`bourbon_agent/agents/personal_agent/recommendation/tools.py:317`) |
 | **topic visibility(tier)** | 사용자가 자기 topic마다 정하는 공개 범위 — `public`·`friends`·`private`·`hidden`. 관심 소스의 노출을 정하고, 이 문서에서는 경험 기록의 공개 범위도 정한다(§12) |
 | **도달 가능성** | 요청자가 그 사람의 agent와 대화를 시작할 수 있는가 — 친구이거나 agent가 public(§6-1, §9 T3) |
-| **보는 사람** | 추천 결과와 요약문을 보게 되는 사람들. 요청이 온 방의 사람 참가자이고, discovery가 bourbon-api에서 읽는다(§12). owner 본인의 개인 방(PERSONAL)이면 요청자 한 명이고, 다른 사용자가 owner의 agent와 1:1로 대화하는 방이면 그 사용자다(§12) |
+| **보는 사람** | 추천 결과와 요약문을 보게 되는 사람들. 요청이 온 방의 사람 참가자이고, bourbon-agent가 요청에 실어 보낸다(없으면 discovery가 bourbon-api에서 읽는다, §12). owner 본인의 개인 방(PERSONAL)이면 요청자 한 명이고, 다른 사용자가 owner의 agent와 1:1로 대화하는 방이면 그 사용자다(§12) |
 | **후보** | 추천될 수 있는 다른 사용자(와 그 사람의 agent) |
 | **need** | 질문이 요구하는 것 하나. 질문 분석(§9 T1)이 0~3개로 나눈다. 각 need에 종류(`experienced` 등), 대상 엔티티, 시점 조건이 붙는다 |
 | **topic** | topic-api 카탈로그의 분야 노드("몰트 위스키", "에스프레소"). 카탈로그는 분야(KIND)만 받고 제품·브랜드는 받지 않는다(§6-3) |
@@ -154,7 +154,7 @@ bourbon-api ── bourbon.message_created (id, 보낸 사람, 방 종류) ─�
 7. 원문은 이 흐름 안에서만 메모리에 있고 저장하지 않는다.
 8. 이와 별도로 lived-knowledge의 워커 둘이 돈다 — 지시어로만 남은 기록의 대상을 웹 검색으로 해소하는 워커(§7-3), 그리고 topic visibility를 모든 tier로 미러하는 워커(§7-7).
 
-**관심 소스는 이미 있다.** topic-api가 persona의 preferences에서 사용자의 관심 topic을 뽑고, discovery 워커가 `bourbon.topics_updated`를 받아 공개된 topic을 `visible_topic_rows`에 미러한다. 타입 ①②③이 쓰는 그 테이블이다. 이 흐름에서 바뀌는 것은 topic-api 응답의 `knowledge` facet과 `confidence`를 컬럼으로 더하는 것뿐이다.
+**관심 소스는 이미 있다.** topic-api가 persona의 preferences에서 사용자의 관심 topic을 뽑고, discovery 워커가 `bourbon.topics_updated`를 받아 공개된 topic을 `visible_topic_rows`에 미러한다. 타입 ①②③이 쓰는 그 테이블이고, 이 흐름에서 바뀌는 것은 없다. 관심 강도는 이미 미러하고 있는 `topic_score`·`topic_maturity`를 쓴다. topic-api `score_detail`의 `knowledge` facet과 `confidence`는 지금 소비자 계약이 아니라서 쓰지 않고, 안정적인 값이 정해지면 그때 더한다(오너, 2026-09-28, §15 요청 7).
 
 ### 4-2. 추천 흐름 — discovery
 
@@ -179,7 +179,7 @@ bourbon-agent ◀─────────────────────
 
 1. **T0 (bourbon-agent, 이 문서의 범위 밖)**: 언제 recommend tool을 부를지는 bourbon-agent가 정한다. discovery는 지칭이 구체적인 이름으로 채워진 요청을 기대한다.
 2. **T1 질문 분석**: 질문을 need로 나누고, 사람이 필요 없는 질문이면 여기서 `mode: none`으로 멈춘다. 질문 원문은 이 LLM 호출에만 쓰고, 이후에는 T1이 만든 짧은 영어 조건 구절(`condition`)과 엔티티 이름만 넘어간다. "이번 신상" 같은 지칭은 bourbon-agent가 구체적인 이름으로 채워 보낸다(§9 T0). 채워지지 않았으면 표시하고, 그 지칭은 `condition`으로만 반영한다.
-3. **보는 사람 읽기**: T1과 병렬로 bourbon-api에서 요청 방의 사람 참가자를 읽는다. `friends` 기록을 쓸 수 있는지 정하는 데 쓴다(§12).
+3. **보는 사람 확인**: 요청의 `participant_user_ids`를 쓴다. 없으면 T1과 병렬로 bourbon-api에서 요청 방의 사람 참가자를 읽는다. `friends` 기록을 쓸 수 있는지 정하는 데 쓴다(§12).
 4. **T2 topic 찾기**: need마다 topic을 찾는다(타입 ①과 같은 방식). 엔티티는 discovery가 resolve하지 않고 이름 그대로 lived-knowledge에 넘긴다 — 경험 기록과 같은 레지스트리로 resolve하기 위해서다.
 5. **T3 후보 모으기**: 관심 소스는 discovery DB에서 topic으로, 경험 소스는 lived-knowledge 조회 한 번으로 모은다. lived-knowledge가 네 경로에서 후보를 뽑아 사람별로 묶어 돌려주면, discovery가 둘을 합치고 탈퇴자를 빼고 요청자가 대화를 시작할 수 있는 사람만 남긴다.
 6. **T4 순위**: 종류 일치, 최근성, 요약문 매칭, 엔티티 매칭, 관심 강도의 가중 합. 같은 입력이면 늘 같은 순위다(deterministic).
@@ -326,7 +326,7 @@ memory-api에서 이 설계가 쓰는 것은 둘이다.
   - corpus: sitelink가 하나 이상인 Wikidata 항목 전부(`memory/knowledge/public/dump.py:119-127`).
   - 주의: `match.score`는 **mention끼리 비교할 수 없다**(`memory/knowledge/public/structs.py:127-129`).
   - 이 설계의 사용 규칙: resolve는 공개 지식 route이지만, lived-knowledge가 보내는 이름은 사용자의 메시지에서 나온 것이다("동네 그 바"의 이름 자체가 개인적일 수 있다). 그래서 **이름과 분야 이름만 보내고 메시지 텍스트는 `context`로도 보내지 않는다.** resolve는 mention을 digest로만 로그에 남긴다(`api/routers/knowledge/router.py:252-256`).
-- **대화 저장** — bourbon-agent가 대화 검색으로 찾는 원문(`POST /{tenant}/search`)이 여기 있다. `POST /{tenant}/messages/lookup`은 메시지를 id로 찾되 `scope`가 허락하는 것만 돌려주고 `options.context`로 앞뒤 메시지를 붙인다(`api/routers/conversations/router.py:105-123`). 추천된 agent가 원 메시지를 다시 읽는 경로다(§10-3).
+- **대화 저장** — bourbon-agent가 대화 검색으로 찾는 원문(`POST /{tenant}/search`)이 여기 있다. `POST /{tenant}/messages/lookup`은 메시지를 id로 찾되 `scope`가 허락하는 것만 돌려주고 `options.context`로 앞뒤 메시지를 붙인다(`api/routers/conversations/router.py:105-123`). 원 메시지를 다시 읽을 수 있는 경로다. 추천된 agent가 이것을 쓸지는 bourbon-agent·memory-api가 정한다(§10-3).
 
 memory-api에는 인증이 없다(`verify_token`은 있지만 어느 router도 쓰지 않는다, `api/depends/tenant.py:4-6`).
 
@@ -360,7 +360,7 @@ memory-api에는 인증이 없다(`verify_token`은 있지만 어느 router도 �
 
 ### 7-1. 입력과 사전 필터
 
-1. `bourbon.message_created`를 받는다(자기 큐, 자기 워커 — 이벤트 워커는 소비하는 repo가 소유한다).
+1. `bourbon.message_created`를 받는다(자기 큐, 자기 워커 — 이벤트 워커는 소비하는 repo가 소유한다). 바인딩은 문제없다는 답을 받았다(오너, 2026-09-28). 워커의 deferq가 쓰는 Redis DB 번호는 인프라에서 새로 할당받는다.
 2. **payload로 먼저 필터링한다**: `sender_type`이 사람이 아니면 버린다. `type`이 텍스트가 아니면 버린다(첫 버전).
 3. agent-context로 그 메시지와 **앞의 몇 턴**을 다시 읽는다. 앞의 턴은 "그거" 같은 지시어가 무엇을 가리키는지 알기 위해서만 읽는다.
 4. **사전 필터**: 1인칭 경험·취향·요령 표현이 있는가를 규칙 또는 작은 분류기로 본다. 대부분의 메시지는 여기서 끝난다. 사전 필터가 놓친 것은 추출에서도 놓치므로 느슨하게 둔다.
@@ -471,7 +471,10 @@ resolve 순서:
 - **같은 경험을 여러 번 말해도 경험의 폭이 부풀지 않아야 한다.** 한 사람이 같은 병 이야기를 열 번 하면 기록이 열 개다. 순위(§9 T4)는 기록 수가 아니라 서로 다른 엔티티 수와 서로 다른 날짜 수를 세고 상한을 둔다. 기록 자체는 지우지 않는다 — 어느 기록이 가장 잘 맞는지는 질문마다 다르다.
 - **메시지는 고쳐지지도 지워지지도 않는다**(§6-1). 그래서 원문의 수정·삭제를 따라갈 일은 없다. 기록이 무효가 되는 경우는 둘이다 — 그 사람의 **탈퇴**, 그리고 서비스화 때 정할 **범위 밖으로 나가는 것**(방이나 동의, §12).
 - **탈퇴는 R68과 같은 방식이다.** `bourbon.user_deactivated`를 받으면 그 사람의 기록을 전부 지우고 id를 남긴다. 그리고 **기록을 만들거나 바꾸는 모든 쓰기 트랜잭션이 첫 statement에서 그 id를 확인한다** — 추출 결과 쓰기, 백필, 재추출, resolve 재시도 뒤의 갱신 모두. 메시지는 지워지지 않으므로 탈퇴한 사람의 메시지는 원천에 남아 있고, 확인 없는 백필은 그 기록을 되살린다.
-- **탈퇴 이벤트가 유실될 수 있다.** `user_deactivated`는 best-effort라(§6-1) 유실되면 탈퇴한 사람의 기록이 남는다. 이를 두 가지로 막는다. ① discovery가 경험 소스의 후보를 자기 `departed_users`·`agents`로 한 번 더 필터링한다(§9 T3). ② bourbon-api에 믿을 수 있는 탈퇴 확인 방법을 요청한다(§15 요청 1). bourbon-api의 내부 사용자 조회에 없다는 것만으로는 탈퇴로 볼 수 없다 — 해당 코드에 "absence must not be read as a deletion signal"이라고 적혀 있다.
+- **탈퇴 이벤트가 유실될 수 있다.** `user_deactivated`는 best-effort라(§6-1) 유실되면 탈퇴한 사람의 기록이 남는다. bourbon-api에는 탈퇴한 id 목록을 주는 route도, 발행을 보장하는 방식도 아직 없다. 그래서 `user_deactivated`를 탈퇴의 기준으로 쓴다(오너, 2026-09-28, §15 요청 1). bourbon-api의 내부 사용자 조회에 없다는 것만으로는 탈퇴로 볼 수 없다 — 해당 코드에 "absence must not be read as a deletion signal"이라고 적혀 있다.
+  - **discovery와 같은 보장 수준이다.** discovery도 탈퇴를 이 이벤트 하나로만 안다(`worker/deactivation.py`, R68).
+  - 두 서비스는 같은 이벤트를 각자의 큐로 받는다. 한쪽 큐에서만 유실되면 다른 쪽이 막는다 — discovery가 경험 소스의 후보를 자기 `departed_users`·`agents`로 한 번 더 필터링하고(§9 T3), 근거 조회 때도 같은 확인을 한다(§10-3).
+  - 발행 자체가 실패하면 두 서비스 모두 모른다. bourbon-api에 발행을 보장하는 방법이 생기기 전까지 타입 ①②③과 함께 남는 위험이다.
 - **재추출**: `extractor_version`이 바뀌면 원천에서 다시 읽어 만든다(교체 방식은 위와 같다). 원문을 저장하지 않은 대가이고, 백필 경로를 처음부터 둔다. 백필도 위의 탈퇴 확인을 거친다.
 
 ### 7-6. 저장소 — PostgreSQL을 권장한다
@@ -620,7 +623,7 @@ question:    글렌드로낙 21 팔리아먼트(글렌드로낙 신상) 마셔 �
 
 ### T3. 후보 모으기
 
-**관심 소스 — discovery DB.** `visible_topic_rows`에서 need의 topic(+ `catalog_edges`로 펼친 하위 topic)을 공개한 사람. topic-api `score_detail`의 `knowledge` facet과 `confidence`를 컬럼으로 더한다.
+**관심 소스 — discovery DB.** `visible_topic_rows`에서 need의 topic(+ `catalog_edges`로 펼친 하위 topic)을 공개한 사람. 관심 강도는 `topic_score`·`topic_maturity`다(§4-1).
 
 **경험 소스 — lived-knowledge 조회 1회**(§10-2). need마다 topic id 목록(discovery가 하위 topic까지 펼쳐서), 엔티티 이름과 `entity_type`, `kind`, `stance`, `recency_days`, `condition`을 넘기면, lived-knowledge가 네 경로로 경험 기록을 찾아 사람별로 묶어 돌려준다.
 
@@ -687,7 +690,7 @@ feature(설정 레지스터에 올린다):
 - 최근성: `recency: recent`인 need는 `observed_at`의 반감기를 짧게(오래된 기록을 빨리 낮춤), 아니면 길게
 - `specificity`, 같은 need에 대한 경험의 폭 — 기록 수가 아니라 서로 다른 엔티티 수·서로 다른 날짜 수의 log, 상한 있음(§7-5)
 - 요약문 매칭의 **need 안에서의 순위**(점수 자체는 need끼리 비교하지 않는다)
-- 관심 소스: `knowledge` facet, `confidence`, tier
+- 관심 소스: `topic_score`, `topic_maturity`, tier. `knowledge` facet·`confidence`는 안정적인 값이 정해지면 더한다(§15 요청 7)
 - 두 소스가 같은 사람을 가리키는가, `agent_maturity`
 
 **곱셈식을 쓰지 않는다.** 곱하면 관심 소스만 있는 후보는 0이 되고, lived-knowledge가 답하지 않으면 전원이 0이 된다. coverage 상태별 가중 합이고, 측정되지 않은 feature는 없는 것으로 둔다(discovery의 `Features.present`가 이미 그 구분을 한다). 구현은 타입 ①의 `Ranker.features/score`와 같은 구조다.
@@ -734,6 +737,7 @@ feature(설정 레지스터에 올린다):
   "allow_group": true,
   "max_agents": 2,
   "room_id": "uuid",
+  "participant_user_ids": ["uuid"],
   "lang": "ko"
 }
 ```
@@ -741,7 +745,7 @@ feature(설정 레지스터에 올린다):
 - `user_id`는 요청자, 곧 recommend tool을 부른 agent의 owner다(§2). 새 계약의 타입 ① 요청과 같은 이름이다(`agent_discovery_contract.md` §2). `requester_user_id`는 동결된 옛 `/recommend` route의 이름이라 따르지 않는다.
 - `question`은 지칭이 구체적인 이름으로 채워진 질문이다(§9 T0).
 - `allow_group`은 두 사람 조합(T5)을 허용할지, `max_agents`는 응답의 최대 인원이다. `lang`은 타입 ① 요청과 같다.
-- 보는 사람은 요청에 싣지 않는다. discovery가 `room_id`로 bourbon-api `GET /api/internal/rooms/{room_id}/agent-context`를 읽어 사람 참가자를 얻는다(§12).
+- `participant_user_ids`: 요청 방의 **사람 참가자 전원**(요청자가 그 방에 있으면 요청자 포함). bourbon-agent는 방의 참가자를 이미 알고 있으므로 요청에 싣는다. 보는 사람은 이 목록이다 — owner의 개인 방이면 `[owner]`, 다른 사용자가 owner의 agent와 1:1로 대화하는 방이면 `[그 사용자]`, 그룹 방이면 사람 전원. 빈 목록은 받지 않는다("개인 방"과 "누락"이 구별되지 않으므로). 없거나 비어 있으면 discovery가 `room_id`로 bourbon-api에서 읽는다(§12).
 - `question`과 `context`는 T1의 LLM에만 쓴다. lived-knowledge로 가는 것은 T1이 만든 `entity_mentions`(`entity_type` 포함)·`condition`·`kind`·`stance`와, discovery가 만든 topic id 목록·`recency_days`뿐이다(그 밖에는 id와 한도만 간다 — 요청자, `friend_owner_ids`, `requester_friend_ids`, `per_path_limit`). 로그에는 `question_digest`·`question_chars`·`context_chars`만 남는다.
 
 응답:
@@ -837,15 +841,15 @@ POST /api/internal/svc/lived-knowledge/candidates
   - **저장하지 않는 것**: 질문 원문과 `condition`(원문은 요청자의 글이고, `condition`도 불변식 7의 범위에 둔 파생 텍스트다), 요약문. 묶음에는 id와 공개 이름만 있다.
   - 위치는 discovery의 DynamoDB 테이블(R44)의 `REC#{recommendation_id}` key space이고, 보존은 TTL이다.
   - 요청자와 client가 받는 것은 `recommendation_id`뿐이고, 기록 id는 받지 않는다.
-- **조회는 대화가 시작될 때 한다.** bourbon-agent가 추천된 agent의 턴을 준비할 때 discovery의 근거 조회 route(`POST /api/internal/svc/agent-discovery/recommend/knowledge/evidence`)에 `recommendation_id`·`requester_user_id`·`owner_user_id`를 넘긴다. **`recommendation_id`는 필수다.** discovery는 저장된 묶음과 세 값이 모두 맞고 만료 전일 때만 lived-knowledge에서 그 기록을 **다시 읽어** 돌려준다.
+- **조회는 대화가 시작될 때 한다.** bourbon-agent가 추천된 agent의 턴을 준비할 때 discovery의 근거 조회 route(`POST /api/internal/svc/agent-discovery/recommend/knowledge/evidence`)에 `recommendation_id`·`requester_user_id`·`owner_user_id`와 그 방의 `participant_user_ids`를 넘긴다. **`recommendation_id`는 필수다.** discovery는 저장된 묶음과 세 값이 모두 맞고 만료 전일 때만 lived-knowledge에서 그 기록을 **다시 읽어** 돌려준다.
 - **`recommendation_id`가 없으면 근거 없이 일반 대화로 시작한다.** "두 사람 사이의 가장 최근 추천"으로 대신하지 않는다. 같은 사람이 같은 날 글렌드로낙 경험과 도쿄 여행 경험으로 따로 추천될 수 있고, 그러면 글렌드로낙 카드를 눌렀는데 도쿄 여행 근거가 들어간다. attribution(계약 §2-5)은 측정용이라 가장 최근 것으로 찾아도 되지만, 근거는 agent의 답에 직접 들어간다.
 - **카드를 누른 사람이 요청자와 다르면 근거를 주지 않는다.** 그룹 방에서는 카드를 다른 참가자가 누를 수 있다. 저장된 요청자와 맞지 않으므로 근거 없이 일반 대화로 시작한다. 그 사람이 추천된 agent와 DM을 열 수 있는지는 bourbon-api의 DM 게이트가 정한다. 막히는 쪽이 안전하다고 보고 이대로 둔다.
 - 추천된 agent는 **`covered_needs`와 그 경험 기록(종류, 엔티티, 시각, 요약문)을 받고, 거기서 답을 시작한다.** "무엇에 대한 어떤 종류의 경험을 묻는 추천인가"는 `covered_needs`로 알고, 구체적인 질문은 대화에서 요청자가 말한다. 새 방의 첫 메시지를 누가 어떻게 보낼지(요청자가 다시 묻는지, 자동으로 보내는지)는 bourbon-agent와 client의 UX 결정이다(§15 요청 10, 열린 항목 12).
 - **다시 읽으므로 과거의 권한이 고정되지 않는다.** 저장하는 것은 id뿐이고, 기록은 조회할 때마다 lived-knowledge에서 읽는다. 그 사이 탈퇴한 사람의 기록은 이미 지워져 없다.
-- **공개 범위도 조회할 때 다시 판정한다.** 추천 뒤 owner가 topic을 private으로 바꿨을 수 있다. `records/lookup`이 조회 시점의 visibility로 private·hidden 기록을 빼고(§10-2), discovery가 `friends` 기록을 조회 시점의 친구 관계로 다시 확인한다. 보는 사람은 대화가 시작된 방의 사람 참가자다 — 요청자와 추천된 agent의 방이라 보통 요청자 한 명이다. 추천 시점과 근거 사용 시점에 같은 규칙을 쓴다(§12). 서비스화 때 동의 철회를 확인하는 곳도 여기다.
+- **공개 범위도 조회할 때 다시 판정한다.** 추천 뒤 owner가 topic을 private으로 바꿨을 수 있다. `records/lookup`이 조회 시점의 visibility로 private·hidden 기록을 빼고(§10-2), discovery가 `friends` 기록을 조회 시점의 친구 관계로 다시 확인한다. 보는 사람은 대화가 시작된 방의 사람 참가자(`participant_user_ids`)다 — 요청자와 추천된 agent의 방이라 보통 요청자 한 명이다. 추천 시점과 근거 사용 시점에 같은 규칙을 쓴다(§12). 서비스화 때 동의 철회를 확인하는 곳도 여기다.
 - **묶음 자체는 탈퇴 때 지우지 않고 TTL에 맡긴다.** 키가 `REC#{recommendation_id}`라 사용자로 역조회할 수 없다. discovery의 탈퇴 처리도 TTL이 있는 DynamoDB 항목은 TTL에 맡기고, TTL이 없는 CF pool만 지운다(`worker/deactivation.py:9-12`). 대신 조회할 때 요청자와 소유자를 `departed_users`로 확인해 탈퇴자면 돌려주지 않는다(fail-closed). 묶음에는 id만 있고 글은 없다.
 - **카드에 `recommendation_id`를 싣는다.** 지금 `agent_profiles_v1`은 사람의 id(`owner_user_id`)만 싣는다(bourbon-api `AgentProfileItem`). `recommendation_id`가 필수이므로 카드에서 대화를 시작하는 쪽이 그 값을 알아야 한다. 기존 카드에 추가 필드로 싣는 것을 요청한다 — 항목(`AgentProfileItem`)마다가 아니라 카드 블록(`AgentProfilesV1Block`)에 한 번. 추천 하나가 카드 하나이고, 두 사람 조합도 추천 하나다(§15 요청 14).
-- **원 메시지는 기본으로 읽지 않는다.** 원 메시지는 대개 요청자가 없던 방에서 나왔고, bourbon-agent의 대화 검색 범위는 방이다(§6-4). 그 메시지와 앞뒤를 요청자와의 방에서 읽으면 다른 방의 대화가 유출된다. 원 메시지가 꼭 필요하면 memory-api `POST /{tenant}/messages/lookup`을 **지금 방의 scope로** 부르고, 그 scope에서 읽을 수 있을 때만 쓴다. 더 자세한 것은 추천된 agent가 평소처럼 대화 검색으로 찾는다.
+- **discovery가 주는 것은 추천 근거(`covered_needs`와 경험 기록)까지다.** 추천된 agent가 원 메시지나 그 앞뒤 대화를 더 읽을지, 어떤 경로와 scope로 읽을지는 bourbon-agent·memory-api가 기획과 함께 정한다(§15 요청 5). 참고로 전할 것: 원 메시지는 대개 요청자가 없던 방에서 나왔으므로, 그 방의 scope로 원 메시지와 앞뒤를 읽어 요청자와의 방에서 쓰면 다른 방의 대화가 유출될 수 있다. 기록에는 원 메시지 id(`message_id`)가 있어, 그쪽이 필요하다고 정하면 기록 조회 응답에 실을 수 있다.
 - **요약문은 요청자에게 보인다.** 추천 이유에 요약문이 그대로 들어가므로(§9 T6), 추천 근거를 숨겨도 요청자는 요약 내용을 본다. 요약문에 다른 참가자의 말은 없지만, 요약문 자체가 그 사람의 개인 정보다(§7-2). 기획 단계에서 이 노출의 동의를 빼 두었을 뿐이다(§12).
 - **근거를 조회할 수 있는 것은 기록 소유자의 agent뿐이어야 한다.** 그런데 지금 내부 서비스 사이에는 호출자 인증이 없고, bourbon-agent 한 프로세스가 모든 agent를 대신해 말한다 — "호출한 agent의 소유자"는 호출자가 주장하는 값일 뿐이다. 저장된 묶음과 요청자·소유자를 맞춰 보는 것은 피해 범위를 줄일 뿐이고, bourbon-agent를 믿는다는 전제는 그대로다. 기획 단계에서는 다른 내부 route와 같은 신뢰 범위 안에 두고, 서비스화 전에 내부 호출 인증이 먼저 있어야 한다(§12).
 - 기대하는 효과(추론, §13-4로 잰다): 추천된 agent가 검색어를 잘못 써서 근거를 못 찾는 실패가 줄고, 추천의 근거와 대화의 출발점이 같은 기록이라 "둘이 다른 데이터를 봐서 생긴 오차"가 줄어든다.
@@ -865,7 +869,7 @@ discovery:
 | topic·엔티티 이름 둘 다 없음 | `condition`이 있으면 텍스트 경로로, 없고 required면 422 `grounding_failed` |
 | topic 모호, 엔티티 이름 있음 | topic을 쓰지 않고 엔티티·텍스트 경로로 |
 | topic 모호, 엔티티 이름 없음 | required면 422 `grounding_ambiguous`, optional이면 빼고 `need_dropped` |
-| 보는 사람(방 참가자)을 읽지 못함 | `friends` 기록과 그 요약문을 빼고 `public` 기록으로 계속 + `audience_unknown`(§12) |
+| 보는 사람을 알 수 없음(`participant_user_ids`가 없고 bourbon-api에서도 읽지 못함) | `friends` 기록과 그 요약문을 빼고 `public` 기록으로 계속 + `audience_unknown`(§12) |
 | 지칭이 채워지지 않은 질문 | 그 지칭은 `condition`으로만 반영하고 계속 + `reference_unresolved`(§9 T0) |
 | topic-api 검색 불가 | 엔티티·텍스트 경로로 계속 + `topic_unavailable`. 엔티티 이름도 `condition`도 없는 required need가 있거나 lived-knowledge도 답하지 않으면 503(§9 T2) |
 | lived-knowledge timeout·5xx | 관심 소스만으로 응답 + `experience_unavailable`. 전원 `prior_only`, need 충족은 1단계 규칙(§9 T3), 이유는 관심 문구, 추천 근거 없음. timeout은 설정 레지스터 값이고, 새 route 전체 deadline(bourbon-agent의 10초 아래) 안에 든다 |
@@ -888,7 +892,7 @@ lived-knowledge:
 | resolve 실패 | 엔티티를 QID 없이 기록하고 나중에 다시 resolve |
 | 기록 쪽 지시어 해소 실패 | 상위 엔티티로 남기고 다음 주기에 다시 시도한다. 시도 횟수 상한을 넘으면 그만둔다(§7-3) |
 | 탈퇴한 사람에 대한 쓰기(늦게 온 `message_created`, 백필, 재추출) | 트랜잭션 첫 statement의 확인에서 거절(§7-5) |
-| `user_deactivated` 유실 | 기록이 남는다. discovery의 재필터링이 막고, 믿을 수 있는 확인 방법을 요청한다(§15 요청 1) |
+| `user_deactivated` 유실 | 기록이 남는다. lived-knowledge 쪽 큐에서만 유실되면 discovery의 재필터링이 막는다. 발행 자체가 실패하면 discovery와 함께 모른다(§7-5) |
 
 ---
 
@@ -907,7 +911,8 @@ lived-knowledge:
 
 - **규칙**: 경험 기록 하나는 그 기록의 topic에 대해 owner가 정한 visibility가 허락하는 보는 사람에게만 보인다. 후보 선정, 추천 이유의 요약문, 대화 시작 때의 추천 근거 세 곳에 같은 규칙을 건다. 추천 시점과 근거 사용 시점에 따로 판정한다(§10-3).
 - **판정은 두 서비스가 나눠 한다.** lived-knowledge가 자기 `topic_visibility` 미러(§7-7)로 기록마다 visibility를 보고, private·hidden이면 응답에 넣지 않고, 나머지에 `audience: public | friends`를 붙인다(§10-2). discovery는 `friends`인 기록을 보는 사람이 모두 owner의 친구일 때만 쓴다. discovery는 누가 무엇을 private으로 두었는지 알지 못한다.
-- **보는 사람은 discovery가 직접 읽는다.** 요청이 온 방의 사람 참가자다. discovery가 요청의 `room_id`로 bourbon-api `GET /api/internal/rooms/{room_id}/agent-context`를 읽어 `room_members`에서 사람만 고른다(bourbon-agent `api_internal_client/agent_context.py:14-29`). 기준 데이터를 요청 시점에 읽으므로 bourbon-agent가 목록을 만들 필요가 없고, 빈 목록이 "개인 방"인지 "누락"인지 모호해지지 않는다. 다른 사용자가 owner의 agent와 1:1로 대화하는 방(`agent_dm`이지만 보는 사람은 그 사용자)도 같은 방식으로 맞게 판정된다. T1과 병렬로 부르고, 응답의 메시지 본문은 쓰지 않으며 로그에도 남기지 않는다. 읽지 못하면 `friends` 기록을 뺀다(fail-closed, §11).
+- **보는 사람은 요청에 실려 온다.** 요청 방의 사람 참가자 전원(`participant_user_ids`, §10-1)이다. bourbon-agent는 방의 참가자를 이미 알고 있다(agent-context의 `room_members`, `api_internal_client/agent_context.py:14-29`). 다른 사용자가 owner의 agent와 1:1로 대화하는 방(`agent_dm`이지만 보는 사람은 그 사용자)도 이 목록으로 맞게 판정된다. 빈 목록은 받지 않는다.
+- **목록이 없을 때만 discovery가 읽는다.** 요청의 `room_id`로 bourbon-api `GET /api/internal/rooms/{room_id}/agent-context`를 읽어 `room_members`에서 사람만 고른다. T1과 병렬로 부르고, 응답의 메시지 본문은 쓰지 않으며 로그에도 남기지 않는다. 그것도 읽지 못하면 `friends` 기록을 뺀다(fail-closed, §11).
 - **hidden은 어느 경로에서도 쓰지 않는다**(오너, 2026-09-28). hidden은 사용자가 삭제 대신 고르는 상태다(topic-api `docs/dynamodb-key-design.md:25`). 요청자 본인의 프로필에서도 hidden을 읽지 않는 R22와 같다.
 - **topic 하나의 visibility**(오너, 2026-09-28): owner O, 기록의 topic t에 대해 순서대로 본다.
   1. O가 t를 가졌으면 t의 tier.
@@ -1017,13 +1022,13 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 - **만드는 것**: lived-knowledge의 최소 골격 — 사전 필터, 추출, 엔티티 레지스트리. 추천 route는 아직 없다.
 - **재는 것**: §13-2의 일곱 가지. 추출 정밀도, 사전 필터가 놓치는 비율, 엔티티 resolve 일치, 요약문 검색 품질, 물량과 비용, 그리고 **사용자당 기록 수**와 **질문마다 근거를 가진 사람이 있는 비율**.
 - **정하는 것**: 추출에 쓸 LLM, 저장소(§7-6), 그리고 **2단계를 진행할지**. 마지막 두 숫자가 낮으면 2단계를 만들어도 추천 대부분이 관심 소스에 그친다.
-- **필요한 것**: dev 대화 사용 범위의 승인(§12, 열린 항목 21), bourbon-api의 agent-context 호출과 큐 바인딩(§15 요청 2·3), memory-api resolve(§15 요청 4).
+- **필요한 것**: dev 대화 사용 범위의 승인(§12, 열린 항목 21), lived-knowledge 워커의 Redis DB 번호 할당(인프라, §7-1), bourbon-api의 agent-context 호출·큐 바인딩과 memory-api resolve는 허락받았다(§15 요청 2·3·4).
 
 ### 1단계 — 관심 소스만으로 한 명 추천
 
 - **목표**: 새 추천 route를 먼저 열어 둔다. lived-knowledge 없이 지금 있는 데이터로.
 - **추천하는 사람**: 이 분야에 관심을 드러낸 사람(`prior_only`). "겪어 본 사람"이 아니라 "관심 있는 사람"이다. 이 단계에서는 `prior_only`가 need를 채운 것으로 본다(§9 T3). UI와 문구도 "관심 있는 agent"로 유지한다.
-- **만드는 것**: `POST /recommend/knowledge` route와 응답 형식, T1 질문 분석(새 필드를 전부 뽑아 decision log에 남긴다), 사실 질문 판정(`people_needed`), topic-api `knowledge` facet 컬럼, 순위.
+- **만드는 것**: `POST /recommend/knowledge` route와 응답 형식, T1 질문 분석(새 필드를 전부 뽑아 decision log에 남긴다), 사실 질문 판정(`people_needed`), 순위.
 - **필요한 것**: 없음. discovery 안에서 끝난다.
 - **내보내는 범위**: 관심 기반 추천이라 사용자가 명시적으로 "추천해 달라"고 할 때만 쓴다.
 
@@ -1039,7 +1044,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 - **목표**: "이것을 겪었다·좋아한다·해 봤다·안다고 말한 사람"을 추천한다. 이 타입의 핵심이다.
 - **먼저 확정할 것**: need 충족 판정(§9 T3), 적재의 중복 처리(§7-5), 엔티티 ambiguity(§7-3)를 구현 계약으로 정한다.
 - **만드는 것**: `bourbon-lived-knowledge-api` 전체 — 이벤트 소비, 추출, 중복 처리, 저장, 조회 API. discovery 쪽은 네 검색 경로를 받아 합치는 부분, 보는 사람 판정(방 참가자, §12), 요약문 기반 추천 이유. lived-knowledge 쪽에는 기록 쪽 지시어 해소 워커(§7-3).
-- **필요한 것**: 0단계의 "진행" 판단, bourbon-api의 agent-context 호출 허락과 `message_created` 큐 바인딩(§15 요청 2·3), e3llm 배치 한도(§15 요청 13), memory-api resolve 사용 허락(§15 요청 4).
+- **필요한 것**: 0단계의 "진행" 판단, lived-knowledge 워커의 Redis DB 번호(0단계에서 받는다), e3llm 배치 한도(§15 요청 13), memory-api resolve(허락받았다, §15 요청 4).
 - **끝났다고 보는 기준**: 합성 대화 세트(§13-3)에서 recall·precision을 재고, 경로별 기여를 확인한다. 조건이 얽힌 질문의 precision으로 LLM 리랭커(§9 T4)를 붙일지 정한다.
 
 ### 3단계 — 추천 근거 넘기기
@@ -1047,7 +1052,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 - **목표**: 추천된 agent가 근거가 된 경험 기록에서 바로 답을 시작하게 한다.
 - **시작 조건**: 근거의 전달 방식(§10-3)과 호출자의 권한 모델이 합의된 뒤에 구현한다. 근거를 조회할 때 공개 범위를 추천 때와 같은 규칙으로 다시 판정하는 것이 필수다(§10-3).
 - **만드는 것**: 추천 근거 저장과 조회 route(discovery), 기록 조회 route(lived-knowledge).
-- **필요한 것**: bourbon-agent의 실행 경로 변경(§15 요청 10), 카드의 `recommendation_id`(§15 요청 14). 원 메시지가 필요하면 memory-api `messages/lookup`(§15 요청 5).
+- **필요한 것**: bourbon-agent의 실행 경로 변경(§15 요청 10), 카드의 `recommendation_id`(§15 요청 14).
 - **끝났다고 보는 기준**: 추천 근거를 조회한 대화와 그렇지 않은 대화의 답변 성공률을 나눠 잰다(§13-4).
 
 ### 4단계 — 자동 트리거에 맞춘 준비
@@ -1084,29 +1089,36 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 **bourbon-api**
 
 1. **믿을 수 있는 탈퇴 확인 방법.** `user_deactivated`는 best-effort이고, 내부 사용자 조회에 없다는 것을 탈퇴 신호로 읽지 말라고 적혀 있다(§7-5). 탈퇴한 id 목록을 주는 route나, 발행을 보장하는 방식(outbox 등)이 있는지.
-2. lived-knowledge가 `GET /api/internal/rooms/{room_id}/agent-context`를 bourbon-agent와 같은 방식으로 불러도 되는지, 부하 한도. 그리고 discovery가 추천 요청마다 같은 route로 방의 참가자를 읽는 것(§12) — 참가자만 필요하므로 메시지 문맥을 최소로 받을 방법이 있는지.
+   - **답(2026-09-28)**: 아직 없다. `user_deactivated`를 탈퇴로 본다(§7-5).
+2. lived-knowledge가 `GET /api/internal/rooms/{room_id}/agent-context`를 bourbon-agent와 같은 방식으로 불러도 되는지, 부하 한도. 그리고 요청에 참가자 목록이 없을 때 discovery가 같은 route로 방의 참가자를 읽는 것(§12) — 참가자만 필요하므로 메시지 문맥을 최소로 받을 방법이 있는지.
+   - **답(2026-09-28)**: 불러도 된다. 부하 한도와 문맥을 최소로 받는 방법은 필요해지면 따로 묻는다.
 3. lived-knowledge의 큐를 `bourbon.message_created`에 바인딩하는 것 — 이벤트 워커는 소비하는 repo가 소유한다는 기존 원칙대로.
+   - **답(2026-09-28)**: 문제없다. 워커가 쓸 Redis DB 번호는 할당받아야 한다(§7-1).
 
 **memory-api**
 
 4. `POST /knowledge/resolve`를 추출 경로에서(메시지마다가 아니라 레지스트리에 없는 새 이름마다) 불러도 되는지, 처리량과 지연 시간.
-5. `POST /{tenant}/messages/lookup`을 추천 근거로 대화를 시작할 때 지금 방의 scope로 부르는 것이 그쪽 scope의 의미에 맞는지(§10-3).
+   - **답(2026-09-28)**: 불러도 된다. 처리량과 지연 시간은 0단계에서 잰다.
+5. **전달 사항**: 추천된 agent가 원 메시지나 그 앞뒤 대화를 읽을지, 읽는다면 어떤 경로(`POST /{tenant}/messages/lookup` 등)와 scope로 읽을지는 bourbon-agent·memory-api가 기획과 함께 정할 일이다(§10-3). discovery는 추천 근거까지만 주고, 필요하다면 기록의 `message_id`를 조회 응답에 실을 수 있다. (2026-09-28 개정: 처음에는 "지금 방의 scope로 부르는 것이 맞는지"를 물었으나, 경로를 정하는 것은 우리 몫이 아니다.)
 6. personal build는 건드리지 않는다는 것을 알린다. 이 추천을 위해 그쪽 데이터 모델을 바꿀 요청은 없다.
 
 **topic-api**
 
 7. `score_detail` block의 facet 이름과 `confidence`를 소비자 계약으로 삼아도 되는지(관심 소스).
+   - **답(2026-09-28)**: 지금은 계약으로 삼지 않는다. 관심 소스는 `topic_score`·`topic_maturity`로 순위를 매기고, 안정적인 값이 정해지면 그때 쓴다(§4-1).
 8. 제품·브랜드 노드는 요청하지 않는다. 엔티티는 lived-knowledge의 레지스트리가 맡는다.
+   - **확정(2026-09-28)**: 요청하지 않는다.
 8-a. lived-knowledge가 내부 route로 사용자 topic을 **모든 tier**(`private`·`hidden` 포함)로 읽고, `topics_updated`·`topic_visibility_changed`에 큐를 바인딩해도 되는지(§12). 읽는 것은 id와 tier뿐이다.
 8-b. 사용자 topic의 기본 visibility를 소비자가 알 방법(route나 계약 값). 지금은 임시로 public이고 나중에 private이 된다(§12).
 
-**bourbon-agent**
+**bourbon-agent** — 9~12는 묻는 것이 아니라 **discovery가 먼저 계약을 정하고 bourbon-agent가 맞추는 것**이다(오너, 2026-09-28). 언제 recommend tool을 부를지(트리거)만 그쪽의 결정이다(§9 T0).
 
-9. 트리거는 그쪽의 결정이다(§9 T0). 참고로 전할 것 — 관심 기반 추천을 자동으로 내보내는 것은 권하지 않는다는 것. 두 사람 조합을 다루도록 `recommend_agents`(지금 `max_results=1`)를 바꾸는 것(1-b단계 이후). 그리고 질문 분석(need 필드)을 그쪽 tool 인자로 받는 대안(§9 T1)이 그쪽 프롬프트 설계에 맞는지.
-10. 대화가 시작될 때 추천 근거를 조회해(§10-3) 추천된 agent의 턴에 넘기는 방법 — 그 기록에서 답을 시작하게 하는 프롬프트·tool. 새 방의 첫 메시지 UX(요청자가 다시 묻는지, 자동으로 보내는지)와, 그때 `covered_needs`를 어떻게 쓸지. 그리고 내부 호출 인증(§10-3).
-11. **요청의 지칭을 채워 보내는 것**(§9 T0) — "이번 신상" 같은 지칭을 대화 맥락이나 `search_web`으로 구체적인 이름으로 바꿔 `question`에 넣는 것. discovery는 요청 경로에서 웹 검색을 하지 않는다. 찾지 못했을 때 사용자에게 되물을지는 그쪽의 판단이다.
-12. 호출률 지표를 그쪽 journal에서 낼 수 있는지.
-12-a. 필요하면 질문한 사람의 id를 따로 실을지 — 지금 `user_id`로는 agent의 owner를 보낸다(§2). 방의 참가자는 discovery가 bourbon-api에서 읽으므로 실어 줄 필요가 없다(§12).
+9. **tool 계약**: `recommend_agents`가 새 route(§10-1)를 부르고, 1-b단계 이후 두 사람 조합을 다루도록 맞춘다(지금 `max_results=1`). 질문 분석(need 필드)을 tool 인자로 옮길지(§9 T1)는 discovery가 측정한 뒤 정하고, 옮기기로 하면 그쪽이 맞춘다. 참고로 전할 것 — 관심 기반 추천을 자동으로 내보내는 것은 권하지 않는다.
+10. **근거 조회**: 대화가 시작될 때 §10-3의 route로 추천 근거를 조회해 추천된 agent의 턴에 넘긴다 — 그 기록에서 답을 시작하게 하는 프롬프트·tool은 그쪽이 만든다. 새 방의 첫 메시지 UX(요청자가 다시 묻는지, 자동으로 보내는지)와, 그때 `covered_needs`를 어떻게 쓸지. 그리고 내부 호출 인증(§10-3).
+11. **요청의 지칭을 채워 보낸다**(§9 T0) — "이번 신상" 같은 지칭을 대화 맥락이나 `search_web`으로 구체적인 이름으로 바꿔 `question`에 넣는 것. discovery는 요청 경로에서 웹 검색을 하지 않는다. 찾지 못했을 때 사용자에게 되물을지는 그쪽의 판단이다.
+12. **호출률 지표**: 지표의 정의는 discovery가 정하고(§13-4), 그쪽 journal에 남긴다.
+12-a. 질문한 사람의 id: 지금 `user_id`로는 agent의 owner를 보낸다(§2). 따로 필요해지면 discovery가 계약에 필드를 더한다.
+12-b. **참가자 목록**: 요청과 근거 조회에 방의 사람 참가자 전원(`participant_user_ids`)을 싣는다(§10-1, §12).
 
 **e3llm**
 
