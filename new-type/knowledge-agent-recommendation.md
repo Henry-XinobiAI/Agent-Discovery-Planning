@@ -506,7 +506,7 @@ discovery 한 곳을 위한 조회 route 둘(후보 조회, 근거 조회)을 �
 ### 7-8. 비용
 
 - LLM은 **사전 필터를 통과한, 사람이 보낸 메시지**마다 1회다. 물량은 모른다 — 하루 메시지 수 × 사람 발신 비율 × 사전 필터 통과율로 추정하고, dev에서 통과율부터 잰다(§13-2).
-- 추출도 e3llm을 쓴다. 추천 요청과 같은 proxy를 쓰면 배치 부하가 추천 요청의 tail latency(p95·p99)를 늘릴 수 있다. 추출은 우선순위가 낮은 별도 한도(동시성 상한)로 돌리는 것이 맞다고 보고, 가능한지는 e3llm 쪽에 묻는다(§15 요청 13).
+- 추출도 e3llm을 쓴다. 추천 요청과 같은 proxy를 쓰면 배치 부하가 추천 요청의 tail latency(p95·p99)를 늘릴 수 있다. 추출은 우선순위가 낮은 별도 한도(동시성 상한)로 돌리는 것이 맞다고 보고, 가능한지는 e3llm 쪽에 묻는다. 이 요청은 나중에 다룬다(오너, 2026-09-28, §15 요청 13).
 - 웹 검색은 대상이 지시어로만 남은 기록에만, 추출과 따로 비동기로 한다(§7-3). 물량은 그런 기록의 비율로 정해진다 — 0단계에서 잰다(§13-2).
 
 ---
@@ -775,7 +775,7 @@ feature(설정 레지스터에 올린다):
 - `empty`는 `agents`가 비었을 때만 true이고, 그때 `mode`는 `none`이다. 타입 ① envelope과 모양을 맞추려고 둔다.
 - `covers[]`는 need id 목록이고 coverage 상태는 싣지 않는다. `confidence`도 싣지 않는다(calibration 전).
 - 추천 근거는 응답에 싣지 않는다. discovery가 저장하고, 대화가 시작될 때 §10-3의 route로 조회된다.
-- `recommendation_id`는 카드에 실어 대화 시작까지 전달되게 한다(§10-3, §15 요청 14).
+- `recommendation_id`는 대화 시작까지 전달되어야 한다. 어떤 카드·UI로 전달할지는 client 연동 때 정한다(§10-3, §15 요청 14).
 - `degraded[]`: `expansion_partial`, `need_fields_defaulted`, `need_dropped`, `reference_unresolved`(채워지지 않은 지칭, §9 T0), `audience_unknown`(보는 사람을 읽지 못함, §12), `topic_unavailable`, `entity_resolution_unavailable`, `experience_unavailable`, `experience_incomplete`.
 
 ### 10-2. lived-knowledge — discovery가 부르는 조회
@@ -848,7 +848,7 @@ POST /api/internal/svc/lived-knowledge/candidates
 - **다시 읽으므로 과거의 권한이 고정되지 않는다.** 저장하는 것은 id뿐이고, 기록은 조회할 때마다 lived-knowledge에서 읽는다. 그 사이 탈퇴한 사람의 기록은 이미 지워져 없다.
 - **공개 범위도 조회할 때 다시 판정한다.** 추천 뒤 owner가 topic을 private으로 바꿨을 수 있다. `records/lookup`이 조회 시점의 visibility로 private·hidden 기록을 빼고(§10-2), discovery가 `friends` 기록을 조회 시점의 친구 관계로 다시 확인한다. 보는 사람은 대화가 시작된 방의 사람 참가자(`participant_user_ids`)다 — 요청자와 추천된 agent의 방이라 보통 요청자 한 명이다. 추천 시점과 근거 사용 시점에 같은 규칙을 쓴다(§12). 서비스화 때 동의 철회를 확인하는 곳도 여기다.
 - **묶음 자체는 탈퇴 때 지우지 않고 TTL에 맡긴다.** 키가 `REC#{recommendation_id}`라 사용자로 역조회할 수 없다. discovery의 탈퇴 처리도 TTL이 있는 DynamoDB 항목은 TTL에 맡기고, TTL이 없는 CF pool만 지운다(`worker/deactivation.py:9-12`). 대신 조회할 때 요청자와 소유자를 `departed_users`로 확인해 탈퇴자면 돌려주지 않는다(fail-closed). 묶음에는 id만 있고 글은 없다.
-- **카드에 `recommendation_id`를 싣는다.** 지금 `agent_profiles_v1`은 사람의 id(`owner_user_id`)만 싣는다(bourbon-api `AgentProfileItem`). `recommendation_id`가 필수이므로 카드에서 대화를 시작하는 쪽이 그 값을 알아야 한다. 기존 카드에 추가 필드로 싣는 것을 요청한다 — 항목(`AgentProfileItem`)마다가 아니라 카드 블록(`AgentProfilesV1Block`)에 한 번. 추천 하나가 카드 하나이고, 두 사람 조합도 추천 하나다(§15 요청 14).
+- **`recommendation_id`가 대화 시작까지 전달되어야 한다.** `recommendation_id`가 필수이므로, 추천을 보여 준 화면에서 대화를 시작하는 쪽이 그 값을 알아야 한다. 지금 `agent_profiles_v1`은 사람의 id(`owner_user_id`)만 싣는다(bourbon-api `AgentProfileItem`). 같은 카드 블록에 실을지, 다른 방식으로 보여 줄지는 UX·UI에 따라 달라지므로 실제 client 연동 때 정한다(오너, 2026-09-28, §15 요청 14). 추천 하나가 한 묶음이고, 두 사람 조합도 추천 하나라는 점만 정해 둔다.
 - **discovery가 주는 것은 추천 근거(`covered_needs`와 경험 기록)까지다.** 추천된 agent가 원 메시지나 그 앞뒤 대화를 더 읽을지, 어떤 경로와 scope로 읽을지는 bourbon-agent·memory-api가 기획과 함께 정한다(§15 요청 5). 참고로 전할 것: 원 메시지는 대개 요청자가 없던 방에서 나왔으므로, 그 방의 scope로 원 메시지와 앞뒤를 읽어 요청자와의 방에서 쓰면 다른 방의 대화가 유출될 수 있다. 기록에는 원 메시지 id(`message_id`)가 있어, 그쪽이 필요하다고 정하면 기록 조회 응답에 실을 수 있다.
 - **요약문은 요청자에게 보인다.** 추천 이유에 요약문이 그대로 들어가므로(§9 T6), 추천 근거를 숨겨도 요청자는 요약 내용을 본다. 요약문에 다른 참가자의 말은 없지만, 요약문 자체가 그 사람의 개인 정보다(§7-2). 기획 단계에서 이 노출의 동의를 빼 두었을 뿐이다(§12).
 - **근거를 조회할 수 있는 것은 기록 소유자의 agent뿐이어야 한다.** 그런데 지금 내부 서비스 사이에는 호출자 인증이 없고, bourbon-agent 한 프로세스가 모든 agent를 대신해 말한다 — "호출한 agent의 소유자"는 호출자가 주장하는 값일 뿐이다. 저장된 묶음과 요청자·소유자를 맞춰 보는 것은 피해 범위를 줄일 뿐이고, bourbon-agent를 믿는다는 전제는 그대로다. 기획 단계에서는 다른 내부 route와 같은 신뢰 범위 안에 두고, 서비스화 전에 내부 호출 인증이 먼저 있어야 한다(§12).
@@ -917,7 +917,7 @@ lived-knowledge:
 - **topic 하나의 visibility**(오너, 2026-09-28): owner O, 기록의 topic t에 대해 순서대로 본다.
   1. O가 t를 가졌으면 t의 tier.
   2. 아니면 카탈로그에서 t의 상위를 따라 올라가며 **O가 가진 가장 가까운 상위 topic**의 tier. 가장 가까운 상위가 이긴다 — "증류주" private, "위스키" public이면 몰트 위스키 기록은 "위스키"를 따른다.
-  3. 가진 상위도 없으면 topic-api의 기본 visibility. 지금은 임시로 public이고, 나중에 private이 된다(오너). 설정 레지스터 값 `experience.default_visibility`로 두고 topic-api의 기본값이 바뀔 때 함께 바꾼다(§15 요청 8-b).
+  3. 가진 상위도 없으면 topic-api의 기본 visibility. 원래 기본은 private이고, 지금은 테스트 중이라 임시로 public이다. 기본값은 기획에 따라 정리된다(오너, 2026-09-28 — R22의 "새 topic은 default private"이 원래 기본값이다). 설정 레지스터 값 `experience.default_visibility`로 두고 topic-api의 기본값이 바뀔 때 함께 바꾼다(§15 요청 8-b).
   - 카탈로그에서 한 topic의 부모는 늘 하나이고, owner가 하위 topic을 가지면 상위 topic도 늘 가진다(오너). 그래서 가장 가까운 상위는 하나로 정해지고, 상위 topic에 붙은 기록은 언제나 1에서 그 topic 자신의 tier를 찾는다.
   - 미러에 모든 tier가 있으므로 "미러에 없다"는 "그 topic을 갖고 있지 않다"는 뜻 하나다.
   - **조회할 때 계산하고 기록에 저장하지 않는다.** 판정의 재료는 `topic_visibility` 미러와 카탈로그의 부모 관계뿐이다. owner가 visibility를 바꾸거나(`topic_visibility_changed`), 나중에 persona가 그 하위 topic을 owner에게 만들면(`topics_updated`) 미러가 바뀌고 다음 조회부터 반영된다. 기록을 다시 쓰지 않는다.
@@ -1036,7 +1036,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 
 - **목표**: need가 여럿인 질문에 서로 보완하는 두 사람을 추천한다.
 - **만드는 것**: 조합 탐색(최대 2명).
-- **필요한 것**: 알고리즘은 1단계 위에 얹으면 된다. 사용자에게 내보내려면 bourbon-agent의 `recommend_agents`(지금 `max_results=1`, 1위 한 명만 쓴다)와 카드(§10-3)가 두 명을 다룰 수 있어야 한다(§15 요청 9·14).
+- **필요한 것**: 알고리즘은 1단계 위에 얹으면 된다. 사용자에게 내보내려면 bourbon-agent의 `recommend_agents`(지금 `max_results=1`, 1위 한 명만 쓴다)와 카드(§10-3)가 두 명을 다룰 수 있어야 한다(§15 요청 9). 카드·UI는 client 연동 때 정한다(§15 요청 14).
 - **내보내는 범위**: 관심 소스만으로 만든 조합은 실험용이다.
 
 ### 2단계 — 경험 소스로 추천
@@ -1109,7 +1109,9 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 8. 제품·브랜드 노드는 요청하지 않는다. 엔티티는 lived-knowledge의 레지스트리가 맡는다.
    - **확정(2026-09-28)**: 요청하지 않는다.
 8-a. lived-knowledge가 내부 route로 사용자 topic을 **모든 tier**(`private`·`hidden` 포함)로 읽고, `topics_updated`·`topic_visibility_changed`에 큐를 바인딩해도 되는지(§12). 읽는 것은 id와 tier뿐이다.
-8-b. 사용자 topic의 기본 visibility를 소비자가 알 방법(route나 계약 값). 지금은 임시로 public이고 나중에 private이 된다(§12).
+   - **답(2026-09-28)**: 구독해도 된다.
+8-b. 사용자 topic의 기본 visibility를 소비자가 알 방법(route나 계약 값)(§12).
+   - **답(2026-09-28)**: 기본 visibility는 기획에 따라 정리된다. 원래 기본은 private이고, 지금은 테스트 중이라 임시로 public이다. 따로 알려 주는 route는 두지 않고, 설정 레지스터 값 `experience.default_visibility`를 기획의 결정에 맞춰 바꾼다.
 
 **bourbon-agent** — 9~12는 묻는 것이 아니라 **discovery가 먼저 계약을 정하고 bourbon-agent가 맞추는 것**이다(오너, 2026-09-28). 언제 recommend tool을 부를지(트리거)만 그쪽의 결정이다(§9 T0).
 
@@ -1123,10 +1125,12 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 **e3llm**
 
 13. 추출의 배치 부하(§7-8)와 새 타입의 요청 부하. 배치에 별도 한도를 둘 수 있는지. 그리고 기록 쪽 지시어 해소(§7-3)의 웹 검색 — 배치 부하, `web_search_options`와 구조화된 출력을 한 호출에서 쓸 수 있는지, 검색 한도.
+   - **답(2026-09-28)**: 나중에 다룬다.
 
 **bourbon-api · client (카드)**
 
 14. `agent_profiles_v1` 카드 블록(`AgentProfilesV1Block`)에 `recommendation_id`를 추가 필드로 한 번 싣는 것(§10-3). 추천 하나가 카드 하나다. 그리고 카드에서 대화를 시작할 때 그 값이 bourbon-agent까지 전달되는 경로. 추천 이유와 `covers`는 bourbon-agent의 모델이 문장으로 말하므로 카드에 싣지 않아도 된다.
+   - **답(2026-09-28)**: 미룬다. 같은 카드 블록이 될지, 다른 방식으로 보여 줄지는 UX·UI에 따라 달라지므로 실제 client 연동 때 정한다. `recommendation_id`가 대화 시작까지 전달되어야 한다는 조건만 남긴다(§10-3).
 
 ---
 
