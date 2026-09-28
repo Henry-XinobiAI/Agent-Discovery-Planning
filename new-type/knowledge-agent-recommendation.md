@@ -453,7 +453,7 @@ resolve 순서:
 
 ### 7-4. topic
 
-추출 LLM이 기록마다 분야 이름 1~3개("malt whisky", "whisky")를 함께 낸다. lived-knowledge가 그것을 topic-api `/search/topics`로 찾아 `topic_ids`에 넣는다 — topic-api가 persona에서 topic을 붙이는 방식과 같다(가장 넓은 분야 이름을 늘 함께 낸다, `topic/persona_topics/stages.py:58-64`). 엔티티가 없는 기록도, 엔티티 매칭이 어긋난 질문도 topic으로 찾을 수 있다.
+추출 LLM이 기록마다 분야 이름 1~3개("malt whisky", "whisky")를 함께 낸다. 가장 넓은 분야 이름과 함께 **가장 구체적인 분야 이름**도 낸다 — 공개 범위 판정이 기록의 topic 중 가장 제한적인 쪽을 따르므로(§12), 기록이 넓은 topic에만 붙으면 owner가 구체적인 topic에 둔 visibility를 놓친다. lived-knowledge가 그것을 topic-api `/search/topics`로 찾아 `topic_ids`에 넣는다 — topic-api가 persona에서 topic을 붙이는 방식과 같다(가장 넓은 분야 이름을 늘 함께 낸다, `topic/persona_topics/stages.py:58-64`). 엔티티가 없는 기록도, 엔티티 매칭이 어긋난 질문도 topic으로 찾을 수 있다.
 
 ### 7-5. 중복 처리·무효화·탈퇴·재추출
 
@@ -493,7 +493,7 @@ lived-knowledge가 하는 일을 기준으로 두 후보를 비교한다.
 
 discovery 한 곳을 위한 조회 route 둘(후보 조회, 근거 조회)을 둔다(§10-2). **discovery가 경험 기록을 복제해 두지 않는다** — lived-knowledge는 우리가 만들고 이 조회를 위해 설계하므로, 선행 문서의 폴링 루프·manifest cursor·reconciliation이 필요 없다. 대신 추천 요청마다 호출하는 런타임 의존성이 되고, lived-knowledge가 답하지 않을 때의 동작을 정한다(§11).
 
-**topic visibility 미러도 lived-knowledge에 둔다**(§12). `topic_visibility(user_id, topic_id, visibility)` — id와 tier만, 모든 tier(`public`·`friends`·`private`·`hidden`). 자기 워커가 `bourbon.topics_updated`·`bourbon.topic_visibility_changed`를 받아 topic-api를 모든 tier로 다시 읽는다 — discovery 워커와 같은 방식(유저 단위 debounce, `consistent=true` 읽기, 계약 §9-1·R55·R56)이다. 탈퇴 때 그 사람의 행을 지운다. discovery는 이 미러를 갖지 않는다 — discovery의 저장소에는 지금처럼 공개된 row만 있다(불변식 1).
+**topic visibility 미러도 lived-knowledge에 둔다**(§12). `topic_visibility(user_id, topic_id, visibility)` — id와 tier만, 모든 tier(`public`·`friends`·`private`·`hidden`). 자기 워커가 `bourbon.topics_updated`·`bourbon.topic_visibility_changed`를 받아 topic-api를 모든 tier로 다시 읽는다 — discovery 워커와 같은 방식(유저 단위 debounce, `consistent=true` 읽기, 계약 §9-1·R55·R56)이다. 탈퇴 때 그 사람의 행을 지운다. 상위 topic을 따라 올라가는 판정(§12)을 위해 카탈로그의 부모 관계도 둔다 — discovery의 `catalog_edges`와 같은 방식으로 카탈로그를 복사한다. discovery는 이 미러를 갖지 않는다 — discovery의 저장소에는 지금처럼 공개된 row만 있다(불변식 1).
 
 ### 7-8. 비용
 
@@ -896,7 +896,13 @@ lived-knowledge:
 
 - **규칙**: 경험 기록 하나는 그 기록의 topic에 대해 owner가 정한 visibility가 허락하는 보는 사람에게만 보인다. 세 통로 — 후보 선정, 추천 이유의 요약문, `self_support` — 에 같은 규칙을 건다.
 - **판정은 두 서비스가 나눠 한다.** lived-knowledge가 자기 `topic_visibility` 미러(§7-7)로 기록마다 visibility를 보고, private·hidden이면 응답에 넣지 않고, 나머지에 `audience: public | friends`를 붙인다(§10-2). discovery는 `friends`인 기록을 보는 사람이 모두 owner의 친구일 때만 쓴다 — 개인 방이면 요청자, 그룹 방이면 참가자 전원(`audience_user_ids`)이다. discovery는 누가 무엇을 private으로 두었는지 알지 못한다.
-- **owner의 topic 목록에 없는 topic**: topic-api의 기본 visibility를 따른다. 지금은 임시로 public이고, 나중에 private이 된다(오너). 미러에 모든 tier가 있으므로 "미러에 없다"는 "그 topic을 갖고 있지 않다"는 뜻 하나다. 기본값은 설정 레지스터 값 `experience.default_visibility`로 두고 topic-api의 기본값이 바뀔 때 함께 바꾼다(§15 요청 8-b).
+- **topic 하나의 visibility**(오너, 2026-09-28): owner O, 기록의 topic t에 대해 순서대로 본다.
+  1. O가 t를 가졌으면 t의 tier.
+  2. 아니면 카탈로그에서 t의 상위를 따라 올라가며 **O가 가진 가장 가까운 상위 topic**의 tier. 가장 가까운 상위가 이긴다 — "증류주" private, "위스키" public이면 몰트 위스키 기록은 "위스키"를 따른다.
+  3. 가진 상위도 없으면 topic-api의 기본 visibility. 지금은 임시로 public이고, 나중에 private이 된다(오너). 설정 레지스터 값 `experience.default_visibility`로 두고 topic-api의 기본값이 바뀔 때 함께 바꾼다(§15 요청 8-b).
+  - 카탈로그에서 한 topic의 부모는 늘 하나이고, owner가 하위 topic을 가지면 상위 topic도 늘 가진다(오너). 그래서 가장 가까운 상위는 하나로 정해지고, 상위 topic에 붙은 기록은 언제나 1에서 그 topic 자신의 tier를 찾는다.
+  - 미러에 모든 tier가 있으므로 "미러에 없다"는 "그 topic을 갖고 있지 않다"는 뜻 하나다.
+  - **조회할 때 계산하고 기록에 저장하지 않는다.** 판정의 재료는 `topic_visibility` 미러와 카탈로그의 부모 관계뿐이다. owner가 visibility를 바꾸거나(`topic_visibility_changed`), 나중에 persona가 그 하위 topic을 owner에게 만들면(`topics_updated`) 미러가 바뀌고 다음 조회부터 반영된다. 기록을 다시 쓰지 않는다.
 - **topic이 여럿인 기록**: 가장 제한적인 쪽을 따른다(하나라도 private이면 가린다). 잠정이고 바뀔 수 있다(오너, 열린 항목 24).
 - **사용자가 visibility의 의미를 알고 설정했는가**: 지금 topic visibility는 "관심 프로필을 누구에게 보일지"의 설정이다. 그것이 경험 기록의 공개까지 정한다는 것은 서비스화 때 동의와 함께 다룬다.
 - **적용 시점**: 규칙은 정했고, 필터를 거는 것은 서비스화 때다. 그 전의 dev 실험에서는 private topic의 기록도 노출된다 — discovery 불변식 1(private·hidden은 저장소에 들어오지 않는다)의 취지와 어긋나므로 production에 내보내지 않는 이유 중 하나다. 미러를 2단계에서 미리 만들어 둘지는 열린 항목 25다.
@@ -1126,6 +1132,8 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 23. 기록 쪽 지시어 해소의 재시도 주기와 상한, 검색 결과 후보 수(§7-3).
 24. topic이 여럿인 기록의 공개 범위 — 가장 제한적인 쪽을 따르는 것은 잠정이다(§12).
 25. `topic_visibility` 미러를 2단계에서 미리 만들어 둘지, 서비스화 때 만들지(§12).
+26. topic이 하나도 붙지 않은 기록의 공개 범위 — `/search/topics`는 lexical이라 빈 결과가 나올 수 있다(§6-3, §7-4). 기본값을 따를지 막을지.
+27. 카탈로그가 바뀔 때(topic 병합·폐기) 기록의 `topic_ids`를 다시 매핑하는 경로 — 낡은 id는 미러와 맞지 않아 기본값으로 떨어진다.
 
 ---
 
