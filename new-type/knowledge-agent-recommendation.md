@@ -326,7 +326,7 @@ memory-api에서 이 설계가 쓰는 것은 둘이다.
   - corpus: sitelink가 하나 이상인 Wikidata 항목 전부(`memory/knowledge/public/dump.py:119-127`).
   - 주의: `match.score`는 **mention끼리 비교할 수 없다**(`memory/knowledge/public/structs.py:127-129`).
   - 이 설계의 사용 규칙: resolve는 공개 지식 route이지만, lived-knowledge가 보내는 이름은 사용자의 메시지에서 나온 것이다("동네 그 바"의 이름 자체가 개인적일 수 있다). 그래서 **이름과 분야 이름만 보내고 메시지 텍스트는 `context`로도 보내지 않는다.** resolve는 mention을 digest로만 로그에 남긴다(`api/routers/knowledge/router.py:252-256`).
-- **대화 저장** — bourbon-agent가 대화 검색으로 찾는 원문(`POST /{tenant}/search`)이 여기 있다. `POST /{tenant}/messages/lookup`은 메시지를 id로 찾되 `scope`가 허락하는 것만 돌려주고 `options.context`로 앞뒤 메시지를 붙인다(`api/routers/conversations/router.py:105-123`). 추천된 agent가 원 메시지를 다시 읽는 경로다(§10-3).
+- **대화 저장** — bourbon-agent가 대화 검색으로 찾는 원문(`POST /{tenant}/search`)이 여기 있다. `POST /{tenant}/messages/lookup`은 메시지를 id로 찾되 `scope`가 허락하는 것만 돌려주고 `options.context`로 앞뒤 메시지를 붙인다(`api/routers/conversations/router.py:105-123`). 원 메시지를 다시 읽을 수 있는 경로다. 추천된 agent가 이것을 쓸지는 bourbon-agent·memory-api가 정한다(§10-3).
 
 memory-api에는 인증이 없다(`verify_token`은 있지만 어느 router도 쓰지 않는다, `api/depends/tenant.py:4-6`).
 
@@ -848,7 +848,7 @@ POST /api/internal/svc/lived-knowledge/candidates
 - **공개 범위도 조회할 때 다시 판정한다.** 추천 뒤 owner가 topic을 private으로 바꿨을 수 있다. `records/lookup`이 조회 시점의 visibility로 private·hidden 기록을 빼고(§10-2), discovery가 `friends` 기록을 조회 시점의 친구 관계로 다시 확인한다. 보는 사람은 대화가 시작된 방의 사람 참가자다 — 요청자와 추천된 agent의 방이라 보통 요청자 한 명이다. 추천 시점과 근거 사용 시점에 같은 규칙을 쓴다(§12). 서비스화 때 동의 철회를 확인하는 곳도 여기다.
 - **묶음 자체는 탈퇴 때 지우지 않고 TTL에 맡긴다.** 키가 `REC#{recommendation_id}`라 사용자로 역조회할 수 없다. discovery의 탈퇴 처리도 TTL이 있는 DynamoDB 항목은 TTL에 맡기고, TTL이 없는 CF pool만 지운다(`worker/deactivation.py:9-12`). 대신 조회할 때 요청자와 소유자를 `departed_users`로 확인해 탈퇴자면 돌려주지 않는다(fail-closed). 묶음에는 id만 있고 글은 없다.
 - **카드에 `recommendation_id`를 싣는다.** 지금 `agent_profiles_v1`은 사람의 id(`owner_user_id`)만 싣는다(bourbon-api `AgentProfileItem`). `recommendation_id`가 필수이므로 카드에서 대화를 시작하는 쪽이 그 값을 알아야 한다. 기존 카드에 추가 필드로 싣는 것을 요청한다 — 항목(`AgentProfileItem`)마다가 아니라 카드 블록(`AgentProfilesV1Block`)에 한 번. 추천 하나가 카드 하나이고, 두 사람 조합도 추천 하나다(§15 요청 14).
-- **원 메시지는 기본으로 읽지 않는다.** 원 메시지는 대개 요청자가 없던 방에서 나왔고, bourbon-agent의 대화 검색 범위는 방이다(§6-4). 그 메시지와 앞뒤를 요청자와의 방에서 읽으면 다른 방의 대화가 유출된다. 원 메시지가 꼭 필요하면 memory-api `POST /{tenant}/messages/lookup`을 **지금 방의 scope로** 부르고, 그 scope에서 읽을 수 있을 때만 쓴다. 더 자세한 것은 추천된 agent가 평소처럼 대화 검색으로 찾는다.
+- **discovery가 주는 것은 추천 근거(`covered_needs`와 경험 기록)까지다.** 추천된 agent가 원 메시지나 그 앞뒤 대화를 더 읽을지, 어떤 경로와 scope로 읽을지는 bourbon-agent·memory-api가 기획과 함께 정한다(§15 요청 5). 참고로 전할 것: 원 메시지는 대개 요청자가 없던 방에서 나왔으므로, 그 방의 scope로 원 메시지와 앞뒤를 읽어 요청자와의 방에서 쓰면 다른 방의 대화가 유출될 수 있다. 기록에는 원 메시지 id(`message_id`)가 있어, 그쪽이 필요하다고 정하면 기록 조회 응답에 실을 수 있다.
 - **요약문은 요청자에게 보인다.** 추천 이유에 요약문이 그대로 들어가므로(§9 T6), 추천 근거를 숨겨도 요청자는 요약 내용을 본다. 요약문에 다른 참가자의 말은 없지만, 요약문 자체가 그 사람의 개인 정보다(§7-2). 기획 단계에서 이 노출의 동의를 빼 두었을 뿐이다(§12).
 - **근거를 조회할 수 있는 것은 기록 소유자의 agent뿐이어야 한다.** 그런데 지금 내부 서비스 사이에는 호출자 인증이 없고, bourbon-agent 한 프로세스가 모든 agent를 대신해 말한다 — "호출한 agent의 소유자"는 호출자가 주장하는 값일 뿐이다. 저장된 묶음과 요청자·소유자를 맞춰 보는 것은 피해 범위를 줄일 뿐이고, bourbon-agent를 믿는다는 전제는 그대로다. 기획 단계에서는 다른 내부 route와 같은 신뢰 범위 안에 두고, 서비스화 전에 내부 호출 인증이 먼저 있어야 한다(§12).
 - 기대하는 효과(추론, §13-4로 잰다): 추천된 agent가 검색어를 잘못 써서 근거를 못 찾는 실패가 줄고, 추천의 근거와 대화의 출발점이 같은 기록이라 "둘이 다른 데이터를 봐서 생긴 오차"가 줄어든다.
@@ -1020,7 +1020,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 - **만드는 것**: lived-knowledge의 최소 골격 — 사전 필터, 추출, 엔티티 레지스트리. 추천 route는 아직 없다.
 - **재는 것**: §13-2의 일곱 가지. 추출 정밀도, 사전 필터가 놓치는 비율, 엔티티 resolve 일치, 요약문 검색 품질, 물량과 비용, 그리고 **사용자당 기록 수**와 **질문마다 근거를 가진 사람이 있는 비율**.
 - **정하는 것**: 추출에 쓸 LLM, 저장소(§7-6), 그리고 **2단계를 진행할지**. 마지막 두 숫자가 낮으면 2단계를 만들어도 추천 대부분이 관심 소스에 그친다.
-- **필요한 것**: dev 대화 사용 범위의 승인(§12, 열린 항목 21), lived-knowledge 워커의 Redis DB 번호 할당(인프라, §7-1), memory-api resolve(§15 요청 4). bourbon-api의 agent-context 호출과 큐 바인딩은 허락받았다(§15 요청 2·3).
+- **필요한 것**: dev 대화 사용 범위의 승인(§12, 열린 항목 21), lived-knowledge 워커의 Redis DB 번호 할당(인프라, §7-1), bourbon-api의 agent-context 호출·큐 바인딩과 memory-api resolve는 허락받았다(§15 요청 2·3·4).
 
 ### 1단계 — 관심 소스만으로 한 명 추천
 
@@ -1042,7 +1042,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 - **목표**: "이것을 겪었다·좋아한다·해 봤다·안다고 말한 사람"을 추천한다. 이 타입의 핵심이다.
 - **먼저 확정할 것**: need 충족 판정(§9 T3), 적재의 중복 처리(§7-5), 엔티티 ambiguity(§7-3)를 구현 계약으로 정한다.
 - **만드는 것**: `bourbon-lived-knowledge-api` 전체 — 이벤트 소비, 추출, 중복 처리, 저장, 조회 API. discovery 쪽은 네 검색 경로를 받아 합치는 부분, 보는 사람 판정(방 참가자, §12), 요약문 기반 추천 이유. lived-knowledge 쪽에는 기록 쪽 지시어 해소 워커(§7-3).
-- **필요한 것**: 0단계의 "진행" 판단, lived-knowledge 워커의 Redis DB 번호(0단계에서 받는다), e3llm 배치 한도(§15 요청 13), memory-api resolve 사용 허락(§15 요청 4).
+- **필요한 것**: 0단계의 "진행" 판단, lived-knowledge 워커의 Redis DB 번호(0단계에서 받는다), e3llm 배치 한도(§15 요청 13), memory-api resolve(허락받았다, §15 요청 4).
 - **끝났다고 보는 기준**: 합성 대화 세트(§13-3)에서 recall·precision을 재고, 경로별 기여를 확인한다. 조건이 얽힌 질문의 precision으로 LLM 리랭커(§9 T4)를 붙일지 정한다.
 
 ### 3단계 — 추천 근거 넘기기
@@ -1050,7 +1050,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 - **목표**: 추천된 agent가 근거가 된 경험 기록에서 바로 답을 시작하게 한다.
 - **시작 조건**: 근거의 전달 방식(§10-3)과 호출자의 권한 모델이 합의된 뒤에 구현한다. 근거를 조회할 때 공개 범위를 추천 때와 같은 규칙으로 다시 판정하는 것이 필수다(§10-3).
 - **만드는 것**: 추천 근거 저장과 조회 route(discovery), 기록 조회 route(lived-knowledge).
-- **필요한 것**: bourbon-agent의 실행 경로 변경(§15 요청 10), 카드의 `recommendation_id`(§15 요청 14). 원 메시지가 필요하면 memory-api `messages/lookup`(§15 요청 5).
+- **필요한 것**: bourbon-agent의 실행 경로 변경(§15 요청 10), 카드의 `recommendation_id`(§15 요청 14).
 - **끝났다고 보는 기준**: 추천 근거를 조회한 대화와 그렇지 않은 대화의 답변 성공률을 나눠 잰다(§13-4).
 
 ### 4단계 — 자동 트리거에 맞춘 준비
@@ -1096,7 +1096,8 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 **memory-api**
 
 4. `POST /knowledge/resolve`를 추출 경로에서(메시지마다가 아니라 레지스트리에 없는 새 이름마다) 불러도 되는지, 처리량과 지연 시간.
-5. `POST /{tenant}/messages/lookup`을 추천 근거로 대화를 시작할 때 지금 방의 scope로 부르는 것이 그쪽 scope의 의미에 맞는지(§10-3).
+   - **답(2026-09-28)**: 불러도 된다. 처리량과 지연 시간은 0단계에서 잰다.
+5. **전달 사항**: 추천된 agent가 원 메시지나 그 앞뒤 대화를 읽을지, 읽는다면 어떤 경로(`POST /{tenant}/messages/lookup` 등)와 scope로 읽을지는 bourbon-agent·memory-api가 기획과 함께 정할 일이다(§10-3). discovery는 추천 근거까지만 주고, 필요하다면 기록의 `message_id`를 조회 응답에 실을 수 있다. (2026-09-28 개정: 처음에는 "지금 방의 scope로 부르는 것이 맞는지"를 물었으나, 경로를 정하는 것은 우리 몫이 아니다.)
 6. personal build는 건드리지 않는다는 것을 알린다. 이 추천을 위해 그쪽 데이터 모델을 바꿀 요청은 없다.
 
 **topic-api**
