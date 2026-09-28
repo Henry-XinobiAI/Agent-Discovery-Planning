@@ -360,7 +360,7 @@ memory-api에는 인증이 없다(`verify_token`은 있지만 어느 router도 �
 
 ### 7-1. 입력과 사전 필터
 
-1. `bourbon.message_created`를 받는다(자기 큐, 자기 워커 — 이벤트 워커는 소비하는 repo가 소유한다).
+1. `bourbon.message_created`를 받는다(자기 큐, 자기 워커 — 이벤트 워커는 소비하는 repo가 소유한다). 바인딩은 문제없다는 답을 받았다(오너, 2026-09-28). 워커의 deferq가 쓰는 Redis DB 번호는 인프라에서 새로 할당받는다.
 2. **payload로 먼저 필터링한다**: `sender_type`이 사람이 아니면 버린다. `type`이 텍스트가 아니면 버린다(첫 버전).
 3. agent-context로 그 메시지와 **앞의 몇 턴**을 다시 읽는다. 앞의 턴은 "그거" 같은 지시어가 무엇을 가리키는지 알기 위해서만 읽는다.
 4. **사전 필터**: 1인칭 경험·취향·요령 표현이 있는가를 규칙 또는 작은 분류기로 본다. 대부분의 메시지는 여기서 끝난다. 사전 필터가 놓친 것은 추출에서도 놓치므로 느슨하게 둔다.
@@ -471,7 +471,10 @@ resolve 순서:
 - **같은 경험을 여러 번 말해도 경험의 폭이 부풀지 않아야 한다.** 한 사람이 같은 병 이야기를 열 번 하면 기록이 열 개다. 순위(§9 T4)는 기록 수가 아니라 서로 다른 엔티티 수와 서로 다른 날짜 수를 세고 상한을 둔다. 기록 자체는 지우지 않는다 — 어느 기록이 가장 잘 맞는지는 질문마다 다르다.
 - **메시지는 고쳐지지도 지워지지도 않는다**(§6-1). 그래서 원문의 수정·삭제를 따라갈 일은 없다. 기록이 무효가 되는 경우는 둘이다 — 그 사람의 **탈퇴**, 그리고 서비스화 때 정할 **범위 밖으로 나가는 것**(방이나 동의, §12).
 - **탈퇴는 R68과 같은 방식이다.** `bourbon.user_deactivated`를 받으면 그 사람의 기록을 전부 지우고 id를 남긴다. 그리고 **기록을 만들거나 바꾸는 모든 쓰기 트랜잭션이 첫 statement에서 그 id를 확인한다** — 추출 결과 쓰기, 백필, 재추출, resolve 재시도 뒤의 갱신 모두. 메시지는 지워지지 않으므로 탈퇴한 사람의 메시지는 원천에 남아 있고, 확인 없는 백필은 그 기록을 되살린다.
-- **탈퇴 이벤트가 유실될 수 있다.** `user_deactivated`는 best-effort라(§6-1) 유실되면 탈퇴한 사람의 기록이 남는다. 이를 두 가지로 막는다. ① discovery가 경험 소스의 후보를 자기 `departed_users`·`agents`로 한 번 더 필터링한다(§9 T3). ② bourbon-api에 믿을 수 있는 탈퇴 확인 방법을 요청한다(§15 요청 1). bourbon-api의 내부 사용자 조회에 없다는 것만으로는 탈퇴로 볼 수 없다 — 해당 코드에 "absence must not be read as a deletion signal"이라고 적혀 있다.
+- **탈퇴 이벤트가 유실될 수 있다.** `user_deactivated`는 best-effort라(§6-1) 유실되면 탈퇴한 사람의 기록이 남는다. bourbon-api에는 탈퇴한 id 목록을 주는 route도, 발행을 보장하는 방식도 아직 없다. 그래서 `user_deactivated`를 탈퇴의 기준으로 쓴다(오너, 2026-09-28, §15 요청 1). bourbon-api의 내부 사용자 조회에 없다는 것만으로는 탈퇴로 볼 수 없다 — 해당 코드에 "absence must not be read as a deletion signal"이라고 적혀 있다.
+  - **discovery와 같은 보장 수준이다.** discovery도 탈퇴를 이 이벤트 하나로만 안다(`worker/deactivation.py`, R68).
+  - 두 서비스는 같은 이벤트를 각자의 큐로 받는다. 한쪽 큐에서만 유실되면 다른 쪽이 막는다 — discovery가 경험 소스의 후보를 자기 `departed_users`·`agents`로 한 번 더 필터링하고(§9 T3), 근거 조회 때도 같은 확인을 한다(§10-3).
+  - 발행 자체가 실패하면 두 서비스 모두 모른다. bourbon-api에 발행을 보장하는 방법이 생기기 전까지 타입 ①②③과 함께 남는 위험이다.
 - **재추출**: `extractor_version`이 바뀌면 원천에서 다시 읽어 만든다(교체 방식은 위와 같다). 원문을 저장하지 않은 대가이고, 백필 경로를 처음부터 둔다. 백필도 위의 탈퇴 확인을 거친다.
 
 ### 7-6. 저장소 — PostgreSQL을 권장한다
@@ -888,7 +891,7 @@ lived-knowledge:
 | resolve 실패 | 엔티티를 QID 없이 기록하고 나중에 다시 resolve |
 | 기록 쪽 지시어 해소 실패 | 상위 엔티티로 남기고 다음 주기에 다시 시도한다. 시도 횟수 상한을 넘으면 그만둔다(§7-3) |
 | 탈퇴한 사람에 대한 쓰기(늦게 온 `message_created`, 백필, 재추출) | 트랜잭션 첫 statement의 확인에서 거절(§7-5) |
-| `user_deactivated` 유실 | 기록이 남는다. discovery의 재필터링이 막고, 믿을 수 있는 확인 방법을 요청한다(§15 요청 1) |
+| `user_deactivated` 유실 | 기록이 남는다. lived-knowledge 쪽 큐에서만 유실되면 discovery의 재필터링이 막는다. 발행 자체가 실패하면 discovery와 함께 모른다(§7-5) |
 
 ---
 
@@ -1017,7 +1020,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 - **만드는 것**: lived-knowledge의 최소 골격 — 사전 필터, 추출, 엔티티 레지스트리. 추천 route는 아직 없다.
 - **재는 것**: §13-2의 일곱 가지. 추출 정밀도, 사전 필터가 놓치는 비율, 엔티티 resolve 일치, 요약문 검색 품질, 물량과 비용, 그리고 **사용자당 기록 수**와 **질문마다 근거를 가진 사람이 있는 비율**.
 - **정하는 것**: 추출에 쓸 LLM, 저장소(§7-6), 그리고 **2단계를 진행할지**. 마지막 두 숫자가 낮으면 2단계를 만들어도 추천 대부분이 관심 소스에 그친다.
-- **필요한 것**: dev 대화 사용 범위의 승인(§12, 열린 항목 21), bourbon-api의 agent-context 호출과 큐 바인딩(§15 요청 2·3), memory-api resolve(§15 요청 4).
+- **필요한 것**: dev 대화 사용 범위의 승인(§12, 열린 항목 21), lived-knowledge 워커의 Redis DB 번호 할당(인프라, §7-1), memory-api resolve(§15 요청 4). bourbon-api의 agent-context 호출과 큐 바인딩은 허락받았다(§15 요청 2·3).
 
 ### 1단계 — 관심 소스만으로 한 명 추천
 
@@ -1039,7 +1042,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 - **목표**: "이것을 겪었다·좋아한다·해 봤다·안다고 말한 사람"을 추천한다. 이 타입의 핵심이다.
 - **먼저 확정할 것**: need 충족 판정(§9 T3), 적재의 중복 처리(§7-5), 엔티티 ambiguity(§7-3)를 구현 계약으로 정한다.
 - **만드는 것**: `bourbon-lived-knowledge-api` 전체 — 이벤트 소비, 추출, 중복 처리, 저장, 조회 API. discovery 쪽은 네 검색 경로를 받아 합치는 부분, 보는 사람 판정(방 참가자, §12), 요약문 기반 추천 이유. lived-knowledge 쪽에는 기록 쪽 지시어 해소 워커(§7-3).
-- **필요한 것**: 0단계의 "진행" 판단, bourbon-api의 agent-context 호출 허락과 `message_created` 큐 바인딩(§15 요청 2·3), e3llm 배치 한도(§15 요청 13), memory-api resolve 사용 허락(§15 요청 4).
+- **필요한 것**: 0단계의 "진행" 판단, lived-knowledge 워커의 Redis DB 번호(0단계에서 받는다), e3llm 배치 한도(§15 요청 13), memory-api resolve 사용 허락(§15 요청 4).
 - **끝났다고 보는 기준**: 합성 대화 세트(§13-3)에서 recall·precision을 재고, 경로별 기여를 확인한다. 조건이 얽힌 질문의 precision으로 LLM 리랭커(§9 T4)를 붙일지 정한다.
 
 ### 3단계 — 추천 근거 넘기기
@@ -1084,8 +1087,11 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 **bourbon-api**
 
 1. **믿을 수 있는 탈퇴 확인 방법.** `user_deactivated`는 best-effort이고, 내부 사용자 조회에 없다는 것을 탈퇴 신호로 읽지 말라고 적혀 있다(§7-5). 탈퇴한 id 목록을 주는 route나, 발행을 보장하는 방식(outbox 등)이 있는지.
+   - **답(2026-09-28)**: 아직 없다. `user_deactivated`를 탈퇴로 본다(§7-5).
 2. lived-knowledge가 `GET /api/internal/rooms/{room_id}/agent-context`를 bourbon-agent와 같은 방식으로 불러도 되는지, 부하 한도. 그리고 discovery가 추천 요청마다 같은 route로 방의 참가자를 읽는 것(§12) — 참가자만 필요하므로 메시지 문맥을 최소로 받을 방법이 있는지.
+   - **답(2026-09-28)**: 불러도 된다. 부하 한도와 문맥을 최소로 받는 방법은 필요해지면 따로 묻는다.
 3. lived-knowledge의 큐를 `bourbon.message_created`에 바인딩하는 것 — 이벤트 워커는 소비하는 repo가 소유한다는 기존 원칙대로.
+   - **답(2026-09-28)**: 문제없다. 워커가 쓸 Redis DB 번호는 할당받아야 한다(§7-1).
 
 **memory-api**
 
