@@ -254,16 +254,15 @@ aliases(rg:7f3a…) = [글렌드로낙 21, GlenDronach Parliament, 팔리아먼�
 **경험 기록** — 메시지마다, 보낸 사람 기준으로.
 
 ```text
-record  person  kind         entity     topic        stance    observed_at (KST)   summary
-r1      A       experienced  rg:7f3a…   malt whisky  negative  2026-09-21 21:04    글렌드로낙 21 팔리아먼트 신상을 마셔 봤고, 셰리가 너무 강해 별로였다
-r2      A       prefers      rg:7f3a…   malt whisky  negative  2026-09-21 21:04    글렌드로낙 21 팔리아먼트는 셰리가 너무 강해 입에 맞지 않았다
-r3      B       prefers      —          malt whisky  positive  2026-09-21 21:05    셰리 캐스크 위스키를 좋아한다
+record  person  kinds                  entity     topic        stance    observed_at (KST)   summary
+r1      A       experienced, prefers   rg:7f3a…   malt whisky  negative  2026-09-21 21:04    글렌드로낙 21 팔리아먼트 신상을 마셔 봤고, 셰리가 너무 강해 입에 맞지 않았다
+r3      B       prefers                —          malt whisky  positive  2026-09-21 21:05    셰리 캐스크 위스키를 좋아한다
 ```
 
-- r1·r2는 A의 메시지 하나에서 나왔다. r2는 그 병 하나에 대한 평가로만 적는다 — "셰리가 강한 위스키는 싫어한다"처럼 넓히면 과장이다. r3은 B의 메시지에서 나왔다.
-- 세 메시지는 이어서 왔으므로 방의 debounce가 끝난 뒤 한 창에 들어가고, r1~r3은 LLM 호출 한 번에서 나온다. B의 첫 메시지 "요즘 뭐 마셔?"에서는 기록이 나오지 않는다(§7-1).
+- r1은 A의 메시지 하나에서 나왔다. 마셔 본 것(`experienced`)과 평가(`prefers`)는 한 대상에 대한 한 진술이라 기록 하나에 `kinds` 둘로 적는다 — 둘로 나누면 같은 이야기가 두 기록으로 중복된다(§7-2). 평가는 그 병 하나에 대한 것으로만 적는다 — "셰리가 강한 위스키는 싫어한다"처럼 넓히면 과장이다. r3은 B의 메시지에서 나왔다.
+- 세 메시지는 이어서 왔으므로 방의 debounce가 끝난 뒤 한 창에 들어가고, r1·r3은 LLM 호출 한 번에서 나온다. B의 첫 메시지 "요즘 뭐 마셔?"에서는 기록이 나오지 않는다(§7-1).
 - 요약문에는 "지난 주말" 같은 상대 시점을 쓰지 않는다. 나중에 읽히면 틀린 말이 되고, 시점은 `observed_at`에 있다.
-- 기록에는 자기 엔티티 id만 있다. 상위 엔티티 경로는 조회할 때 레지스트리에서 하위 엔티티를 펼쳐 찾는다 — 글렌드로낙(`wd:Q…`)으로 찾으면 레지스트리에서 그 하위인 `rg:7f3a…`를 펼쳐 r1·r2가 나온다(§7-3). 레지스트리의 상위 관계가 나중에 고쳐져도 기록을 다시 쓸 일이 없다.
+- 기록에는 자기 엔티티 id만 있다. 상위 엔티티 경로는 조회할 때 레지스트리에서 하위 엔티티를 펼쳐 찾는다 — 글렌드로낙(`wd:Q…`)으로 찾으면 레지스트리에서 그 하위인 `rg:7f3a…`를 펼쳐 r1이 나온다(§7-3). 레지스트리의 상위 관계가 나중에 고쳐져도 기록을 다시 쓸 일이 없다.
 - B의 "친구가 그러는데 품절이래"는 B가 겪은 것이 아니라 들은 사실이라 기록하지 않는다(들은 것을 어떻게 다룰지는 열린 항목 6).
 - 각 기록에는 표에 없는 필드도 있다 — `summary_en`(영어 검색용 요약), `message_id`, `room_id`·`room_type`, `specificity`, `extractor_version`(§7-2).
 - **원문은 없다.** 요약문은 보낸 사람 본인의 경험만 담고, 다른 참가자의 말은 담지 않는다. 그래도 요약문은 A의 개인 정보다 — A의 취향과 마신 시점이 들어 있다(§7-2).
@@ -281,14 +280,14 @@ T1  need n0: kind=experienced, precision=exact, recency=recent, stance=null,
 T2  topic: 몰트 위스키
 T3  lived-knowledge:  "GlenDronach" → wd:Q…(GlenDronach)로 resolve
                       "GlenDronach 21 Parliament" → 레지스트리 alias로 rg:7f3a…
-               엔티티 경로: entity_id = rg:7f3a…인 기록 r1·r2 (A)
-               상위 엔티티 경로: 레지스트리에서 wd:Q…의 하위 rg:7f3a…를 펼쳐 r1·r2 (A)
-               topic 경로: r1·r2 (A), r3 (B)
+               엔티티 경로: entity_id = rg:7f3a…인 기록 r1 (A)
+               상위 엔티티 경로: 레지스트리에서 wd:Q…의 하위 rg:7f3a…를 펼쳐 r1 (A)
+               topic 경로: r1 (A), r3 (B)
                텍스트 경로: r1의 summary_en이 "GlenDronach 21 Parliament"·"new release"와 매칭
     관심 소스:  몰트 위스키 topic을 공개한 사람들
 T4  A: record_entity(바로 그 엔티티) + 종류 일치 + 최근 + 요약문 매칭 → n0 충족, 1위
     B: record_topic, prefers(종류 불일치), 요약문 매칭 없음 → n0 미충족(종류가 mismatch이고, precision=exact인데 엔티티·요약문 매칭도 없다)
-T6  "글렌드로낙 관련 경험(2026년 9월): 글렌드로낙 21 팔리아먼트 신상을 마셔 봤고, 셰리가 너무 강해 별로였다"
+T6  "글렌드로낙 관련 경험(2026년 9월): 글렌드로낙 21 팔리아먼트 신상을 마셔 봤고, 셰리가 너무 강해 입에 맞지 않았다"
     추천 근거로 (이 추천의 id, R, A, n0 "글렌드로낙 / experienced", r1)을 저장
 ```
 
@@ -419,7 +418,7 @@ LLM 한 번에 창 하나(기록을 뽑는 메시지들 + 그 앞의 문맥)를 
 lived_knowledge_records
   record_id           uuid
   person_id           uuid        보낸 사람 = 이 기록의 소유자
-  kind                text        experienced | prefers | practiced | insider
+  kinds               text[]      experienced | prefers | practiced | insider 가운데 하나 이상, 중복 없음. 이 진술이 보여 주는 측면들 (규칙은 아래)
   entity_id           text | null 엔티티 레지스트리 id (§7-3). 대상은 모르고 상위만 알면 상위 엔티티 id. 상위 엔티티는 복사해 두지 않고 조회할 때 레지스트리에서 펼친다
   entity_type         text | null product | brand | organization | place | venue. 추출이 낸 대상의 종류. 대상이 해소되지 않은 기록을 나중에 resolve할 때의 힌트이기도 하다
   reference_query     text | null 대상이 지시어("이번 신상")로만 남았을 때의 검색 구절. 해소되면 null (§7-3)
@@ -441,6 +440,7 @@ lived_knowledge_records
 **추출 규칙**
 
 - **보낸 사람 본인에 관한 것만.** 한 창에 여러 사람의 메시지가 있어도, 한 사람의 말을 다른 사람의 기록으로 옮기지 않는다. B가 "A가 그거 마셔 봤대"라고 하면 그것은 A의 기록도 B의 기록도 아니다(전해 들은 것, 열린 항목 6). 문맥 메시지에서는 누구의 기록도 뽑지 않는다. 선행 문서가 결정하지 못한 authorship 문제(한 사용자의 memory에 든 다른 사람의 말을 누구의 근거로 볼 것인가)가 여기서 대부분 해결된다.
+- **기록 하나는 한 대상에 대한 한 진술이다.** "마셔 봤는데 별로였다"는 기록 하나에 `kinds = [experienced, prefers]`다. 대상이 다르거나 stance·요약이 갈리면 기록을 나눈다 — "이 병은 마셔 봤고, 셰리 캐스크는 대체로 좋아한다"는 대상이 달라 두 기록이다. `kinds`의 값마다 메시지에 근거가 있어야 한다. 한 모금 맛본 것을 `practiced`로, 병 하나의 평가를 취향 전체로 넓히지 않는다 — 배열이 되면 종류를 넉넉히 붙이기 쉬워서 이 규칙이 스칼라일 때보다 중요하다.
 - **사실 진술은 기록하지 않는다**(§1-1). 1인칭이어도 "그 증류소는 하이랜드에 있어"는 버린다.
 - **사람은 엔티티가 되지 않는다.** 지인·동료·가족은 레지스트리에도 `terms`에도 남기지 않는다. "민수랑 갔다"의 민수는 요약문에서도 "친구와"로 쓴다.
 - **요약문은 보낸 사람의 경험만, 과장 없이.** 한두 문장, 메시지 언어로. "한 모금 맛봤다"를 "마셔 봤다"로 부풀리지 않고, 병 하나에 대한 평가를 취향 전체로 넓히지 않는다. "지난 주말" 같은 상대 시점은 쓰지 않는다(시점은 `observed_at`). 다른 참가자의 이름·발언, 개인정보(전화번호·주소 등)는 옮기지 않는다. 원문을 인용하지 않는다. `summary_en`은 같은 내용의 영어판이다 — 질문 쪽 `condition`이 영어라서(§9 T1) 질문과 기록을 같은 언어로 비교하려는 것이다.
@@ -650,7 +650,7 @@ question:    글렌드로낙 21 팔리아먼트(글렌드로낙 신상) 마셔 �
 ```
 
 - `people_needed`: 질문이 사람의 경험을 필요로 하는가. `false`면 이후 단계를 돌지 않고 `mode: none`, `empty_reason: answerable_without_people`.
-- `kind`: `experienced` | `prefers` | `practiced` | `insider` | `null`(종류 무관). 경험 기록의 `kind`와 같은 값이다.
+- `kind`: `experienced` | `prefers` | `practiced` | `insider` | `null`(종류 무관). 경험 기록의 `kinds`에 들어가는 값과 같다. need 쪽은 스칼라로 둔다 — "마셔 보고 좋아한 사람"은 `kind=experienced`·`stance=positive`로 나타낸다.
 - `precision`: `exact` | `related`(§3-3 규칙 5).
 - `recency`: `recent` | `null`. discovery가 설정 레지스터 값에 따라 `recency_days`로 바꿔 lived-knowledge에 넘긴다.
 - `stance`: `positive` | `negative` | `null`(무관). 질문이 특정 방향의 경험을 찾을 때만 쓴다 — "셰리 캐스크 싫어하는 사람"이면 `negative`. 기록의 `stance`와 비교한다(T3).
@@ -724,7 +724,7 @@ topic 경로       topic_ids ∋ need의 topic들                            엔
 - `kind`·`stance`·`recency`는 **필터링 조건이 아니라** 경로 안의 순위 조건이다. 종류가 다른 기록도 후보가 되되 낮은 순위로 — T1의 `kind` 판정이 틀렸을 때도 후보가 사라지지 않게.
 - 네 경로의 모든 기록에 `condition`과 need 엔티티의 표기들(resolve된 엔티티의 label·alias)을 기록의 `summary_en`·`terms`와 비교해 요약문 매칭 순위를 붙인다. **"이번 신상" 같은 조건은 여기서만 반영된다.**
 - 텍스트 경로가 있어서, 엔티티를 찾지 못했거나(`not_found`) topic이 없는 need도 후보를 얻는다(§3-3 규칙 1).
-- 응답은 사람별로: 경로별 기록 수, 가장 잘 맞은 기록 몇 개(`record_id`, `entity_id`, `kind`, `stance`, `specificity`, `observed_at`, 매칭 순위, 요약문, `audience`), 서로 다른 엔티티 수·날짜 수(T4의 경험의 폭). need별로 `complete`(네 경로를 모두 돌았는가 — lived-knowledge 안의 timeout·장애로 빠진 경로가 없는가)와 경로별 `has_more`.
+- 응답은 사람별로: 경로별 기록 수, 가장 잘 맞은 기록 몇 개(`record_id`, `entity_id`, `kinds`, `stance`, `specificity`, `observed_at`, 매칭 순위, 요약문, `audience`), 서로 다른 엔티티 수·날짜 수(T4의 경험의 폭). need별로 `complete`(네 경로를 모두 돌았는가 — lived-knowledge 안의 timeout·장애로 빠진 경로가 없는가)와 경로별 `has_more`.
 
 **경험 소스의 사람은 discovery가 다시 필터링한다.** 위 쿼리 안의 필터를 믿지 않고 방어로 한 번 더 건다.
 
@@ -744,13 +744,13 @@ coverage 상태   근거가 어느 경로에서 왔나. 가장 좋은 경로 하
                   record_topic   경험 소스의 topic 경로 — 이 분야에서 무언가를 겪었다·좋아한다·해 봤다·안다
                   record_text    경험 소스의 텍스트 경로로만 — 요약문이 조건·이름과 맞지만 엔티티·topic으로는 안 잡혔다
                   record_entity  경험 소스의 엔티티·상위 엔티티 경로 — 바로 이것(또는 그 상위)에 대한 기록
-kind 일치       exact | compatible | mismatch   need의 kind가 null이면 exact
+kind 일치       exact | compatible | mismatch   need의 kind가 기록의 kinds에 있으면 exact. need의 kind가 null이면 exact
 stance 일치     match | conflict | irrelevant   need의 stance가 null이면 irrelevant
 시점            sufficient | weak | stale       recency_days 안 / 반감기 안 / 그 밖
 요약문 매칭      need 안에서의 순위, 또는 없음
 ```
 
-- `compatible`은 need가 `experienced`이고 기록이 같은 대상에 대한 `prefers`인 경우다 — 평가는 대개 겪은 뒤에 한다. 그 밖의 다른 종류는 `mismatch`다.
+- `compatible`은 need가 `experienced`이고 기록이 need의 엔티티(또는 그 하위)에 대한 것이고 `kinds`에 `experienced`는 없지만 `prefers`가 있는 경우다 — 그 대상을 겪었다는 말 없이 평가만 남긴 기록이다. 대상이 없거나 다른 기록의 `prefers`는 `mismatch`다. 평가는 대개 겪은 뒤에 하지만, 겪은 것이 드러나면 추출이 `experienced`도 함께 적으므로 이 경우는 좁다(열린 항목 22). 그 밖은 `mismatch`다.
 - 요약문 매칭은 coverage 상태가 아니라 따로 둔 축이다. 텍스트로만 들어온 기록이 엔티티로 들어온 기록보다 저절로 위에 오지 않게 하려는 것이다 — 다른 브랜드의 "신상" 요약문도 조건과 맞을 수 있다.
 
 **need 충족(covers) 판정** — 두 사람 조합(T5), 응답의 `covers[]`, `nobody_covers`가 쓴다.
@@ -896,7 +896,7 @@ POST /api/internal/svc/lived-knowledge/candidates
        "paths": {"entity": 2, "parent": 2, "topic": 2, "text": 1},
        "distinct_entities": 1, "distinct_days": 1,
        "records": [
-         {"record_id": "…", "entity_id": "rg:7f3a…", "kind": "experienced", "stance": "negative", "specificity": 3,
+         {"record_id": "…", "entity_id": "rg:7f3a…", "kinds": ["experienced", "prefers"], "stance": "negative", "specificity": 3,
           "observed_at": "2026-09-21T12:04:00Z", "match_rank": 1,
           "summary": "…", "audience": "public"}
        ]}
@@ -1229,7 +1229,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 5. `registry.ambiguity_ratio`, 새로 만들기 전 후보 찾기의 유사도·후보 수(`registry.candidate_similarity`·`registry.candidate_limit`), 병합 워커의 주기와 기준(`rg:`→`wd:`, `rg:`→`rg:`)(§7-3).
 6. 전해 들은 것을 다시 말한 경우("친구가 그러는데")를 기록할 것인가, 한다면 어떤 종류로(§12).
 7. `people_needed` 판단이 틀렸을 때의 비용 — 사람이 필요한 질문을 사실 질문으로 판단하면 추천이 안 나간다. 기준을 어느 쪽으로 기울일 것인가.
-8. `kind`를 순위 조건으로만 둘 것인가, 필터링 조건으로 쓸 경우가 있는가.
+8. `kind`를 순위 조건으로만 둘 것인가, 필터링 조건으로 쓸 경우가 있는가. 필터링한다면 기록의 `kinds`와 겹치는가(`&&`)로 보고 GIN 인덱스를 둔다.
 9. `recency_days`의 초기값, 그리고 종류별로 다르게 둘지(`prefers`는 오래 유효하고 `insider`는 빨리 낡는다).
 10. 추천 이유의 요약문을 요청 언어로 번역할 것인가(요약문은 메시지 언어다).
 11. 추천 근거의 보존 기간(TTL).
@@ -1243,7 +1243,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 19. LLM 리랭커(§9 T4)를 붙일지, 붙인다면 몇 명을 넣고 timeout을 얼마로 둘지, 요청마다 켤지 조건이 얽힌 need에만 켤지.
 20. (닫힘 — 요청자 본인의 기억은 bourbon-agent가 쓰므로 `self_support`를 두지 않는다, §9 T0.)
 21. 0단계에서 읽을 dev 대화의 범위와 승인(§12).
-22. kind `compatible`의 범위, 경험의 폭 상한(§9 T3·T4).
+22. kind `compatible`의 범위 — `kinds`가 배열이 되어 "겪고 평가한" 기록은 `exact`가 되므로, 남는 것은 평가만 있는 기록(`kinds = [prefers]`)을 `experienced` need에 얼마나 쳐줄지다. 추출이 `kinds`를 얼마나 넉넉히 붙이는지는 0단계에서 측정한다. 경험의 폭 상한(§9 T3·T4).
 23. 기록 쪽 지시어 해소의 재시도 주기와 상한, 검색 결과 후보 수(§7-3).
 24. topic이 여럿인 기록의 공개 범위 — 가장 제한적인 쪽을 따르는 것은 잠정이다(§12).
 25. `topic_visibility` 미러를 2단계에서 미리 만들어 둘지, 서비스화 때 만들지(§12). 쿼리 안의 도달 가능성 필터(§9 T3)가 이 미러로 public topic을 계산하므로, 서비스화 때 만들면 2단계의 도달 가능성은 discovery의 사후 필터(`friends`·`agents.discoverable`)로만 걸린다.
@@ -1266,7 +1266,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 | 찾는 기준은 topic 하나, memory 근거는 `topic_qid_map`을 거쳐 조회 | topic과 엔티티. 엔티티는 lived-knowledge의 레지스트리가 질문과 기록 양쪽을 같은 방식으로 resolve한다 | 카탈로그는 분야만 받고, 따로 하는 두 resolve는 어긋난다(§3-2) |
 | `topic_qid_map`, 폴링 루프, manifest cursor, reconciliation | 없음. discovery가 lived-knowledge를 조회한다 | lived-knowledge는 우리가 이 조회를 위해 만든다 |
 | 모든 질문이 대상 | `people_needed`로 사실 질문을 뺀다. 요청자 본인의 기억은 bourbon-agent가 쓴다(§9 T0, §6-4) | 사람이 필요한 질문만 추천할 가치가 있다(§1) |
-| knowledge_kind 다섯(memory-api의 값) | kind 넷(`experienced`·`prefers`·`practiced`·`insider`) | 사람만 줄 수 있는 것의 분류다. 사실(`declarative`)과 계획(`intention`)은 추천의 근거가 아니다 |
+| knowledge_kind 다섯(memory-api의 값), statement마다 하나 | kind 넷(`experienced`·`prefers`·`practiced`·`insider`), 기록마다 하나 이상(`kinds`) | 사람만 줄 수 있는 것의 분류다. 사실(`declarative`)과 계획(`intention`)은 추천의 근거가 아니다. 겪고 평가한 한 진술을 두 기록으로 나누지 않는다 |
 | 추천 이유는 중립 문구 하나 | 요약문 기반 이유, 관심 소스만이면 관심 문구 | 요약문을 저장하기로 했다. 동의는 서비스화 때(§12) |
 | 실행 시점의 근거 찾기는 agent의 대화 검색에 맡김 | 근거가 된 기록의 id를 discovery가 추천 근거로 저장하고, 대화가 시작될 때 추천된 agent에게 넘긴다 | 답을 찾지 못하는 경우를 줄이고, 추천과 대화의 출발점을 같게 한다(§10-3) |
 | 동의(`consultable`)와 authorship이 production의 선행 조건 | 기획 단계에서 공개 범위·동의를 빼 두고, 나중에 필터를 붙일 필드만 남긴다 | 오너, 2026-09-26 |
