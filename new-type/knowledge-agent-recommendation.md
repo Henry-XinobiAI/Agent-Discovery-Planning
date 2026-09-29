@@ -140,7 +140,7 @@ bourbon-api ── bourbon.message_created (id, 보낸 사람, 방 종류. 본�
   ① 사람이 보낸 텍스트 메시지면 그 방을 pending으로 두고 방 단위 debounce를 민다  │  읽지도, 부르지도 않는다
   ── 방의 대화가 잠잠해지면(길어도 최대 대기 시간 안에) 방 하나를 실행한다 ──      │
   ② bourbon-api에서 방 커서 다음의 메시지들과 커서 앞의 문맥을 읽는다            │
-  ③ 창으로 나누고 사전 필터: 1인칭 경험·취향·요령 표현이 있는가                  │  대부분 여기서 끝(커서만 전진)
+  ③ 창으로 나누고 사전 필터: 1인칭 경험·취향·요령 표현이 있는가                  │  대부분 여기서 끝(LLM 없이 기록 교체·커서 전진)
   ④ LLM 추출: 창마다 1회. 메시지마다 보낸 사람 본인에 관한 기록 0~N개 + 요약문   │  기록이 없으면 여기서 끝
   ⑤ 엔티티 resolve: 레지스트리 → memory-api resolve로 QID → 비슷한 후보 확인 → 새 id │
   ⑥ topic 매핑: 분야 이름을 topic-api 검색으로 topic id에                       │
@@ -156,7 +156,7 @@ bourbon-api ── bourbon.message_created (id, 보낸 사람, 방 종류. 본�
 6. 대상이 레지스트리에 있으면 그 id, 없으면 memory-api의 공개 지식 resolve로 Wikidata QID를 찾는다. 그래도 없으면 비슷한 이름의 기존 엔티티가 있는지 확인한 뒤에야 새 id를 만든다 — 같은 대상이 이름만 달리해 쌓이지 않게(§7-3).
 7. 분야 이름("malt whisky")을 topic id로 바꿔 둔다. 엔티티가 없거나 어긋나도 topic으로 찾을 수 있게.
 8. 기록 저장과 방 커서 전진은 한 트랜잭션이다(§7-5). 원문은 이 흐름 안에서만 메모리에 있고 저장하지 않는다.
-9. **뽑을 것이 없으면 다음 단계를 돌지 않는다.** 커서 다음에 사람 메시지가 없거나, 사전 필터를 통과한 메시지가 없거나, 추출한 기록이 0개면 그 자리에서 커서만 옮기고 끝난다(§7-1).
+9. **뽑을 것이 없으면 다음 단계를 돌지 않는다.** 커서 다음에 사람 메시지가 없거나, 사전 필터를 통과한 메시지가 없거나, 추출한 기록이 0개면 그 뒤의 LLM·resolve·topic 매핑을 돌지 않는다(§7-1). 다만 그 메시지들의 기존 기록을 "0개"로 교체하는 쓰기는 한다 — 재추출에서 새 버전이 "경험이 아니다"라고 판단한 메시지에 이전 버전의 기록이 남지 않게(§7-5).
 10. 이와 별도로 lived-knowledge의 워커 셋이 돈다 — 지시어로만 남은 기록의 대상을 웹 검색으로 해소하는 워커(§7-3), 같은 대상인데 따로 등록된 엔티티를 모으는 병합 워커(§7-3), 그리고 topic visibility를 모든 tier로 미러하는 워커(§7-7).
 
 **관심 소스는 이미 있다.** topic-api가 persona의 preferences에서 사용자의 관심 topic을 뽑고, discovery 워커가 `bourbon.topics_updated`를 받아 공개된 topic을 `visible_topic_rows`에 미러한다. 타입 ①②③이 쓰는 그 테이블이고, 이 흐름에서 바뀌는 것은 없다. 관심 강도는 이미 미러하고 있는 `topic_score`·`topic_maturity`를 쓴다. topic-api `score_detail`의 `knowledge` facet과 `confidence`는 지금 소비자 계약이 아니라서 쓰지 않고, 안정적인 값이 정해지면 그때 더한다(오너, 2026-09-28, §15 요청 7).
@@ -306,7 +306,7 @@ A가 R의 친구가 아니고 A의 agent가 public도 아니면 R은 A와 대화
 
 - **메시지는 INSERT-only다**: "`messages_*` — ... INSERT-only; rows are never updated or deleted"(`bourbon_api/messages/models.py:10-11`). 수정·삭제 route도 이벤트도 없다. 메시지 이벤트는 `bourbon.message_created`·`message_translated`·`message_artifacts_updated`다(`bourbon_api/messages/events.py:32, 48, 61`).
 - `message_created` payload: `room_id`, `message_id`, `sender_id`, `sender_type`, `type`, `room_type`(`user_dm`·`agent_dm`·`group`)(`events.py:18-29`). 본문은 없다.
-- 본문은 `GET /api/internal/rooms/{room_id}/agent-context`로 다시 읽는다 — bourbon-agent가 memory에 적재할 때 쓰는 경로다(`bourbon_agent/memory/listeners.py:1-7, 93`, `api_internal_client/agent_context.py:59`). `before`·`after`·`around` 중 하나와 `limit`(1~100)을 받고, 오래된 순으로 돌려준다(`api/routers/internal/agent_context.py:41-42, 77-80, 94-129`). 방 커서 다음을 `after=<커서>`로 한 번에 읽을 수 있다(§7-1).
+- 본문은 `GET /api/internal/rooms/{room_id}/agent-context`로 다시 읽는다 — bourbon-agent가 memory에 적재할 때 쓰는 경로다(`bourbon_agent/memory/listeners.py:1-7, 93`, `api_internal_client/agent_context.py:59`). `before`·`after`·`around` 중 하나와 `limit`(1~100)을 받고, 오래된 순으로 돌려준다(`api/routers/internal/agent_context.py:41-42, 77-80, 94-129`). `after`는 기본적으로 그 id의 메시지를 빼고(`id > after`), `inclusive=true`면 넣는다(`agent_context.py:103`, `bourbon_api/messages/service.py:733`). 방 커서 다음을 `after=<커서>`로 한 번에 읽을 수 있고, 처음 받은 메시지부터 읽을 때는 `after=<그 id>&inclusive=true`다(§7-1).
 - bourbon-agent로 가는 `bourbon.passive_observe` task도 id만 싣는다 — "bourbon-agent fetches the full message + context on its own side"(`bourbon_api/tasks/passive_observe.py:26-29`). 본문은 소비하는 쪽이 다시 읽는 것이 이 repo의 방식이다.
 - `bourbon.user_deactivated`(`bourbon_api/events.py:15`)는 **best-effort**로 발행된다 — "AMQP failure is logged but does not roll back the deactivation"(`bourbon_api/users/service.py:518-523`). 유실될 수 있다.
 - agent DM 게이트는 "친구이거나 agent가 public"이다(`bourbon_api/rooms/service.py:401-414`). 요청자가 추천된 사람과 대화를 시작하려면 둘 중 하나여야 한다.
@@ -375,10 +375,11 @@ memory-api에는 인증이 없다(`verify_token`은 있지만 어느 router도 �
 
 1. `bourbon.message_created`를 받는다(자기 큐, 자기 워커 — 이벤트 워커는 소비하는 repo가 소유한다). 바인딩은 문제없다는 답을 받았다(오너, 2026-09-28). 워커의 deferq가 쓰는 Redis DB 번호는 인프라에서 새로 할당받는다.
 2. **payload로 먼저 필터링한다**: `sender_type`이 사람이 아니면 버린다. `type`이 텍스트가 아니면 버린다(첫 버전). 남은 메시지도 **이때는 읽지 않는다.** 그 방을 pending으로 표시하고 방 단위 debounce를 민다.
-   - pending 표시는 lived-knowledge의 PostgreSQL `room_cursors` 행(§7-5)에 `pending_since`를 쓰는 것이다. 방을 처음 보면 행을 만들고, 커서는 그 방에서 처음 받은 메시지 바로 앞으로 둔다. 그 이전의 대화는 백필이 맡는다.
+   - pending 표시는 lived-knowledge의 PostgreSQL `room_cursors` 행(§7-5)에 `pending_since`를 쓰는 것이다. 방을 처음 보면 행을 만들고 `start_message_id`에 그 이벤트의 `message_id`를 둔다. 이벤트에는 이전 메시지 id가 없어서 "처음 받은 메시지 바로 앞"을 커서로 적을 수 없으므로, 커서(`cursor_message_id`)는 비워 두고 시작점을 따로 적는다. 그 이전의 대화는 백필이 맡는다.
+   - 이벤트는 순서대로 온다는 보장이 없다(워커 동시성, 재전달). 뒤의 메시지 이벤트가 먼저 행을 만들면 앞의 메시지가 시작점 밖으로 빠지므로, 첫 실행이 행을 가져가기 전까지는 `start_message_id = LEAST(기존, 새 id)`로 더 앞선 id를 남긴다. 메시지 id는 uuid7이라 비교가 곧 시간순이다.
    - debounce는 deferq의 `.debounce(delay, uid=방마다 하나, max_wait=…)`다. bourbon-agent의 persona 추출과 같은 방식이고(§6-4), 키만 사용자가 아니라 방이다.
    - 값은 persona 추출과 같은 데서 시작한다 — 방이 조용해진 지 `ingest.debounce_seconds`(300초) 뒤, 대화가 계속 이어져도 `ingest.max_wait_seconds`(1800초) 안에. 경험 기록은 몇 분 늦게 쌓여도 추천에 문제가 없다.
-3. **실행(방 하나)**: `room_cursors` 행을 lease로 잡고(§7-5), agent-context로 커서 다음의 메시지를 `after=<커서>`로 읽는다(한 번에 최대 100개, §6-1). 커서 앞의 문맥은 `before=<커서>`로 몇 개 읽는다. 한 실행이 읽는 양은 `ingest.max_messages_per_run`까지이고, 남으면 다시 debounce를 건다.
+3. **실행(방 하나)**: `room_cursors` 행을 lease로 잡고(§7-5), agent-context로 커서 다음의 메시지를 `after=<커서>`로 읽는다(한 번에 최대 100개, §6-1). 커서가 아직 비어 있으면(첫 실행) `after=<start_message_id>&inclusive=true`로 시작점의 메시지부터 읽는다. 커서 앞의 문맥은 `before=<커서>`(첫 실행이면 `before=<start_message_id>`)로 몇 개 읽는다. 한 실행이 읽는 양은 `ingest.max_messages_per_run`까지이고, 남으면 다시 debounce를 건다.
 4. **창으로 나눈다**: 이어진 메시지 최대 `ingest.window_max_messages`개를 기록을 뽑는 메시지로, 그 앞의 `ingest.window_context_messages`개를 문맥으로 둔다. 메시지 사이가 `ingest.window_max_gap_seconds` 넘게 끊기면 새 창을 시작한다. 초기값은 memory-api personal build의 창(12개, 1시간, 문맥 3개, §6-2)에서 시작해 0단계에서 정한다.
 5. **사전 필터**: 메시지마다 1인칭 경험·취향·요령 표현이 있는가를 규칙 또는 작은 분류기로 본다. 대부분의 메시지는 여기서 끝난다. 사전 필터가 놓친 것은 추출에서도 놓치므로 느슨하게 둔다.
 6. 통과한 메시지가 하나라도 있는 창만 LLM 추출로 간다(§7-2). 창 안의 통과하지 못한 메시지도 문맥으로는 함께 넣는다 — "그거 마셔 봤어"는 앞의 질문 없이는 뜻이 없다.
@@ -399,10 +400,12 @@ persona 추출의 보류(사용자 메시지가 적으면 모일 때까지 미�
 |---|---|
 | 이벤트 | 사람이 보낸 텍스트가 아니면 pending에도 넣지 않는다 |
 | 실행 시작 | 커서 다음에 사람이 보낸 텍스트가 없으면 커서만 옮기고 끝낸다 |
-| 사전 필터 | 창에 통과한 메시지가 없으면 LLM을 부르지 않고 커서만 옮긴다 |
-| 추출 | 기록이 0개면 resolve·topic 매핑을 하지 않고 커서만 옮긴다 |
+| 사전 필터 | 창에 통과한 메시지가 없으면 LLM을 부르지 않는다. 기록 교체(0개)와 커서 전진만 한다 |
+| 추출 | 기록이 0개면 resolve·topic 매핑을 하지 않는다. 기록 교체(0개)와 커서 전진만 한다 |
 | resolve | 대상이 없는 기록은 건너뛴다. 레지스트리에서 찾으면 memory-api를 부르지 않는다. 비슷한 후보가 없으면 병합 확인 LLM을 부르지 않는다(§7-3) |
 | 지시어 해소 워커 | `reference_query`가 없는 기록은 대상이 아니다(§7-3) |
+
+건너뛰는 것은 비용이 드는 단계(LLM·resolve·topic 조회)뿐이다. **"기록 0개"도 추출 결과이므로 저장한다** — 창의 사람 메시지들에 generation을 적고 기존 기록을 지운다(§7-5의 3·4). 새 메시지라면 지울 것이 없어 행 하나를 쓰는 것으로 끝나지만, 재추출에서는 이것이 없으면 이전 버전의 기록이 남는다.
 
 **debounce가 사라져도 방이 잊히지 않게 한다.** deferq는 실패한 작업을 다시 전달하지 않고(재시도는 handler의 몫이다), persona 추출도 debounce 예약이 실패하면 로그만 남긴다(§6-4). 그래서 pending을 Redis가 아니라 PostgreSQL의 `pending_since`에 두고, 주기 sweep이 `pending_since`가 `ingest.max_wait_seconds`보다 오래된 방을 다시 debounce에 건다. 실행이 실패하면 커서를 옮기지 않고 다시 debounce를 건다(시도 횟수 상한, §11).
 
@@ -529,19 +532,22 @@ resolve 순서:
 
 - **같은 메시지를 두 번 처리해도 결과가 같아야 한다.** `message_created`는 다시 전달될 수 있고, 재시도·백필·재추출이 같은 메시지를 또 읽는다. LLM은 같은 입력에도 다른 기록을 낼 수 있어 기록 하나하나에 안정적인 키를 붙일 수 없다. 그래서 **메시지 하나의 기록은 늘 한 번의 추출 결과 전체**로 두고, 어디까지 처리했는지는 **방 커서**로 나타낸다. 메시지마다 상태 행을 두지 않는다.
   - 버전은 이름 `extractor_version`(표시용)과 정수 `extractor_generation`(비교용) 둘로 둔다. "더 높은 버전"은 generation으로 비교한다.
-  - 진행 테이블 `room_cursors(room_id, extractor_generation, cursor_message_id, pending_since, status, attempts, lease_owner, lease_until, updated_at)`. 키는 `(room_id, extractor_generation)`이다. `status`는 `idle | running | failed`이고, `pending_since`가 비어 있지 않으면 그 방에 처리할 메시지가 있다는 뜻이다(§7-1).
+  - 진행 테이블 `room_cursors(room_id, extractor_generation, start_message_id, cursor_message_id, pending_since, status, attempts, lease_owner, lease_until, updated_at)`. 키는 `(room_id, extractor_generation)`이다. `status`는 `idle | running | failed`이고, `pending_since`가 비어 있지 않으면 그 방에 처리할 메시지가 있다는 뜻이다(§7-1). `cursor_message_id`는 마지막으로 처리한 메시지이고, 비어 있으면 `start_message_id`부터(그 메시지 포함) 읽는다.
   - **같은 이벤트가 다시 와도 무해하다.** 이벤트가 하는 일은 `pending_since`를 채우고 debounce를 미는 것뿐이고, 실행은 커서 다음만 읽는다.
   - **실행은 claim해서 가져간다.** debounce가 실행되면 워커가 그 방의 행을 `SELECT … FOR UPDATE SKIP LOCKED`로 잡아, `running`이 아니거나 `lease_until`이 지났을 때만 `running`·`lease_owner`·새 `lease_until`을 쓰고 `pending_since`를 비운 뒤 커밋한다. 이미 다른 실행이 잡고 있으면 아무것도 하지 않는다 — 그 사이에 온 메시지는 `pending_since`를 다시 채우므로, 잡고 있던 실행이 끝날 때 보고 다시 debounce를 건다. 메시지 읽기와 LLM 호출은 길어서 트랜잭션 밖에서 하고, 행 잠금이 아니라 이 lease가 "누가 처리 중인가"를 나타낸다.
   - **결과는 창마다 한 트랜잭션으로 쓴다.** 순서는 다음과 같다.
     1. 탈퇴 확인 — 첫 statement. 창의 발신자 가운데 탈퇴한 사람의 기록은 넣지 않고 나머지만 넣는다.
-    2. `room_cursors` 행을 `FOR UPDATE`로 잠그고, `lease_owner`가 자기이고 커서가 직전 창의 끝(첫 창이면 실행이 읽기 시작한 위치) 그대로인지 확인한다. lease가 끝난 뒤 다른 실행이 앞질렀으면 자기 결과를 버리고 실행을 끝낸다.
+    2. `room_cursors` 행을 `FOR UPDATE`로 잠그고, `lease_owner`가 자기이고 커서가 직전 창의 끝(첫 창이면 실행이 읽기 시작한 위치, 첫 실행이면 빈 값) 그대로인지 확인한다. lease가 끝난 뒤 다른 실행이 앞질렀으면 자기 결과를 버리고 실행을 끝낸다.
     3. 창의 기록을 뽑는 메시지들의 버전 확인(아래).
     4. 그 메시지들의 기존 기록 삭제, 새 기록 삽입.
     5. 커서를 창의 마지막 메시지로 옮기고 lease를 늘린다.
-  - 사전 필터에서 끝난 창, 기록이 0개인 창도 같은 트랜잭션(1·3·4 없이)으로 커서만 옮긴다.
+  - 사전 필터에서 끝난 창, 기록이 0개인 창도 **같은 트랜잭션을 그대로** 쓴다(넣을 기록이 없으니 1은 할 일이 없다). 3·4를 건너뛰면 두 가지가 깨진다.
+    - 재추출에서 v1이 만든 기록을 v2가 "경험이 아니다"라고 판단해도 v1 기록을 지울 기회가 없다.
+    - `message_extractions`에 v2가 남지 않으므로, 재추출하는 동안 계속 도는 v1 적재가 같은 메시지를 늦게 쓰면 아래의 버전 확인이 막지 못한다.
+  - 그래서 3·4의 대상은 창의 **사람이 보낸 메시지 전부**다(사전 필터를 통과했는지, 기록이 나왔는지와 상관없이). agent가 보낸 메시지는 원래 기록이 생기지 않으므로 대상에서 뺀다. 늘어나는 것은 사람 메시지마다 `message_extractions` 한 행이다.
   - **커서는 성공한 창까지만 전진한다.** 창 하나가 실패하면(LLM·resolve·agent-context 실패) 그 창에서 멈추고, 커서는 그 앞에 남는다. 뒤의 창을 먼저 저장하지 않는다 — 커서 하나로 "여기까지 끝났다"를 말할 수 있게(memory-api personal build의 watermark와 같은 원칙). `attempts`를 올리고 다시 debounce를 건다. 시도 횟수가 `ingest.max_attempts`를 넘으면 그 창을 건너뛰고 커서를 옮긴다 — 창 하나 때문에 방 전체의 적재가 멈추지 않게. 건너뛴 창은 `skipped_windows(room_id, extractor_generation, first_message_id, last_message_id, reason, created_at)`에 남기고, 백필이 다시 처리한다.
-  - **버전 사이의 경합도 막는다.** v1 추출이 늦게 끝나 먼저 저장된 v2의 결과를 덮으면 안 된다. 메시지마다 한 행인 `message_extractions(message_id PK, extractor_generation)`을 두고, 쓰기 트랜잭션은 커서 확인 다음 statement에서 창의 기록을 뽑는 메시지들의 행을 `SELECT … FOR UPDATE`로 잠근다(없으면 만든다). 저장된 generation이 자기보다 높은 메시지는 건너뛰고, 낮거나 같으면 기록을 교체하고 generation을 자기 것으로 둔다. 같은 generation의 두 실행은 위의 커서 확인에서 이미 한쪽이 버려졌다.
-  - **재추출과 백필**: 새 `extractor_version`이 나오면 그 generation의 `room_cursors` 행을 방의 첫 메시지 앞에서 시작해 같은 방식으로 돈다. 메시지마다 이전 버전의 기록을 새 기록으로 바꾼다(원자적 교체). 한 메시지에는 한 버전의 기록만 있다. 재추출하는 동안에는 이전 generation의 적재를 계속 돌리고, 새 generation의 커서가 방의 끝을 따라잡으면 이전 것을 멈춘다 — 그 사이 새 메시지의 기록이 비지 않게. 이전 generation이 늦게 쓴 기록은 위의 버전 확인이 막는다.
+  - **버전 사이의 경합도 막는다.** v1 추출이 늦게 끝나 먼저 저장된 v2의 결과를 덮으면 안 된다. 메시지마다 한 행인 `message_extractions(message_id PK, extractor_generation)`을 두고, 쓰기 트랜잭션은 커서 확인 다음 statement에서 창의 기록을 뽑는 메시지들(사람이 보낸 메시지 전부, 기록 0개 포함)의 행을 `SELECT … FOR UPDATE`로 잠근다(없으면 만든다). 저장된 generation이 자기보다 높은 메시지는 건너뛰고, 낮거나 같으면 기록을 교체하고 generation을 자기 것으로 둔다. 같은 generation의 두 실행은 위의 커서 확인에서 이미 한쪽이 버려졌다.
+  - **재추출과 백필**: 새 `extractor_version`이 나오면 그 generation의 `room_cursors` 행을 만들고 `start_message_id`를 방의 첫 메시지로 두어(백필이 `before`로 거슬러 올라가 찾는다) 같은 방식으로 돈다. 메시지마다 이전 버전의 기록을 새 기록으로 바꾼다(원자적 교체). 한 메시지에는 한 버전의 기록만 있다. 재추출하는 동안에는 이전 generation의 적재를 계속 돌리고, 새 generation의 커서가 방의 끝을 따라잡으면 이전 것을 멈춘다 — 그 사이 새 메시지의 기록이 비지 않게. 이전 generation이 늦게 쓴 기록은 위의 버전 확인이 막는다.
 - **같은 경험을 여러 번 말해도 경험의 폭이 부풀지 않아야 한다.** 한 사람이 같은 병 이야기를 열 번 하면 기록이 열 개다. 순위(§9 T4)는 기록 수가 아니라 서로 다른 엔티티 수와 서로 다른 날짜 수를 세고 상한을 둔다. 기록 자체는 지우지 않는다 — 어느 기록이 가장 잘 맞는지는 질문마다 다르다.
 - **메시지는 고쳐지지도 지워지지도 않는다**(§6-1). 그래서 원문의 수정·삭제를 따라갈 일은 없다. 기록이 무효가 되는 경우는 둘이다 — 그 사람의 **탈퇴**, 그리고 서비스화 때 정할 **범위 밖으로 나가는 것**(방이나 동의, §12).
 - **탈퇴는 R68과 같은 방식이다.** `bourbon.user_deactivated`를 받으면 그 사람의 기록을 전부 지우고 id를 남긴다. 그리고 **기록을 만들거나 바꾸는 모든 쓰기 트랜잭션이 첫 statement에서 그 id를 확인한다** — 창마다의 추출 결과 쓰기, 백필, 재추출, resolve 재시도 뒤의 갱신 모두. 메시지는 지워지지 않으므로 탈퇴한 사람의 메시지는 원천에 남아 있고, 확인 없는 백필은 그 기록을 되살린다.
@@ -714,11 +720,11 @@ topic 경로       topic_ids ∋ need의 topic들                            엔
   - 공개 범위(필터는 서비스화 때 켠다, §12): private·hidden 기록을 뺀다. `friends` 기록은 요청의 `friend_owner_ids`에 있는 owner의 것만 남긴다.
   - 도달 가능성: owner가 요청자의 친구(`requester_friend_ids`)이거나 public topic을 하나 이상 가진 사람만 남긴다. agent DM 게이트는 요청자와 owner 사이만 보므로, 여기서는 보는 사람 전원이 아니라 요청자의 친구로 판정한다. public topic이 있는가는 lived-knowledge의 visibility 미러로 계산한다 — bourbon-api의 `agents.public`이 곧 이 조건이다(R57).
   - 두 목록 모두 discovery가 `friends` 미러로 만든다. `friend_owner_ids`는 보는 사람 모두와 친구인 owner, `requester_friend_ids`는 요청자의 친구다. lived-knowledge는 이 목록들을 그 요청 안에서만 쓰고 저장하지 않는다.
-  - 쿼리 밖에 남는 조건(`agents` 조인, 탈퇴자, bourbon-api 게이트의 `enabled`·활성 상태)은 discovery가 아래에서 한 번 더 건다. 이 차이는 작아서, 경로마다 K보다 조금 더 받아(`per_path_limit` + 여유분) 흡수한다. 사후 필터 뒤 K명에 못 미친 경로가 있으면 그 need는 `complete=false`로 다룬다(§11).
+  - 쿼리 밖에 남는 조건(`agents` 조인, 탈퇴자, bourbon-api 게이트의 `enabled`·활성 상태)은 discovery가 아래에서 한 번 더 건다. 이 차이는 작아서, 경로마다 K보다 조금 더 받아(`per_path_limit` + 여유분) 흡수한다. 경로마다 lived-knowledge가 `has_more`(받은 한도를 채우고도 더 있었는가)를 돌려준다. **`has_more`인 경로가 사후 필터 뒤 K명에 못 미치면** 그 need는 불완전으로 다룬다(§11) — 필터 때문에 잘렸고 더 가져올 후보가 있었다는 뜻이므로. `has_more`가 아니면 후보를 전부 읽은 것이라 K명보다 적어도 완전하다. 애초에 해당하는 사람이 3명뿐인 검색을 불완전으로 표시하지 않기 위해서다.
 - `kind`·`stance`·`recency`는 **필터링 조건이 아니라** 경로 안의 순위 조건이다. 종류가 다른 기록도 후보가 되되 낮은 순위로 — T1의 `kind` 판정이 틀렸을 때도 후보가 사라지지 않게.
 - 네 경로의 모든 기록에 `condition`과 need 엔티티의 표기들(resolve된 엔티티의 label·alias)을 기록의 `summary_en`·`terms`와 비교해 요약문 매칭 순위를 붙인다. **"이번 신상" 같은 조건은 여기서만 반영된다.**
 - 텍스트 경로가 있어서, 엔티티를 찾지 못했거나(`not_found`) topic이 없는 need도 후보를 얻는다(§3-3 규칙 1).
-- 응답은 사람별로: 경로별 기록 수, 가장 잘 맞은 기록 몇 개(`record_id`, `entity_id`, `kind`, `stance`, `specificity`, `observed_at`, 매칭 순위, 요약문, `audience`), 서로 다른 엔티티 수·날짜 수(T4의 경험의 폭), need별 `complete` 여부.
+- 응답은 사람별로: 경로별 기록 수, 가장 잘 맞은 기록 몇 개(`record_id`, `entity_id`, `kind`, `stance`, `specificity`, `observed_at`, 매칭 순위, 요약문, `audience`), 서로 다른 엔티티 수·날짜 수(T4의 경험의 폭). need별로 `complete`(네 경로를 모두 돌았는가 — lived-knowledge 안의 timeout·장애로 빠진 경로가 없는가)와 경로별 `has_more`.
 
 **경험 소스의 사람은 discovery가 다시 필터링한다.** 위 쿼리 안의 필터를 믿지 않고 방어로 한 번 더 건다.
 
@@ -881,7 +887,8 @@ POST /api/internal/svc/lived-knowledge/candidates
     {"need_id": "n0",
      "entities": [{"entity_id": "wd:Q…", "label": {"ko": "글렌드로낙", "en": "GlenDronach"}, "state": "resolved"},
                   {"entity_id": "rg:7f3a…", "label": {"ko": "글렌드로낙 21 팔리아먼트", "en": "GlenDronach 21 Parliament"}, "state": "resolved"}],
-     "complete": true}
+     "complete": true,
+     "has_more": {"entity": false, "parent": false, "topic": true, "text": false}}
   ],
   "people": [
     {"person_id": "…", "needs": [
@@ -950,7 +957,7 @@ discovery:
 | lived-knowledge timeout·5xx | 관심 소스만으로 응답 + `experience_unavailable`. 전원 `prior_only`, need 충족은 1단계 규칙(§9 T3), 이유는 관심 문구, 추천 근거 없음. timeout은 설정 레지스터 값이고, 새 route 전체 deadline(bourbon-agent의 10초 아래) 안에 든다 |
 | lived-knowledge 장애 중, 관심 소스로 볼 것이 없는 required need(topic을 못 찾은 need)가 있음 | 503 — 못 본 것이지 없는 것이 아니다(불변식 8) |
 | resolve 장애(lived-knowledge 안) | 레지스트리에서만 찾고 계속 + `entity_resolution_unavailable` |
-| lived-knowledge 일부 need `complete=false`(사후 필터 뒤 경로가 K명에 못 미친 경우 포함, §9 T3) | 받은 것으로 순위 + `experience_incomplete`. 이때의 1위는 "받은 후보 중 1위"다. required need가 불완전하면 두 사람 조합을 내지 않는다 |
+| lived-knowledge 일부 need가 불완전(`complete=false`, 또는 `has_more`인 경로가 사후 필터 뒤 K명에 못 미침, §9 T3. `has_more`가 아닌 경로가 K명보다 적은 것은 불완전이 아니다) | 받은 것으로 순위 + `experience_incomplete`. 이때의 1위는 "받은 후보 중 1위"다. required need가 불완전하면 두 사람 조합을 내지 않는다 |
 | 엔티티 `ambiguous`·`not_found` | topic·텍스트 경로로. degraded 아님(요청에 대한 판단) |
 | lived-knowledge가 `people`에 요청자를 돌려줌 | 그 항목은 버리고 로그. 계약 위반이라 알람 |
 | 경험 소스의 사람이 `agents`에 없거나 `departed_users`에 있음 | 뺀다(§9 T3). 탈퇴 이벤트 유실에 대한 두 번째 방어 |
