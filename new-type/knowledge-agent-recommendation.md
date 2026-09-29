@@ -286,7 +286,8 @@ T3  lived-knowledge:  "GlenDronach" → wd:Q…(GlenDronach)로 resolve
                텍스트 경로: r1의 summary_en이 "GlenDronach 21 Parliament"·"new release"와 매칭
     관심 소스:  몰트 위스키 topic을 공개한 사람들
 T4  A: record_entity(바로 그 엔티티) + 종류 일치 + 최근 + 요약문 매칭 → n0 충족, 1위
-    B: record_topic, prefers(종류 불일치), 요약문 매칭 없음 → n0 미충족(종류가 mismatch이고, precision=exact인데 엔티티·요약문 매칭도 없다)
+    B: record_topic, prefers(종류 불일치), 요약문 매칭 없음 → n0 미충족(종류가 mismatch이고, precision=exact인데 기준 대상의 기록이 없다)
+    (글렌드로낙 12년을 마신 C가 있었다면: 상위 엔티티 경로로 후보가 되고 순위도 받지만, 기록의 엔티티가 기준 대상 rg:7f3a…가 아니라 n0 미충족)
 T6  "글렌드로낙 관련 경험(2026년 9월): 글렌드로낙 21 팔리아먼트 신상을 마셔 봤고, 셰리가 너무 강해 입에 맞지 않았다"
     추천 근거로 (이 추천의 id, R, A, n0 "글렌드로낙 / experienced", r1)을 저장
 ```
@@ -654,7 +655,7 @@ question:    글렌드로낙 21 팔리아먼트(글렌드로낙 신상) 마셔 �
 - `precision`: `exact` | `related`(§3-3 규칙 5).
 - `recency`: `recent` | `null`. discovery가 설정 레지스터 값에 따라 `recency_days`로 바꿔 lived-knowledge에 넘긴다.
 - `stance`: `positive` | `negative` | `null`(무관). 질문이 특정 방향의 경험을 찾을 때만 쓴다 — "셰리 캐스크 싫어하는 사람"이면 `negative`. 기록의 `stance`와 비교한다(T3).
-- `entity_mentions`: 질문이 이름으로 가리킨 대상 0~2개. `text`는 영어 정식 이름, `as_written`은 질문에 쓰인 표기, `entity_type`은 레지스트리 resolve의 힌트(§7-3). 분야 이름은 넣지 않는다. 모델이 모르는 것("이번 신상")은 지어내지 않는다.
+- `entity_mentions`: 질문이 이름으로 가리킨 대상 0~2개. `text`는 영어 정식 이름, `as_written`은 질문에 쓰인 표기, `entity_type`은 레지스트리 resolve의 힌트(§7-3). 분야 이름은 넣지 않는다. 모델이 모르는 것("이번 신상")은 지어내지 않는다. 한 need의 이름들은 브랜드와 그 제품처럼 상하 관계여야 한다 — 서로 관계없는 대상이 여럿이면("21 팔리아먼트와 18 알라데일") need를 나눈다. 가장 구체적인 이름이 `precision: exact` 충족의 기준 대상이다(T3).
 - `reference_unresolved`: need의 대상이 "이번 신상"·"올해 한정판"처럼 시점이나 맥락에 기대는 지칭인데 질문과 `context` 어디에도 구체적인 이름이 없으면 true. 그러면 그 지칭은 `condition`(요약문 매칭)으로만 반영하고 — 함께 적힌 이름은 엔티티 경로에 그대로 쓴다 — `degraded`에 `reference_unresolved`를 단다. bourbon-agent가 지칭을 채워 보내는지 재는 지표이기도 하다(§9 T0).
 - `condition`: topic·엔티티에 담기지 않는 조건을 영어 한 구절로. 요약문(`summary_en`) 매칭에 쓴다(T3). 질문에서 나와 lived-knowledge로 가는 텍스트는 이것과 `entity_mentions`뿐이다.
 - `probes`는 지금처럼 분야 이름이다.
@@ -750,12 +751,12 @@ stance 일치     match | conflict | irrelevant   need의 stance가 null이면 i
 요약문 매칭      need 안에서의 순위, 또는 없음
 ```
 
-- `compatible`은 need가 `experienced`이고 기록이 need의 엔티티(또는 그 하위)에 대한 것이고 `kinds`에 `experienced`는 없지만 `prefers`가 있는 경우다 — 그 대상을 겪었다는 말 없이 평가만 남긴 기록이다. 대상이 없거나 다른 기록의 `prefers`는 `mismatch`다. 평가는 대개 겪은 뒤에 하지만, 겪은 것이 드러나면 추출이 `experienced`도 함께 적으므로 이 경우는 좁다(열린 항목 22). 그 밖은 `mismatch`다.
+- `compatible`은 need가 `experienced`이고 기록의 엔티티가 기준 대상(아래 need 충족 판정)이고 `kinds`에 `experienced`는 없지만 `prefers`가 있는 경우다 — 그 대상을 겪었다는 말 없이 평가만 남긴 기록이다. 대상이 없거나 다른 기록의 `prefers`는 `mismatch`다. 평가는 대개 겪은 뒤에 하지만, 겪은 것이 드러나면 추출이 `experienced`도 함께 적으므로 이 경우는 좁다(열린 항목 22). 그 밖은 `mismatch`다.
 - 요약문 매칭은 coverage 상태가 아니라 따로 둔 축이다. 텍스트로만 들어온 기록이 엔티티로 들어온 기록보다 저절로 위에 오지 않게 하려는 것이다 — 다른 브랜드의 "신상" 요약문도 조건과 맞을 수 있다.
 
 **need 충족(covers) 판정** — 두 사람 조합(T5), 응답의 `covers[]`, `nobody_covers`가 쓴다.
 
-- **2단계부터**: 경험 소스의 기록 하나가 다음을 모두 만족하면 그 need를 채운다 — coverage 상태가 `prior_only`가 아님, kind 일치가 `mismatch`가 아님, stance 일치가 `conflict`가 아님, `recency: recent`인 need면 시점이 `stale`이 아님. `precision: exact`인 need는 여기에 더해 `record_entity`이거나 요약문 매칭이 있어야 한다. **`prior_only`는 need를 채우지 못한다** — 후보와 폴백은 될 수 있지만 "답할 경험이 있는 사람"이라는 보장이 아니다.
+- **2단계부터**: 경험 소스의 기록 하나가 다음을 모두 만족하면 그 need를 채운다 — coverage 상태가 `prior_only`가 아님, kind 일치가 `mismatch`가 아님, stance 일치가 `conflict`가 아님, `recency: recent`인 need면 시점이 `stale`이 아님. `precision: exact`인 need는 여기에 더해 **기록의 엔티티가 기준 대상이어야 한다** — need에서 가장 구체적인 resolve된 이름의 엔티티이거나, 그것에 병합된 id, 그 하위 엔티티다. `record_entity`는 후보를 찾고 순위를 매기는 신호이지 충족의 증명이 아니다. 21 팔리아먼트를 묻는 need에 글렌드로낙 12년을 마신 기록은 상위 엔티티 경로로 `record_entity`가 되지만 충족하지 못한다. 요약문 매칭(조건 일치)도 순위에만 쓴다 — "신상"은 다른 병의 요약문에도 맞는다. 가장 구체적인 이름이 resolve되지 않았으면 exact 충족은 없다(후보와 순위는 그대로, 열린 항목 31). **`prior_only`는 need를 채우지 못한다** — 후보와 폴백은 될 수 있지만 "답할 경험이 있는 사람"이라는 보장이 아니다.
 - **1단계, 그리고 경험 소스가 답하지 않을 때**: `prior_only`가 need를 채운 것으로 본다. 이때의 추천은 "관심 있는 사람" 추천이고 이유는 관심 문구다(T6). 2단계 이후 lived-knowledge가 답하지 않을 때도 이 규칙으로 폴백하고 `experience_unavailable`을 단다.
 
 need 충족도 "답할 수 있다"가 아니라 "그런 경험을 말한 적이 있다"다.
@@ -1252,6 +1253,7 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 28. visibility 철회 반영의 보장 수준 — 이벤트 유실에 대비한 주기 재조회나, 근거를 답변에 넣기 직전의 원본 확인. `visible_topic_rows`와 함께 정한다(§7-7).
 29. need에 엔티티가 여럿일 때 `needs[].label`(과 `covered_needs`)에 어느 이름을 쓸지 — 첫 이름, 가장 구체적인 이름 등(§10-1).
 30. 잘못된 병합을 되돌리는 절차 — 병합 뒤에 저장된 기록은 `merged_into`를 지워도 나뉘지 않는다. `terms`로 다시 가를지, 병합을 되돌릴 수 있는 기간을 둘지(§7-3).
+31. `precision: exact` 충족의 가장자리(§9 T3) — 가장 구체적인 이름이 resolve되지 않았을 때 요약문·`terms`에서 그 이름이 확인되면 충족으로 볼지(지금은 충족 없음), "21이나 18"처럼 OR로 묻는 질문을 need 하나의 기준 대상 여럿으로 둘지(지금은 T1이 need를 나누므로 둘 다 채워야 하는 질문처럼 다뤄진다). 0단계 질문 세트에서 얼마나 자주 나오는지 보고 정한다.
 
 ---
 
