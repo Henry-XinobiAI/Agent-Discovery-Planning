@@ -619,7 +619,7 @@ discovery 한 곳을 위한 조회 route 둘(후보 조회, 근거 조회)을 �
 - 병합 확인 LLM은 새로 만들려는 이름에 비슷한 후보가 있을 때만 1회, 그리고 병합 워커의 후보 쌍마다 1회다(§7-3). 이름·종류만 넣는 작은 호출이다.
 - 추출도 e3llm을 쓴다. 추천 요청과 같은 proxy를 쓰면 배치 부하가 추천 요청의 tail latency(p95·p99)를 늘릴 수 있다. 추출은 우선순위가 낮은 별도 한도(동시성 상한)로 돌리는 것이 맞다고 보고, 가능한지는 e3llm 쪽에 묻는다. 이 요청은 나중에 다룬다(오너, 2026-09-28, §15 요청 13).
 - 웹 검색은 대상이 지시어로만 남은 기록에만, 추출과 따로 비동기로 한다(§7-3). 물량은 그런 기록의 비율로 정해진다 — 0단계에서 잰다(§13-2).
-- 텍스트 경로가 모드 A면(§7-6) 기록마다 임베딩 1회(적재 때)와 need마다 임베딩 1회(질문 때)가 더해진다. 짧은 요약문 하나를 벡터로 바꾸는 호출이라 추출 LLM보다 훨씬 싸다(추론). Gemini는 Vertex에서 대부분의 임베딩 모델이 요청 하나에 텍스트 하나만 받아서, 여러 기록을 한 번에 보내도 e3llm이 텍스트마다 따로 부른다(동시 8개까지). 모드 B는 적재 비용이 늘지 않는다.
+- 텍스트 경로가 모드 A면(§7-6) 기록마다 임베딩 1회(적재 때)와 need마다 임베딩 1회(질문 때)가 더해진다. 짧은 요약문 하나를 벡터로 바꾸는 호출이라 추출 LLM보다 훨씬 싸다(추론). `gemini-embedding-001`과 `text-embedding-*`는 e3llm이 100개씩 묶어 부르고, 그 밖의 Gemini 임베딩 모델은 Vertex에서 요청 하나에 텍스트 하나만 받아 텍스트마다 따로 부른다(프로세스당 동시 8개까지). 모드 B는 적재 비용이 늘지 않는다.
 
 ---
 
@@ -1300,7 +1300,7 @@ memory-api에서 이 문서를 읽는다면 먼저 전할 것(2026-10-02):
 15. discovery DB가 있는 공용 RDS에서 lived-knowledge DB에 pgvector 확장(`CREATE EXTENSION vector`)을 쓸 수 있는지, 그 버전(iterative index scan은 0.8부터, §7-6). 쓸 수 없으면 모드 A는 빠진다.
 16. 임베딩 모델과 호출 경로 — e3llm으로 임베딩 API를 호출할 수 있는지, 모델과 차원, 적재(배치)와 요청 경로 각각의 한도(§7-8).
    - **확인(2026-10-07)**: e3llm에 임베딩 route가 없었다. origin/main(`19ca985`)의 route는 chat completions와 모델 목록뿐이고, Gemini 모델 목록에서 임베딩 모델을 일부러 뺀다(`e3llm/models/google.py`).
-   - **진행(2026-10-07, 오너)**: e3llm-api의 로컬 브랜치 `feat/embeddings`(`8130601`, push 전)에 OpenAI 호환 `POST /v1/embeddings`를 만들었다. chat과 같은 `provider/model` id(`google/gemini-embedding-001`, `google/text-embedding-005`, `openai/text-embedding-3-*`), `dimensions`, `encoding_format`(`float`|`base64`), 그리고 확장 필드 `input_type`(8개 값, Gemini는 task_type으로 번역하고 OpenAI는 무시한다). 실제 Vertex로 768차원 응답과 8개 `input_type`을 확인했다. **남은 것**: e3llm 쪽 리뷰와 머지, 적재(배치)와 요청 경로의 한도.
+   - **진행(2026-10-07, 오너)**: e3llm-api의 로컬 브랜치 `feat/embeddings`(`00628c0`, push 전)에 OpenAI 호환 `POST /v1/embeddings`를 만들었다. chat과 같은 `provider/model` id(`google/gemini-embedding-001`, `google/text-embedding-005`, `openai/text-embedding-3-*`), `dimensions`, `encoding_format`(`float`|`base64`), 그리고 확장 필드 `input_type`(8개 값, Gemini는 task_type으로 번역하고 OpenAI는 무시한다). 토큰 한도를 넘는 텍스트는 잘라 내지 않고 400으로 거절하고, prefix만 맞고 없는 모델은 chat처럼 404다. 실제 Vertex와 OpenAI로 768차원 응답, 150개 묶음, 8개 `input_type`, 400·404를 확인했다. **남은 것**: e3llm 쪽 리뷰와 머지, 적재(배치)와 요청 경로의 한도.
 
 ---
 
