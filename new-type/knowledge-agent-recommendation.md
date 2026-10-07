@@ -61,7 +61,7 @@ need는 질문이 요구하는 것 하나하나다. 여러 개면 한 사람이 
 | 언제 | 누가 | 무엇을 | LLM 호출 | 비용이 비례하는 것 |
 |---|---|---|---|---|
 | 방의 대화가 잠잠해질 때(방마다 모아서) | lived-knowledge | 그동안 올라온 메시지에서 보낸 사람의 경험 기록을 뽑아 저장 | 창(한 번에 넣는 메시지 묶음)마다 1회. 사전 필터(LLM 앞에서 경험 표현이 없는 메시지를 제외하는 값싼 판정)를 통과한 메시지가 없는 창은 0회 | 대화량(창 수) |
-| 질문이 올 때 | discovery | 질문 분석 → 후보 조회 → 순위 → 응답 | 1~2회(질문 분석, topic이 모호할 때 disambiguation). | 후보 수. 사용자 수와 무관 |
+| 질문이 올 때 | discovery | 질문 분석 → 후보 조회 → 순위 → 응답 | 1~2회(질문 분석, topic이 모호할 때 disambiguation). `condition`이 있는 need에는 저지 1회, 모드 B는 재시도마다 1회 더(§9 T4-a) | 후보 수. 사용자 수와 무관 |
 | 추천을 실행할 때 | bourbon-agent | 추천된 agent가 요청자와 대화 | agent가 평소 쓰는 만큼 | 이 기능의 비용이 아님 |
 
 ---
@@ -86,7 +86,8 @@ need는 질문이 요구하는 것 하나하나다. 여러 개면 한 사람이 
 | **방 커서** | 방마다 "여기까지 추출했다"를 나타내는 마지막 메시지 id. 추출 결과를 쓰는 트랜잭션에서 함께 전진한다(§7-5) |
 | **경험 기록** (줄여서 기록) | lived-knowledge가 메시지 하나에서 뽑아 저장하는 한 줄. 누가(보낸 사람), 어떤 종류로(`experienced` 등), 무엇에 대해(엔티티·topic), 어땠는지(긍정·부정), 언제(메시지 시각), 요약문, 원 메시지 id(§7-2) |
 | **요약문** | 경험 기록마다 붙는 한두 문장. 보낸 사람 본인의 경험만 담는다. 추천 이유 문장과 검색에 쓴다 |
-| **요약문 매칭** | 질문의 조건(`condition`)·엔티티 이름과 기록의 영어 요약문(`summary_en`)·이름 표기(`terms`)를 텍스트 검색으로 비교한 결과. need 안에서의 순위로만 쓴다 |
+| **요약문 매칭** | 질문의 조건(`condition`)·엔티티 이름과 기록의 영어 요약문(`summary_en`)·이름 표기(`terms`)를 비교한 결과. 요약문을 비교하는 방식은 두 모드 — 뜻으로(임베딩) 또는 바꿔 말한 표현들의 단어로(full-text) — 를 2단계에서 비교해 하나를 고른다(§7-6). need 안에서의 순위로만 쓴다 |
+| **저지(judge)** | `condition`이 있는 need에서, 가중 합 상위 후보의 요약문이 그 조건에 맞는지 LLM이 확인하는 단계(§9 T4-a). 맞지 않는 후보를 빼거나 순서를 바꾼다 |
 | **관심 소스** | 후보를 찾는 첫 번째 데이터. topic-api에서 온, 사용자가 공개한 관심 topic(discovery의 `visible_topic_rows`). "이 분야에 관심을 드러낸 사람"을 알려 준다. 지금 있는 것이다 |
 | **경험 소스** | 후보를 찾는 두 번째 데이터. lived-knowledge의 경험 기록. "이것을 겪었다·좋아한다·해 봤다·안다고 말한 사람"을 알려 준다 |
 | **검색 경로** | 경험 소스에서 후보를 찾는 네 가지 방법 — 엔티티로, 상위 엔티티로(질문의 엔티티가 기록 엔티티의 상위일 때), topic으로, 요약문 텍스트로(§9 T3). 경로마다 상위 K명을 뽑아 합친다 |
@@ -175,6 +176,7 @@ bourbon-api ── bourbon.message_created (id, 보낸 사람, 방 종류. 본�
                        엔티티 · 상위 엔티티 · topic · 텍스트 네 경로, 경로마다 상위 K명
                     → 합집합 → 탈퇴자 제외, 요청자가 대화할 수 있는 사람만
   T4 순위 (종류 일치, 최근성, 요약문 매칭, 엔티티 매칭, 관심 강도)
+  T4-a 저지 (condition이 있는 need만, LLM 1회. 모드 B는 부족하면 표현을 바꿔 다시 조회, 최대 n번)
   T5 한 사람으로 부족하면 두 사람 조합
   T6 응답: 추천 이유(요약문 기반). 근거가 된 기록 id는 추천 근거로 저장
                                               │
@@ -188,7 +190,7 @@ bourbon-agent ◀─────────────────────
 3. **보는 사람 확인**: 요청의 `participant_user_ids`를 쓴다. 없으면 T1과 병렬로 bourbon-api에서 요청 방의 사람 참가자를 읽는다. `friends` 기록을 쓸 수 있는지 정하는 데 쓴다(§12).
 4. **T2 topic 찾기**: need마다 topic을 찾는다(타입 ①과 같은 방식). 엔티티는 discovery가 resolve하지 않고 이름 그대로 lived-knowledge에 넘긴다 — 경험 기록과 같은 레지스트리로 resolve하기 위해서다.
 5. **T3 후보 모으기**: 관심 소스는 discovery DB에서 topic으로, 경험 소스는 lived-knowledge 조회 한 번으로 모은다. lived-knowledge가 네 경로에서 후보를 뽑아 사람별로 묶어 돌려주면, discovery가 둘을 합치고 탈퇴자를 빼고 요청자가 대화를 시작할 수 있는 사람만 남긴다.
-6. **T4 순위**: 종류 일치, 최근성, 요약문 매칭, 엔티티 매칭, 관심 강도의 가중 합. 같은 입력이면 늘 같은 순위다(deterministic).
+6. **T4 순위**: 종류 일치, 최근성, 요약문 매칭, 엔티티 매칭, 관심 강도의 가중 합. 같은 입력이면 늘 같은 순위다(deterministic). `condition`이 있는 need는 그 뒤에 저지가 상위 후보의 요약문을 보고 맞지 않는 후보를 빼거나 순서를 바꾼다(§9 T4-a). 저지가 실패하면 가중 합 순위를 그대로 쓴다.
 7. **T5 조합**: 한 사람이 모든 need를 채우지 못하면 서로 보완하는 두 사람을 고른다.
 8. **T6 응답**: 사람마다 추천 이유(근거가 된 기록의 요약문)를 붙이고, 근거가 된 기록의 id를 추천 근거로 저장한다.
 9. lived-knowledge가 답하지 않으면 관심 소스만으로 추천하고 `degraded`에 남긴다(§11).
@@ -430,6 +432,7 @@ lived_knowledge_records
   summary             text        보낸 사람의 경험 한두 문장 (규칙은 아래)
   summary_lang        text        요약문 언어 (메시지 언어를 따른다)
   summary_en          text        같은 요약의 영어판 — 검색용
+  summary_embedding   vector|null summary_en의 임베딩. 텍스트 경로가 모드 A일 때만(§7-6). 임베딩에 실패하면 null로 두고 나중에 채운다
   terms               text[]      엔티티 이름의 표기들 (en/ko/ja, 별칭) — 검색용
   observed_at         timestamptz 메시지 시각
   message_id          uuid        원 메시지
@@ -569,11 +572,30 @@ lived-knowledge가 하는 일을 기준으로 두 후보를 비교한다.
 | 기록 ↔ 레지스트리 ↔ 사람 조인, `rg:`→`wd:` 병합 | 조인과 트랜잭션으로 자연스럽다 | 비정규화해 두고 병합할 때 재인덱싱 |
 | `entity_id`·`topic_ids`로 찾기, 레지스트리에서 하위 엔티티 펼치기 | 배열 컬럼 + GIN 인덱스, 재귀 CTE | keyword 필드 term 쿼리, 펼치기는 따로 |
 | 경로마다 사람별 상위 K명 | window function(`row_number() over (partition by …)`) | terms aggregation + top_hits |
-| 요약문 텍스트 검색 | `summary_en`에 영어 full-text(`tsvector`) + 이름 표기에 `pg_trgm` | BM25, 언어별 analyzer(nori·kuromoji) |
+| 요약문 텍스트 검색 | `summary_en`에 두 모드(아래) — pgvector 임베딩, 또는 영어 full-text(`tsvector`). 이름 표기에는 `pg_trgm` | BM25, 언어별 analyzer(nori·kuromoji). 벡터 검색도 있다 |
 | 규모 | 사용자 10만 × 사용자당 기록 수백 = 수천만 행까지 무리 없다(추론, 0단계에서 기록 수를 잰다) | 더 큰 규모에 유리 |
 | 운영 | discovery와 같은 방식(공용 RDS에 DB 하나, alembic) | memory-api와 같은 AOSS. 탈퇴 기록 같은 트랜잭션이 필요한 데이터는 결국 PostgreSQL에도 두게 되어 저장소가 둘이 된다 |
 
-**PostgreSQL을 권장한다.** 가장 중요한 요구인 "탈퇴한 사람의 기록이 되살아나지 않게 하기"가 트랜잭션에 기대고, 데이터가 관계형이다. 텍스트 검색은 `summary_en`을 두어 영어 하나로 모았기 때문에 PostgreSQL의 영어 full-text로 충분하다고 본다. 메시지 언어로 쓴 요약(`summary`)은 보여 주기용이고 검색하지 않는다.
+**PostgreSQL을 권장한다.** 가장 중요한 요구인 "탈퇴한 사람의 기록이 되살아나지 않게 하기"가 트랜잭션에 기대고, 데이터가 관계형이다. 텍스트 검색은 `summary_en`을 두어 영어 하나로 모았기 때문에 PostgreSQL 안에서 할 수 있다 — 아래 두 모드 모두 PostgreSQL에서 돈다. 메시지 언어로 쓴 요약(`summary`)은 보여 주기용이고 검색하지 않는다.
+
+**텍스트 경로의 두 모드 — 2단계에서 둘 다 만들어 비교하고 하나를 고른다.** 텍스트 경로는 이름도 topic도 맞지 않을 때 사람을 찾는 유일한 경로이고, "압력이 높을 때", "혼자 가기 좋은" 같은 조건은 요약문 매칭으로만 반영된다(§9 T3). 그런데 요약문은 나중에 올 질문을 모르는 채로 쓰이므로, 질문의 `condition`과 같은 뜻을 다른 단어로 말한 경우가 흔하다 — "for beginners"와 "the first whisky they bought". 단어가 겹치는지만 보는 검색(`tsvector`, `condition` 하나)으로는 이런 기록을 못 찾는다. 저지(§9 T4-a)는 이미 찾은 후보만 보므로 이 문제를 풀지 못한다 — 찾는 단계에서 풀어야 한다.
+
+| | 모드 A — 뜻으로(`embedding`) | 모드 B — 바꿔 말한 표현으로(`paraphrase`) |
+|---|---|---|
+| 찾는 방식 | `condition`의 임베딩과 가까운 `summary_embedding`(pgvector, cosine) | `condition`과 `condition_variants`(§9 T1)를 표현마다 `tsquery`로 만들어 OR로 묶고 `ts_rank`로 순위. 모든 단어를 요구하는 쿼리 하나로 이어 붙이면 오히려 덜 찾힌다 |
+| 적재 때 | 기록마다 `summary_en`을 임베딩해 저장 | 없음 |
+| 질문 때 | lived-knowledge가 need마다 `condition`을 임베딩(1회). 문장을 생성하는 호출이 아니다 | T1의 출력이 조금 길어질 뿐, 호출은 늘지 않는다 |
+| 저지 | 1회 | 1회 + 재시도 최대 `judge.max_retries`번(§9 T4-a) |
+| 잘 잡는 것 | 단어가 달라도 뜻이 가까운 표현 | 바꿔 말할 표현이 예상되는 경우("entry level", "first bottle") |
+| 약한 것 | 임베딩 모델과 호출 경로가 하나 더 생긴다. 쿼리 안 필터와 근사 검색이 함께 걸릴 때의 recall(아래) | 연결에 추론이 필요한 표현("마감 직전에 밤새며" ↔ "압력이 높을 때"). 조건만 있는 need에서는 흔한 단어만 겹친 기록이 상위 K를 채운다 |
+| 지연 | 거의 고정 | 재시도마다 늘어난다 |
+
+- **임베딩은 lived-knowledge가 한다.** 기록과 질문을 같은 모델로 바꿔야 하므로, 양쪽을 가진 쪽이 맡는다. 모델을 바꾸면 모든 기록을 다시 임베딩한다(백필, §7-5와 같은 방식).
+- **쿼리 안 필터와 근사 검색.** 볼 수 없는 후보는 자르기 전에 뺀다(§9 T3). HNSW 같은 근사 인덱스는 인덱스에서 가까운 것을 먼저 꺼낸 뒤 조건을 걸기 때문에, 필터가 많이 걸러 내면 K명보다 적게 나온다. pgvector 0.8의 iterative index scan을 쓰거나, 기록 수가 작은 동안은 인덱스 없이 정확히 계산한다. 정확한 계산과의 차이를 2단계에서 잰다.
+- 두 모드 모두 이름 표기(`terms`)는 지금처럼 `pg_trgm`으로 비교한다. 바뀌는 것은 `summary_en` 쪽뿐이다.
+- 모드는 discovery의 설정 레지스터 값 `experience.text_mode`(`embedding` | `paraphrase`)로 정하고, 조회 요청에 실어 보낸다(§10-2). 평가 하네스는 요청마다 바꿀 수 있다 — 같은 질문 세트로 두 모드를 비교하기 위해서다(§13-3).
+- **운영에는 하나만 남긴다.** 고르는 기준을 비교 전에 정하고(§13-3), 고른 뒤 다른 모드의 코드는 지운다. 두 모드를 함께 유지하면 저장소·테스트·장애 대응이 모두 두 배가 된다.
+- 모드 A는 공용 RDS에서 pgvector 확장을 쓸 수 있어야 한다(§15 요청 15). 쓸 수 없으면 모드 B만 만든다.
 
 **다시 볼 조건**: 0·2단계에서 요약문 검색의 품질이 부족하면(§13-2) — 예를 들어 영어로 옮기면서 제품명·지명이 바뀌거나 빠져 매칭이 떨어지면 — 검색만 OpenSearch로 옮기고 기록의 기준은 PostgreSQL에 둔다. lived-knowledge가 memory-api로 옮겨 가는 날에도 같은 판단을 다시 한다.
 
@@ -591,6 +613,7 @@ discovery 한 곳을 위한 조회 route 둘(후보 조회, 근거 조회)을 �
 - 병합 확인 LLM은 새로 만들려는 이름에 비슷한 후보가 있을 때만 1회, 그리고 병합 워커의 후보 쌍마다 1회다(§7-3). 이름·종류만 넣는 작은 호출이다.
 - 추출도 e3llm을 쓴다. 추천 요청과 같은 proxy를 쓰면 배치 부하가 추천 요청의 tail latency(p95·p99)를 늘릴 수 있다. 추출은 우선순위가 낮은 별도 한도(동시성 상한)로 돌리는 것이 맞다고 보고, 가능한지는 e3llm 쪽에 묻는다. 이 요청은 나중에 다룬다(오너, 2026-09-28, §15 요청 13).
 - 웹 검색은 대상이 지시어로만 남은 기록에만, 추출과 따로 비동기로 한다(§7-3). 물량은 그런 기록의 비율로 정해진다 — 0단계에서 잰다(§13-2).
+- 텍스트 경로가 모드 A면(§7-6) 기록마다 임베딩 1회(적재 때)와 need마다 임베딩 1회(질문 때)가 더해진다. 짧은 요약문 하나를 벡터로 바꾸는 호출이라 추출 LLM보다 훨씬 싸다(추론). 모드 B는 적재 비용이 늘지 않는다.
 
 ---
 
@@ -646,6 +669,7 @@ question:    글렌드로낙 21 팔리아먼트(글렌드로낙 신상) 마셔 �
      "entity_mentions": [{"text": "GlenDronach", "as_written": "글렌드로낙", "entity_type": "brand"},
                          {"text": "GlenDronach 21 Parliament", "as_written": "글렌드로낙 21 팔리아먼트", "entity_type": "product"}],
      "condition": "new release",
+     "condition_variants": ["newly launched", "latest bottling"],
      "reference_unresolved": false}
   ]
 }
@@ -658,14 +682,15 @@ question:    글렌드로낙 21 팔리아먼트(글렌드로낙 신상) 마셔 �
 - `stance`: `positive` | `negative` | `null`(무관). 질문이 특정 방향의 경험을 찾을 때만 쓴다 — "셰리 캐스크 싫어하는 사람"이면 `negative`. 기록의 `stance`와 비교한다(T3).
 - `entity_mentions`: 질문이 이름으로 가리킨 대상 0~2개. `text`는 영어 정식 이름, `as_written`은 질문에 쓰인 표기, `entity_type`은 레지스트리 resolve의 힌트(§7-3). 분야 이름은 넣지 않는다. 모델이 모르는 것("이번 신상")은 지어내지 않는다. 한 need의 이름들은 브랜드와 그 제품처럼 상하 관계여야 한다 — 서로 관계없는 대상이 여럿이면("21 팔리아먼트와 18 알라데일") need를 나눈다. 가장 구체적인 이름이 `precision: exact` 충족의 기준 대상이다(T3).
 - `reference_unresolved`: need의 대상이 "이번 신상"·"올해 한정판"처럼 시점이나 맥락에 기대는 지칭인데 질문과 `context` 어디에도 구체적인 이름이 없으면 true. 그러면 그 지칭은 `condition`(요약문 매칭)으로만 반영하고 — 함께 적힌 이름은 엔티티 경로에 그대로 쓴다 — `degraded`에 `reference_unresolved`를 단다. bourbon-agent가 지칭을 채워 보내는지 재는 지표이기도 하다(§9 T0).
-- `condition`: topic·엔티티에 담기지 않는 조건을 영어 한 구절로. 요약문(`summary_en`) 매칭에 쓴다(T3). 질문에서 나와 lived-knowledge로 가는 텍스트는 이것과 `entity_mentions`뿐이다.
+- `condition`: topic·엔티티에 담기지 않는 조건을 영어 한 구절로. 요약문(`summary_en`) 매칭에 쓴다(T3). 질문에서 나와 lived-knowledge로 가는 텍스트는 이것과 `condition_variants`, `entity_mentions`뿐이다.
+- `condition_variants`: `condition`을 다른 말로 바꾼 영어 구절 2~4개. 요약문이 같은 뜻을 다른 단어로 썼을 때도 찾히게 하려는 것으로, 텍스트 경로가 모드 B일 때만 쓴다(§7-6). 두 모드의 비교가 T1의 차이로 흐려지지 않게, T1은 모드와 관계없이 같은 프롬프트로 낸다. `condition`과 같이 사용자의 글로 다룬다(불변식 7).
 - `probes`는 지금처럼 분야 이름이다.
 
 규칙:
 
 - 호출은 한 번이다. **타입 ①의 프롬프트는 한 글자도 바꾸지 않고** 그것을 본뜬 별도 프롬프트를 새로 둔다. expansion 프롬프트와 grounding 게이트는 서로를 전제로 쓰여 있고, 둘이 어긋나면 422 비율이 크게 달라진다 — R60의 실측에서 게이트를 끈 쪽은 질문의 26%가 422였다.
 - need 상한은 3.
-- 스키마 검증에 실패한 필드는 후보가 넓어지는 쪽으로 폴백한다 — `people_needed=true`, `importance=required`, `kind=null`, `precision=related`, `recency=null`, `stance=null`, `entity_mentions=[]`, `condition=null`, `reference_unresolved=false`. `degraded`에 `need_fields_defaulted`.
+- 스키마 검증에 실패한 필드는 후보가 넓어지는 쪽으로 폴백한다 — `people_needed=true`, `importance=required`, `kind=null`, `precision=related`, `recency=null`, `stance=null`, `entity_mentions=[]`, `condition=null`, `condition_variants=[]`, `reference_unresolved=false`. `degraded`에 `need_fields_defaulted`.
 - 질문 원문은 로그·예외·Sentry에 남기지 않는다(불변식 7).
 
 **대안 — 질문 분석을 bourbon-agent의 tool 인자로 옮기기.** bourbon-agent의 모델은 recommend tool을 부를 때 이미 질문을 읽고 있다. tool 인자에 need 필드(`people_needed`, `kind`, `precision`, `recency`, `stance`, `entity_mentions`, `condition`, 분야 이름)를 넣게 하면 discovery의 T1 LLM 호출이 없어진다.
@@ -714,7 +739,7 @@ question:    글렌드로낙 21 팔리아먼트(글렌드로낙 신상) 마셔 �
 엔티티 경로      entity_id = resolve된 엔티티 (+ 병합된 id)             precision=exact일 때의 주 경로
 상위 엔티티 경로  entity_id ∈ 레지스트리에서 펼친 하위 엔티티            하위 엔티티(예: QID가 없는 신제품)를 겪은 사람
 topic 경로       topic_ids ∋ need의 topic들                            엔티티가 어긋나거나 없을 때
-텍스트 경로      summary_en·terms가 condition·엔티티 이름과 매칭         다른 경로가 모두 빗나갔을 때
+텍스트 경로      summary_en·terms가 condition·엔티티 이름과 매칭(§7-6)   다른 경로가 모두 빗나갔을 때
 ```
 
 - 경로마다 상위 K명(설정 레지스터, 초기 25)을 뽑아 합친다. 전체 점수로 상위 N명을 자르지 않는다 — 소수의 엔티티 경험자가 다수의 분야 경험자에 묻히지 않게.
@@ -724,7 +749,7 @@ topic 경로       topic_ids ∋ need의 topic들                            엔
   - 두 목록 모두 discovery가 `friends` 미러로 만든다. `friend_owner_ids`는 보는 사람 모두와 친구인 owner, `requester_friend_ids`는 요청자의 친구다. lived-knowledge는 이 목록들을 그 요청 안에서만 쓰고 저장하지 않는다.
   - 쿼리 밖에 남는 조건(`agents` 조인, 탈퇴자, bourbon-api 게이트의 `enabled`·활성 상태)은 discovery가 아래에서 한 번 더 건다. 이 차이는 작아서, 경로마다 K보다 조금 더 받아(`per_path_limit` + 여유분) 흡수한다. 경로마다 lived-knowledge가 `has_more`(받은 한도를 채우고도 더 있었는가)를 돌려준다. **`has_more`인 경로가 사후 필터 뒤 K명에 못 미치면** 그 need는 불완전으로 다룬다(§11) — 필터 때문에 잘렸고 더 가져올 후보가 있었다는 뜻이므로. `has_more`가 아니면 후보를 전부 읽은 것이라 K명보다 적어도 완전하다. 애초에 해당하는 사람이 3명뿐인 검색을 불완전으로 표시하지 않기 위해서다.
 - `kind`·`stance`·`recency`는 **필터링 조건이 아니라** 경로 안의 순위 조건이다. 종류가 다른 기록도 후보가 되되 낮은 순위로 — T1의 `kind` 판정이 틀렸을 때도 후보가 사라지지 않게.
-- 네 경로의 모든 기록에 `condition`과 need 엔티티의 표기들(resolve된 엔티티의 label·alias)을 기록의 `summary_en`·`terms`와 비교해 요약문 매칭 순위를 붙인다. **"이번 신상" 같은 조건은 여기서만 반영된다.**
+- 네 경로의 모든 기록에 `condition`과 need 엔티티의 표기들(resolve된 엔티티의 label·alias)을 기록의 `summary_en`·`terms`와 비교해 요약문 매칭 순위를 붙인다. **"이번 신상" 같은 조건은 여기서만 반영된다.** `summary_en`을 비교하는 방식은 텍스트 경로와 같은 모드를 따른다(§7-6).
 - 텍스트 경로가 있어서, 엔티티를 찾지 못했거나(`not_found`) topic이 없는 need도 후보를 얻는다(§3-3 규칙 1).
 - 응답은 사람별로: 경로별 기록 수, 가장 잘 맞은 기록 몇 개(`record_id`, `entity_id`, `kinds`, `stance`, `specificity`, `observed_at`, 매칭 순위, 요약문, `audience`), 서로 다른 엔티티 수·날짜 수(T4의 경험의 폭). need별로 `complete`(네 경로를 모두 돌았는가 — lived-knowledge 안의 timeout·장애로 빠진 경로가 없는가)와 경로별 `has_more`.
 
@@ -780,17 +805,25 @@ feature(설정 레지스터에 올린다):
 
 한 사람이 모든 required need를 채우면 한 명 추천이 두 명 조합보다 우선한다.
 
-**선택 사항 — LLM 리랭커.** 기본은 위의 가중 합이고, 요청 경로에서 후보를 고르는 LLM은 없다. 다만 조건이 얽힌 질문에서는 가중 합이 약할 수 있다. 예를 들어 "셰리 싫어하는 사람한테 맞는 스페이사이드 추천해 줄 사람?"은 취향의 방향(셰리를 싫어한다)과 대상(스페이사이드)이 얽혀 있어, 요약문 매칭과 가중 합만으로는 "셰리를 싫어하면서 스페이사이드를 많이 마셔 본 사람"을 위로 올리기 어렵다. 그런 경우를 위해 T4 뒤에 리랭킹을 선택적으로 붙일 수 있다 — 가중 합 상위 10~20명의 요약문을 need와 함께 LLM에 넣어 다시 정렬한다.
+### T4-a. 저지와 재시도 — `condition`이 있는 need만
 
-| | 가중 합만(기본) | + LLM 리랭커 |
-|---|---|---|
-| 조건이 얽힌 질문의 정확도 | 약하다 | 좋아질 가능성이 크다(추론) |
-| 지연 시간 | 요청 p50 약 2~2.5초(추정) | +1~2초 |
-| 비용 | 질문당 LLM 1~2회 | 1회 더 |
-| 재현성·설명 | deterministic, decision log로 설명된다 | 같은 입력에도 순위가 흔들릴 수 있다. decision log에 리랭커 전후 순위를 둘 다 남겨야 한다 |
-| 데이터 경계 | 후보의 요약문이 LLM에 가지 않는다 | 다른 사람들의 경험 요약이 요청 경로의 LLM으로 간다(§12) |
+가중 합은 구조 필드(종류·stance·엔티티·시점)는 잘 가리지만, `condition`이 맞는지는 요약문 매칭 하나에 기댄다. 요약문 매칭은 맞는 기록을 놓치기도 하고(다른 단어로 쓴 경우), 맞지 않는 기록을 올리기도 한다(흔한 단어가 겹친 경우, 모드 B에서 특히). 그래서 `condition`이 있는 need에는 가중 합 뒤에 LLM 저지를 둔다. `condition`이 없는 need는 구조 필드로 가려지므로 저지를 돌지 않는다. 기본 흐름에는 요청 경로에서 후보를 고르는 LLM이 없었고, 이 단계가 처음 들어가는 곳이다.
 
-**처음에는 붙이지 않는다.** 2단계의 합성 대화 측정에서 조건이 얽힌 질문의 precision이 부족할 때 붙인다(§13-3). T4 뒤에 붙이는 처리라 나중에 붙여도 앞의 구조는 바뀌지 않는다. 붙이더라도 리랭커가 실패하거나 시간을 넘기면 가중 합 순위를 그대로 쓴다. 붙일지와 조건은 열린 항목 19다.
+- **입력**: need(종류, stance, `condition`, 엔티티 label)와 가중 합 상위 `judge.top_m`명(초기 15)의 가장 잘 맞은 기록 1~3개의 `summary_en`. 사람의 id·이름은 넣지 않고 순번만 쓴다.
+- **출력**: 후보마다 `fits`(`yes` | `no` | `unclear`). 모드 B에서는 "맞는 후보가 부족하다"는 판정과 새 표현 2~4개를 함께 낸다 — 첫 바퀴에서 찾은 요약문을 보고 만들므로, 요약문이 실제로 쓰는 단어로 다시 찾을 수 있다.
+- **쓰는 방식**: `no`를 빼는 필터로 쓸지, `fits`를 feature로 더해 순서만 바꿀지는 측정으로 정한다(§13-3의 잘못 뺀 비율). 어느 쪽이든 need 충족 판정(T3)은 바꾸지 않는다 — 저지는 "이 요약문이 조건에 맞는가"만 본다.
+- **재시도(모드 B만)**: 저지가 부족하다고 판정하면 discovery가 새 표현을 `condition_variants`로 넣어 그 need만 lived-knowledge 조회를 다시 부르고, 새로 들어온 후보를 가중 합과 저지에 다시 넣는다. 계약은 그대로다 — 바뀌는 것은 표현뿐이다. 멈추는 조건은 셋이다: 재시도 `judge.max_retries`번(초기 1), 남은 시간 예산이 한 바퀴보다 적음, 지난 바퀴에 새 후보가 없음. 근거를 가진 사람이 아예 없는 질문에서도 저지는 "부족하다"고 판정하므로, 이 조건들이 없으면 초기에 가장 흔할 경우에 지연이 가장 길어진다(§13-2 항목 6·7).
+- **실패**: 저지가 실패하거나 시간을 넘기면 가중 합 순위를 그대로 쓰고 `degraded`에 `judge_unavailable`.
+
+| | 가중 합만 | + 저지 (모드 A) | + 저지와 재시도 (모드 B) |
+|---|---|---|---|
+| 조건이 있는 질문의 정확도 | 약하다 | 좋아질 가능성이 크다(추론) | 같음. 첫 바퀴에서 놓친 사람을 재시도로 일부 되찾는다 |
+| 지연 시간 | 요청 p50 약 2~2.5초(추정) | +1~2초 | 바퀴마다 +1.5~2.5초(추정). bourbon-agent의 10초 예산 안에서 재시도는 1~2번이 한계다 |
+| 요청당 LLM 호출 | 1~2회 | +1회 | +1 + 재시도 수 |
+| 재현성·설명 | deterministic, decision log로 설명된다 | 같은 입력에도 결과가 흔들릴 수 있다. decision log에 저지 전후 순위를 남긴다 | 같음. 바퀴마다의 판정도 남긴다 |
+| 데이터 경계 | 후보의 요약문이 LLM에 가지 않는다 | 다른 사람들의 경험 요약이 요청 경로의 LLM으로 간다(§12) | 같음 |
+
+**2단계에서 두 모드와 함께 만들어 비교한다**(§7-6, §13-3). 저지는 두 모드가 같은 프롬프트와 출력 형식을 쓴다 — 결과의 차이가 찾는 방식에서만 나오게. T4 뒤에 붙는 처리라 앞의 구조는 바뀌지 않는다. 숫자와 기준은 열린 항목 19다.
 
 ### T5. 두 사람 조합 — deterministic
 
@@ -874,12 +907,14 @@ POST /api/internal/svc/lived-knowledge/candidates
      "topic_ids": ["…"],
      "entity_mentions": [{"text": "GlenDronach", "as_written": "글렌드로낙", "entity_type": "brand"},
                          {"text": "GlenDronach 21 Parliament", "as_written": "글렌드로낙 21 팔리아먼트", "entity_type": "product"}],
-     "kind": "experienced", "stance": null, "recency_days": 90, "condition": "new release"}
+     "kind": "experienced", "stance": null, "recency_days": 90, "condition": "new release",
+     "condition_variants": ["newly launched", "latest bottling"]}
   ],
   "requester": "<requester>",
   "friend_owner_ids": ["…"],
   "requester_friend_ids": ["…"],
-  "per_path_limit": 25
+  "per_path_limit": 25,
+  "text_mode": "embedding"
 }
 ```
 
@@ -890,6 +925,7 @@ POST /api/internal/svc/lived-knowledge/candidates
      "entities": [{"entity_id": "wd:Q…", "label": {"ko": "글렌드로낙", "en": "GlenDronach"}, "state": "resolved"},
                   {"entity_id": "rg:7f3a…", "label": {"ko": "글렌드로낙 21 팔리아먼트", "en": "GlenDronach 21 Parliament"}, "state": "resolved"}],
      "complete": true,
+     "text_fallback": false,
      "has_more": {"entity": false, "parent": false, "topic": true, "text": false}}
   ],
   "people": [
@@ -911,7 +947,9 @@ POST /api/internal/svc/lived-knowledge/candidates
 - `friend_owner_ids`: 보는 사람 모두와 친구인 owner id 목록. `friends` 기록을 쿼리 안에서 필터링하는 데 쓴다. `requester_friend_ids`: 요청자의 친구 id 목록. 도달 가능성을 쿼리 안에서 필터링하는 데 쓴다. 둘 다 discovery가 `friends` 미러로 만들고, lived-knowledge는 저장하지 않는다(§9 T3).
 - `audience`: 이 기록을 볼 수 있는 범위, `public | friends`. lived-knowledge가 topic visibility 미러로 정한다. private·hidden인 기록은 응답에 넣지 않는다. discovery는 `friends` 기록을 `friends` 미러로 한 번 더 확인한다(§12).
 - 요청자 본인은 뺀다. 탈퇴한 사람은 기록이 없다(§7-5).
-- `condition`은 lived-knowledge의 로그에 원문으로 남기지 않는다 — digest와 길이만.
+- `condition`·`condition_variants`는 lived-knowledge의 로그에 원문으로 남기지 않는다 — digest와 길이만.
+- `text_mode`: 텍스트 경로와 요약문 매칭의 방식, `embedding` | `paraphrase`(§7-6). discovery의 설정 레지스터 값을 싣는다. `condition_variants`는 `paraphrase`일 때만 쓴다. 저지의 재시도(§9 T4-a)는 같은 route를 그 need만, 새 `condition_variants`로 다시 부른다.
+- `text_fallback`: `embedding`인데 `condition`의 임베딩에 실패해 그 need의 텍스트 경로를 `tsvector`(`condition` 하나)로 돌았으면 true. 경로가 빠진 것은 아니므로 `complete`는 바꾸지 않는다.
 - 근거 조회용 route를 하나 더 둔다 — `POST /api/internal/svc/lived-knowledge/records/lookup`(`record_id` 목록 → 기록. 없거나 지워진 것, 조회 시점의 visibility가 private·hidden인 것은 빼고, 나머지에 `audience`를 붙여 돌려준다, §10-3).
 - 이 두 route가 discovery와 lived-knowledge 사이의 **계약 전부**다. lived-knowledge가 memory-api로 옮겨 가도 이 요청·응답 형식은 그대로 둔다.
 
@@ -959,6 +997,8 @@ discovery:
 | lived-knowledge timeout·5xx | 관심 소스만으로 응답 + `experience_unavailable`. 전원 `prior_only`, need 충족은 1단계 규칙(§9 T3), 이유는 관심 문구, 추천 근거 없음. timeout은 설정 레지스터 값이고, 새 route 전체 deadline(bourbon-agent의 10초 아래) 안에 든다 |
 | lived-knowledge 장애 중, 관심 소스로 볼 것이 없는 required need(topic을 못 찾은 need)가 있음 | 503 — 못 본 것이지 없는 것이 아니다(불변식 8) |
 | resolve 장애(lived-knowledge 안) | 레지스트리에서만 찾고 계속 + `entity_resolution_unavailable` |
+| 저지 실패·timeout(§9 T4-a) | 가중 합 순위를 그대로 + `judge_unavailable` |
+| 텍스트 경로가 `tsvector`로 폴백(`text_fallback`, §10-2) | 받은 것으로 계속 + `text_fallback` |
 | lived-knowledge 일부 need가 불완전(`complete=false`, 또는 `has_more`인 경로가 사후 필터 뒤 K명에 못 미침, §9 T3. `has_more`가 아닌 경로가 K명보다 적은 것은 불완전이 아니다) | 받은 것으로 순위 + `experience_incomplete`. 이때의 1위는 "받은 후보 중 1위"다. required need가 불완전하면 두 사람 조합을 내지 않는다 |
 | 엔티티 `ambiguous`·`not_found` | topic·텍스트 경로로. degraded 아님(요청에 대한 판단) |
 | lived-knowledge가 `people`에 요청자를 돌려줌 | 그 항목은 버리고 로그. 계약 위반이라 알람 |
@@ -976,6 +1016,7 @@ lived-knowledge:
 | 추출 LLM 실패 | 같음 |
 | 두 실행이 겹침(lease가 끝난 뒤) | 쓰기 트랜잭션의 커서 확인에서 늦은 쪽이 자기 결과를 버린다(§7-5) |
 | resolve 실패 | 엔티티를 QID 없이 기록하고 나중에 다시 resolve |
+| 기록의 임베딩 실패(모드 A) | `summary_embedding`을 null로 두고 저장한다. 주기 워커가 채운다. 그동안 그 기록은 텍스트 경로에서 빠지고, 다른 경로로는 찾힌다 |
 | 병합 확인 LLM 실패 | 합치지 않고 새 `rg:` id를 만든다 — 나누는 쪽이 안전하다. 병합 워커가 나중에 모은다(§7-3) |
 | 기록 쪽 지시어 해소 실패 | 상위 엔티티로 남기고 다음 주기에 다시 시도한다. 시도 횟수 상한을 넘으면 그만둔다(§7-3) |
 | 탈퇴한 사람에 대한 쓰기(늦게 온 `message_created`, 백필, 재추출) | 트랜잭션 첫 statement의 확인에서 거절(§7-5) |
@@ -992,7 +1033,7 @@ lived-knowledge:
 - 방의 공개 범위(DM·비공개 방에서 한 말을 기록할 것인가)
 - 추천 대상이 되는 것에 대한 동의(`consultable` 같은 opt-in)
 - 요약문이 요청자에게 보이는 것에 대한 동의. 요약문도 개인 정보다(§7-2)
-- LLM 리랭커를 붙인다면(§9 T4), 후보들의 요약문이 요청 경로의 LLM으로 가는 것
+- 저지(§9 T4-a)가 후보들의 요약문을 요청 경로의 LLM으로 보내는 것, 모드 A(§7-6)에서 요약문이 임베딩 모델로 가는 것
 
 **공개 범위 규칙 — topic visibility를 따른다**(오너, 2026-09-28). 이 서비스는 한 방에서 쌓인 경험을 다른 사람과 나누는 것이 목적이다. 그래서 "다른 방에서 한 말이 보인다"는 것 자체는 문제가 아니다. 막아야 하는 것은 **owner가 보이지 않게 정한 것이 보이는 것**이고, owner가 그것을 정하는 수단은 topic visibility다.
 
@@ -1049,12 +1090,14 @@ coverage_states             need × 상위 agent의 상태별 수
 match_axes                  need × 상위 agent의 kind 일치·stance 일치·시점별 수
 evidence_stored             추천 근거를 저장한 agent 수
 experience_status           ok | unavailable | incomplete
+text_mode, text_fallback    텍스트 경로의 모드(§7-6)와, tsvector로 폴백한 need 수
+judge                       need별: 저지를 돌았는가, fits별 수, 뺀 수, 재시도 바퀴 수와 바퀴마다 새로 들어온 후보 수 (§9 T4-a)
 single_sufficient, group_size, covered_required
 degraded[], empty_reason
-latency_ms.{expand, ground, experience, rank, group, assemble, total}
+latency_ms.{expand, ground, experience, rank, judge, group, assemble, total}
 ```
 
-**불변식 7의 범위를 넓힌다.** 사용자의 글 목록(topic_text, context, owner_note)에 `summary`·`summary_en`·`reason`·`condition`·`reference_query`·기록 쪽 지시어 해소의 검색 결과를 더한다 — 로그·예외·Sentry·decision log에 원문으로 싣지 않는다. decision log는 `reason`을 읽지 않는다(`discovery/journal.py`가 `matched_topics`를 읽지 않는 것과 같다, `journal.py:20-23`). 같은 규칙이 lived-knowledge와 bourbon-agent의 로그에도 적용된다.
+**불변식 7의 범위를 넓힌다.** 사용자의 글 목록(topic_text, context, owner_note)에 `summary`·`summary_en`·`reason`·`condition`·`condition_variants`·`reference_query`·기록 쪽 지시어 해소의 검색 결과를 더한다 — 로그·예외·Sentry·decision log에 원문으로 싣지 않는다. decision log는 `reason`을 읽지 않는다(`discovery/journal.py`가 `matched_topics`를 읽지 않는 것과 같다, `journal.py:20-23`). 같은 규칙이 lived-knowledge와 bourbon-agent의 로그에도 적용된다.
 
 `final_by_path`가 핵심 운영 지표다. 엔티티 질문인데 topic 경로로만 들어온 사람이 최종 상위에 자주 있으면 엔티티 resolve가 어긋나고 있다는 신호이고, 합집합(§3-3 규칙 1)이 없었다면 놓쳤을 사람이다.
 
@@ -1081,7 +1124,11 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 - 추출: 심은 경험의 recall, 다른 사람의 발화·사실 진술을 기록한 false positive
 - 추천: 질문 세트(심은 경험에서 만든 질문 + 사람이 필요 없는 질문)의 relevant person recall@K / precision@K, `people_needed` 판정 정확도
 - 경로 기여: 엔티티·상위 엔티티·topic·텍스트 경로를 하나씩 끄면 recall이 얼마나 떨어지는가
-- 조건이 얽힌 질문(취향의 방향 + 대상, 예: "셰리 싫어하는 사람에게 맞는 스페이사이드")을 따로 모아 precision을 잰다. 이 숫자가 LLM 리랭커(§9 T4)를 붙일지의 근거다
+- **텍스트 경로의 두 모드와 저지**(2단계, §7-6, §9 T4-a) — 같은 질문 세트로 세 갈래를 돌린다: 기준선(`tsvector`, `condition` 하나, 저지 없음), 모드 A, 모드 B. A와 B는 저지를 켠 것과 끈 것을 따로 재서, 좋아진 것이 찾는 방식 덕인지 저지 덕인지 나눈다
+  - **이름도 topic도 없이 조건만 있는 질문**과 **조건이 얽힌 질문**(취향의 방향 + 대상, 예: "셰리 싫어하는 사람에게 맞는 스페이사이드")을 따로 모아 집계한다. 차이는 거기서 난다
+  - 재는 것: relevant person recall@K / precision@K, 지연 p50·p95, 요청당 LLM 호출 수. 모드 B는 재시도 바퀴마다 새로 찾은 정답 수, 저지는 뺀 후보 중 정답이었던 비율(잘못 뺀 비율)
+  - **고르는 기준은 비교 전에 정한다.** 예: 조건만 있는 질문에서 A의 recall이 B보다 낮지 않으면, 지연이 고정되고 호출이 적은 A를 고른다. 재시도로 새로 찾은 정답이 적으면 재시도를 넣지 않는다. 잘못 뺀 비율이 크면 저지를 필터가 아니라 순서에만 쓴다
+  - 합성 대화도 LLM이 쓴 말투라 요약문·바꿔 말한 표현과 단어가 잘 겹쳐, 모드 B가 실제보다 좋게 나올 수 있다. 고른 모드는 dev의 실제 대화(0-b의 승인 범위 안)에서 질문 샘플로 다시 확인한다
 - 지시어가 있는 질문("이번 신상")을 따로 모아, 지칭을 채운 질문과 채우지 않은 질문의 recall을 비교한다 — bourbon-agent에 채워 보내 달라고 요청하는 근거다. 기록 쪽 지시어 해소(§7-3)를 켰을 때와 껐을 때도 비교한다
 - 요청자 본인이 추천 결과에 들어간 경우가 0건인지
 
@@ -1144,9 +1191,9 @@ latency_ms.{expand, ground, experience, rank, group, assemble, total}
 
 - **목표**: "이것을 겪었다·좋아한다·해 봤다·안다고 말한 사람"을 추천한다. 이 타입의 핵심이다.
 - **먼저 확정할 것**: need 충족 판정(§9 T3), 적재의 중복 처리(§7-5), 엔티티 ambiguity(§7-3)를 구현 계약으로 정한다.
-- **만드는 것**: `bourbon-lived-knowledge-api` 전체 — 이벤트 소비, 추출, 중복 처리, 저장, 조회 API. discovery 쪽은 네 검색 경로를 받아 합치는 부분, 보는 사람 판정(방 참가자, §12), 요약문 기반 추천 이유. lived-knowledge 쪽에는 기록 쪽 지시어 해소 워커와 엔티티 병합 워커(§7-3).
-- **필요한 것**: 0-b단계의 "진행" 판단, lived-knowledge 워커의 Redis DB 번호(0-b단계에서 받는다), e3llm 배치 한도(§15 요청 13), memory-api resolve(허락받았다, §15 요청 4).
-- **끝났다고 보는 기준**: 합성 대화 세트(§13-3)에서 recall·precision을 재고, 경로별 기여를 확인한다. 조건이 얽힌 질문의 precision으로 LLM 리랭커(§9 T4)를 붙일지 정한다.
+- **만드는 것**: `bourbon-lived-knowledge-api` 전체 — 이벤트 소비, 추출, 중복 처리, 저장, 조회 API. discovery 쪽은 네 검색 경로를 받아 합치는 부분, 보는 사람 판정(방 참가자, §12), 요약문 기반 추천 이유. lived-knowledge 쪽에는 기록 쪽 지시어 해소 워커와 엔티티 병합 워커(§7-3). 텍스트 경로의 두 모드(§7-6)와 저지·재시도(§9 T4-a) — 비교하려고 둘 다 만들고, 고른 뒤 하나를 지운다.
+- **필요한 것**: 0-b단계의 "진행" 판단, lived-knowledge 워커의 Redis DB 번호(0-b단계에서 받는다), e3llm 배치 한도(§15 요청 13), memory-api resolve(허락받았다, §15 요청 4), 모드 A를 위한 pgvector와 임베딩 호출 경로(§15 요청 15·16).
+- **끝났다고 보는 기준**: 합성 대화 세트(§13-3)에서 recall·precision을 재고, 경로별 기여를 확인한다. 텍스트 경로의 모드 하나와, 저지를 필터로 쓸지 순서에만 쓸지, 재시도를 넣을지를 미리 정한 기준으로 고른다(§13-3).
 
 ### 3단계 — 추천 근거 넘기기
 
@@ -1241,12 +1288,17 @@ memory-api에서 이 문서를 읽는다면 먼저 전할 것(2026-10-02):
 14. `agent_profiles_v1` 카드 블록(`AgentProfilesV1Block`)에 `recommendation_id`를 추가 필드로 한 번 싣는 것(§10-3). 추천 하나가 카드 하나다. 그리고 카드에서 대화를 시작할 때 그 값이 bourbon-agent까지 전달되는 경로. 추천 이유와 `covers`는 bourbon-agent의 모델이 문장으로 말하므로 카드에 싣지 않아도 된다.
    - **답(2026-09-28)**: 미룬다. 같은 카드 블록이 될지, 다른 방식으로 보여 줄지는 UX·UI에 따라 달라지므로 실제 client 연동 때 정한다. `recommendation_id`가 대화 시작까지 전달되어야 한다는 조건만 남긴다(§10-3).
 
+**인프라 · e3llm (텍스트 경로 모드 A)**
+
+15. discovery DB가 있는 공용 RDS에서 lived-knowledge DB에 pgvector 확장(`CREATE EXTENSION vector`)을 쓸 수 있는지, 그 버전(iterative index scan은 0.8부터, §7-6). 쓸 수 없으면 모드 A는 빠진다.
+16. 임베딩 모델과 호출 경로 — e3llm으로 임베딩을 부를 수 있는지, 모델과 차원, 적재(배치)와 요청 경로 각각의 한도(§7-8).
+
 ---
 
 ## 16. 열린 항목
 
 1. lived-knowledge의 repo와 배포 단위.
-2. 저장소 — PostgreSQL을 권하되(§7-6), 요약문 검색 품질에 따라 검색만 OpenSearch로 옮길지.
+2. 저장소 — PostgreSQL을 권하되(§7-6), 요약문 검색 품질에 따라 검색만 OpenSearch로 옮길지. 텍스트 경로의 모드(열린 항목 19)와 함께 본다.
 3. 사전 필터의 방식 — 규칙, 작은 분류기, 작은 LLM(§7-1).
 4. 창의 크기(기록을 뽑는 메시지 수, 끊김 기준)와 커서 앞 문맥 수, debounce 값(`ingest.*`, §7-1).
 5. `registry.ambiguity_ratio`, 새로 만들기 전 후보 찾기의 유사도·후보 수(`registry.candidate_similarity`·`registry.candidate_limit`), 병합 워커의 주기와 기준(`rg:`→`wd:`, `rg:`→`rg:`)(§7-3).
@@ -1263,7 +1315,7 @@ memory-api에서 이 문서를 읽는다면 먼저 전할 것(2026-10-02):
 16. lived-knowledge를 memory-api로 옮기는 시점과 기준(오너: 우선 lived-knowledge, 필요하면 넘긴다). 옮기지 않기로 하면 discovery와 합칠지도 함께 본다(§4-3).
 17. §12에서 빼 둔 것 전부 — 실 서비스화 때.
 18. 질문 분석을 discovery의 T1에 둘지, bourbon-agent의 tool 인자로 옮길지(§9 T1). 그리고 요청에 need 목록이 있으면 T1을 건너뛰는 옵션을 1단계부터 둘지.
-19. LLM 리랭커(§9 T4)를 붙일지, 붙인다면 몇 명을 넣고 timeout을 얼마로 둘지, 요청마다 켤지 조건이 얽힌 need에만 켤지.
+19. 텍스트 경로의 모드(임베딩 / 바꿔 말한 표현, §7-6)와 저지·재시도(§9 T4-a) — 어느 모드를 남길지와 고르는 기준값, 저지를 필터로 쓸지 순서에만 쓸지, `judge.top_m`·`judge.max_retries`·저지 timeout, 임베딩 모델. 2단계의 비교로 정한다(§13-3).
 20. (닫힘 — 요청자 본인의 기억은 bourbon-agent가 쓰므로 `self_support`를 두지 않는다, §9 T0.)
 21. 0-b단계에서 읽을 dev 대화의 범위와 승인(§12). 0-a단계(합성 대화)의 결과를 보고 정한다(오너, 2026-09-29).
 22. kind `compatible`의 범위 — `kinds`가 배열이 되어 "겪고 평가한" 기록은 `exact`가 되므로, 남는 것은 평가만 있는 기록(`kinds = [prefers]`)을 `experienced` need에 얼마나 쳐줄지다. 추출이 `kinds`를 얼마나 넉넉히 붙이는지는 0단계에서 측정한다. 경험의 폭 상한(§9 T3·T4).
