@@ -1,6 +1,6 @@
 # ami note 다음 실험 계획 — tag 두 층과 LLM 재순위
 
-> 상태: **실험 계획, 결정 아님.** `new-type/ami-note-direction-notes.md`(이하 임시 메모) §11에서 나온 두 가지를 확인한다
+> 상태: **실험 계획, 결정 아님.** B의 결과에 따른 B1 채택만 2026-10-27 오너 결정이다. `new-type/ami-note-direction-notes.md`(이하 임시 메모) §11에서 나온 두 가지를 확인한다
 > 이전 결과: `new-type/ami-note-retrieval-experiment.md`(이하 실험 문서)
 > 위치: agent-discovery-api의 **로컬 브랜치** `exp/ami-note-retrieval`(`experiments/ami-note-retrieval/`). 이전 실험과 같은 데이터, 질문, 판정 라벨, 캐시를 그대로 쓴다. 이 브랜치는 push하지 않는다
 > 모델 호출은 로컬 e3llm을 거친다
@@ -11,6 +11,8 @@
 | B. LLM 재순위 재확인 | 설정을 바꾸면 shout 대상 재순위가 효과를 내는가 | §11-3 |
 
 **B를 먼저 한다.** 판정이 필요 없어서 비용이 작고 결론이 바로 나온다. A는 tag를 다시 붙이고, 새로 걸리는 note와 사람을 추가로 판정해야 한다.
+
+> 2026-10-27: **B 완료.** 결과는 실험 문서 §7에 있다. B1, B3, B4가 통계 기준을 통과했고, 주 지표가 가장 높고 가장 싼 B1(note 본문을 함께 읽히는 flash low 재순위)을 오너가 쓰기로 했다. A는 아직 하지 않았다.
 
 ---
 
