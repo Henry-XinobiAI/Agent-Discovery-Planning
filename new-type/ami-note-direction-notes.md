@@ -840,6 +840,8 @@ note 검색: tag 필터(OR) + 벡터 검색 + 키워드 검색. 결과가 적으
 
 2026-11-03 `main`(`9d8e6a0`) 기준이고, batch 조회만 미병합 브랜치에 있다. 개발 중이라 바뀔 수 있다.
 
+> → 2026-11-06: 이 절의 경로·drip 사본·이벤트·응답 필드·암호화 범위 부분은 지난 사실이다(모든 유저의 목록이 없다는 것과, 이벤트 발행 전에 쓰인 note에는 이벤트가 없다는 것은 그대로다). note-api의 현재 상태(경로 `trusted/` 이동, drip 사본 제거, `note_created` 발행, 탈퇴 처리)는 [`references/bourbon-note-api.md`](../references/bourbon-note-api.md)에서 관리한다.
+
 - **단건 조회에 owner id가 필요하다.** internal 표면의 `GET /api/internal/svc/note/users/{user_id}/notes/{note_id}`다. 없으면 404다. 그래서 이벤트에 `note_id`와 함께 `owner_id`가 있어야 한다.
 - **목록 조회는 유저 한 명 단위뿐이다.** `GET /api/internal/svc/note/users/{user_id}/notes`이고, 최신순 cursor 방식이다(`limit` 최대 100). 모든 유저의 note를 훑는 목록은 없다.
 - **여러 유저의 note를 한 번에 읽는 조회가 브랜치에 있다.** `feat/notes-lookup`(미병합)의 `POST /api/internal/svc/note/notes/lookup`이다.
