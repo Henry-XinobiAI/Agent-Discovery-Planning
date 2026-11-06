@@ -33,6 +33,12 @@
   - **"public note만"은 내용과 사람에는 즉시, 순위에는 이벤트 처리 시간 안(보통 몇 초, 최악 15분)에 지킨다**(§7-3).
   - **짧은 주제 문장 질문 세트를 새로 만들어 판정한다**(§6-4).
   - **pgvector는 dev에서 켤 수 있다.** prod는 인프라 세팅이 아직이고 나중에 한다(§3-1).
+- 오너 결정(2026-11-07, #163 뒤)
+  - 옛 DynamoDB 이벤트 로그와 결정 로그는 내보내지 않고 지운다(§3-4).
+  - topic-api는 아직 켜져 있다. 지금은 내부 테스트 단계라, 지우기를 내보낼 때 bourbon-agent에 알리고 bourbon-agent가 대응해 배포하는 순서로 간다. 그 사이의 공백은 받아들인다(§10-2).
+  - 공개 discover 화면을 부르는 앱은 없다. 공개 route는 지운다(§10-2).
+  - 두 route의 이름과 필드는 설계안대로 간다(§6-1, §7-1).
+  - 보존 기간은 discovery의 추천값으로 둔다(§3-2, §3-4).
 
 ---
 
@@ -362,7 +368,7 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
 
 | 테이블 | 쓰는 곳 |
 |---|---|
-| `room_turns` | 이미 대화한 사람(§6-3). 지금 보존 sweep은 `interactions`가 없는 `room_turns`를 7일 뒤 지운다(`room_turns.orphan_ttl_days`, `storage/retention.py`). `interactions`를 지우면 모든 row가 그 대상이 되어 "이미 대화함"이 일주일 만에 잊힌다. 그래서 이 규칙을 지우고, `last_turn_at` 뒤 `room_turns.retention_days`(초안 365일)가 지나면 지운다. `interactions`를 지우는 §10-2의 1단계 PR에서 함께 바꾼다 |
+| `room_turns` | 이미 대화한 사람(§6-3). 지금 보존 sweep은 `interactions`가 없는 `room_turns`를 7일 뒤 지운다(`room_turns.orphan_ttl_days`, `storage/retention.py`). `interactions`를 지우면 모든 row가 그 대상이 되어 "이미 대화함"이 일주일 만에 잊힌다. 그래서 이 규칙을 지우고, `last_turn_at` 뒤 `room_turns.retention_days`(365일)가 지나면 지운다. 1년 넘게 대화가 없던 사람은 다시 "새로운 사람"으로 추천해도 된다고 본다. row에는 방 id와 수, 시각만 있어 사람을 직접 담지 않는다. `interactions`를 지우는 §10-2의 1단계 PR에서 함께 바꾼다 |
 | `departed_users` | 탈퇴 확인 |
 
 `agents`는 지운다. agent id는 `identity.personal_agent_id(owner)`로 계산되고, 검색 조건에도 쓰이지 않는다. 함께 `bourbon.user_registered` listener도 지운다.
@@ -378,9 +384,9 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
 
 - DynamoDB에는 이벤트 로그(`EVT#`), 결정 로그(`REC#`), CF 후보, 예측 방 인덱스, CF gate가 있다. §10-2의 1단계에서 모두 지운다.
 - **이벤트 로그는 지운다.** 재생과 합성 모집단 보정에 쓰던 것이다. note 이벤트의 재생은 `notes.state`와 backfill이 맡는다.
-- **결정 로그는 PostgreSQL `decisions` 테이블(jsonb)로 옮긴다.** 보존 sweep에 새 규칙을 더해 지운다(옛 결정 로그 기간 규칙은 `attributions`와 함께 없어진다). 보존 기간은 열린 항목 12다. 읽기에서 빠진 note의 id(그 순간 private이었을 수 있다)도 남으므로 짧게 둔다.
+- **결정 로그는 PostgreSQL `decisions` 테이블(jsonb)로 옮긴다.** 보존 sweep에 새 규칙을 더해 지운다(옛 결정 로그 기간 규칙은 `attributions`와 함께 없어진다). 보존 기간은 `decision_log.retention_days`(30일)다. 디버깅과 dev의 품질 확인에는 최근 몇 주면 충분하고, 읽기에서 빠진 note의 id(그 순간 private이었을 수 있다)도 남으므로 짧게 둔다. 평가에 더 긴 기간이 필요하면 그때 집계만 따로 남긴다.
 - 그러면 aioboto3, DynamoDB 테이블, 쓰고 나서 탈퇴를 확인하던 처리가 없어진다. IAM은 공유 role(`bourbon-app`)이라 role은 그대로 두고, discovery 테이블에 대한 권한만 뺀다. 메모 §9-3의 "저장소 하나"다.
-- 옛 이벤트 로그와 결정 로그는 내보내지 않고 테이블째 지운다. 새 구조에서 쓸 곳이 없다. 내보내야 하면 1단계 전에 오너가 정한다(열린 항목 20).
+- 옛 이벤트 로그와 결정 로그는 내보내지 않고 테이블째 지운다(2026-11-07 오너). 새 구조에서 쓸 곳이 없다.
 - DynamoDB는 옛 route와 함께 §10-2의 1단계에서 지운다. `decisions` 테이블은 2단계의 새 테이블과 함께 만든다.
 
 ---
@@ -489,7 +495,7 @@ note_score = cosine(note, query)
 
 ### 6-1. route
 
-`POST /api/internal/svc/agent-discovery/recommend/subject`. 이름은 bourbon-agent와 정한다.
+`POST /api/internal/svc/agent-discovery/recommend/subject`. 이름과 필드는 이 안대로 간다(2026-11-07 오너).
 
 **요청:**
 
@@ -579,7 +585,7 @@ note_score = cosine(note, query)
 
 ### 7-1. route
 
-`POST /api/internal/svc/agent-discovery/recommend/answerers`. 이름은 bourbon-agent와 정한다.
+`POST /api/internal/svc/agent-discovery/recommend/answerers`. 이름과 필드는 이 안대로 간다(2026-11-07 오너).
 
 **요청:**
 
@@ -757,8 +763,8 @@ topic-api는 지금부터 없다고 보고 작업한다(2026-11-06 오너). 그�
    - 아무것도 import하지 않아 테스트로는 안 보이는 `scripts/`(`create_dynamodb_table.py`, `disposable.py`, `fetch_dev_snapshot.py`, `load_dev.py`, `seed_local*.py`, `try_recommend.py`, 카탈로그 스크립트)와 `cli/publish.py`, `cli/recommend.py`도 지우거나 고친다.
    - **migration과 배포 순서:** 옛 테이블을 지우는 migration(0012)은 **새 worker가 뜬 뒤에** 돌린다. 옛 worker가 아직 이벤트를 받는 중에 테이블이 없어지면, 탈퇴 처리 트랜잭션이 통째로 되돌아가 탈퇴 기록까지 잃는다(deferq는 다시 보내지 않는다). 그래서 "코드 배포 → 확인 → migration"으로 한다.
    - **deferq queue 정리:** 지운 listener의 queue를 지운다. `topics_updated`, `topic_visibility_changed`, `friendship_changed`, `user_registered`의 queue와, `worker/user_topics.py`에 적혀 있는 예전 이름의 queue, 사용자 topic refresh task의 queue와 Redis 예약이다. bourbon-api는 `friendship_changed`, `user_registered`를 계속 발행하므로, queue를 지우지 않으면 끝없이 쌓인다. 배포 직후 broker에서 지운다.
-   - **bourbon-agent:** 지금 bourbon-agent는 `/recommend/explicit`를 부른다(bourbon-agent `api_internal_client/agent_discovery.py`). 이 route도 topic-api의 검색(grounding)을 거치므로 topic-api가 없으면 503이다. 지운 뒤에는 404가 된다. bourbon-agent의 tool은 200이 아니면 "지금은 추천을 쓸 수 없다"로 끝낸다. 4단계까지 이 상태가 이어진다. dev에서 topic-api가 실제로 꺼져 있는지와, 그동안 bourbon-agent가 tool을 끌지는 오너가 정한다(열린 항목 21).
-   - 공개 `/discover/*`와 `/recommendations/opened|shown`은 클라이언트가 부르는지 먼저 확인한다(열린 항목 11). bourbon-agent와 bourbon-api에는 부르는 곳이 없다.
+   - **bourbon-agent:** 지금 bourbon-agent는 `/recommend/explicit`를 부른다(bourbon-agent `api_internal_client/agent_discovery.py`). 이 route는 topic-api의 검색(grounding)을 거치고, dev의 topic-api는 아직 켜져 있어 지금은 동작한다. 지우면 404가 되고, bourbon-agent의 tool은 200이 아니면 "지금은 추천을 쓸 수 없다"로 끝낸다. **지금은 내부 테스트 단계라 이 공백을 받아들인다(2026-11-07 오너).** 순서는 이렇다: 지우기를 내보낼 때 bourbon-agent에 알린다 → bourbon-agent가 대응해 배포한다 → 4단계에서 새 route로 옮긴다.
+   - 공개 `/discover/*`와 `/recommendations/opened|shown`은 지운다. 부르는 앱은 없다(2026-11-07 오너). bourbon-agent와 bourbon-api에도 부르는 곳이 없다.
    - DynamoDB는 이때 함께 지운다(§3-4). 결정 로그는 2단계부터 PostgreSQL `decisions`에 쓴다. 1단계와 2단계 사이에는 route가 없어서 결정 로그가 필요 없다.
 2. **적재.**
    - note-api client(trusted 조회, card), 새 테이블(migration 0013, `decisions` 포함), 네 note 이벤트 listener, sync loop, resync loop, backfill·reindex CLI를 만든다. route는 아직 없다.
@@ -826,28 +832,32 @@ v1은 원본을 두지 않는다. 아래 경우에는 public note의 사본을 d
 | 3 | 이미 등록된 tag끼리 합치는 작업 | discovery | v1 뒤 |
 | 4 | 1층을 늘 벡터와 섞을지, 20개 미만일 때만 폴백할지 | discovery | dev 규모를 본 뒤 |
 | 5 | note가 적은 사람의 완화책(centroid, 개수 정규화) | discovery | 출시 전 오프라인(H-10, H-mix) |
-| 6 | §11의 R1~R4 최종 답(1차 답변은 받았다, 2026-11-06). R4의 prod writer 일정과 저장 형식 변경 시점은 오너가 답한다 | note-api, 오너 | 표의 "언제" |
+| 6 | §11의 R1~R4 최종 답(1차 답변은 받았다, 2026-11-06). note-api 쪽 작업이 끝나면 오너가 알려 주고, 그때 코드로 확인한다. R4의 prod writer 일정과 저장 형식 변경 시점도 그때 함께 본다 | note-api, 오너 | note-api 작업이 끝났을 때 |
 | 7 | card 종류를 discovery가 정하는 방식이 맞는지(`generic` 걸러내기 포함), card를 앞으로 올리는 가산의 크기 | discovery | dev |
 | 8 | 주제 추천에 LLM 재순위를 넣을지 | 오너 | dev 사용 뒤 |
 | 9 | bourbon-agent가 인용한 note id를 돌려주는 방법 | bourbon-agent | v1 뒤 |
-| 10 | 두 route의 이름과 필드 | bourbon-agent | route 구현 전 |
-| 11 | 공개 `/discover/*`, `/recommendations/opened|shown`을 지금 부르는 클라이언트(앱)가 있는지 | 클라이언트 | 지우기(§10-2의 1) 전 |
-| 12 | `decisions`, `room_turns`의 보존 기간 | discovery | 적재 단계 |
+| 10 | ~~두 route의 이름과 필드~~ → 정해짐(2026-11-07): 이 안대로(§6-1, §7-1) | — | — |
+| 11 | ~~공개 discover 화면을 부르는 앱~~ → 정해짐(2026-11-07): 없다. 지운다(§10-2) | — | — |
+| 12 | ~~보존 기간~~ → 정해짐(2026-11-07, 추천값): `decisions` 30일, `room_turns`는 마지막 대화 뒤 365일(§3-2, §3-4). 운영하며 조정한다 | — | — |
 | 13 | ~~private이 된 note의 파생 데이터를 지울지~~ → 정해짐(2026-11-06): 남기고 공개 범위로 거른다(§2-2) | — | — |
-| 14 | deferq queue와 메시지가 broker 재시작 뒤에도 남는지 | discovery | 적재 단계 |
+| 14 | deferq queue와 메시지가 broker 재시작 뒤에도 남는지. 오너는 남을 것으로 본다(2026-11-07). deferq 설정(queue durable, 메시지 persistent)과 실제 재시작으로 확인한다 | discovery | 적재 단계 |
 | 15 | note-api 읽기의 실제 지연(dev, 클러스터 안에서) | discovery | 답할 사람 찾기 route 전 |
 | 16 | ~~card 이름 사본을 둘지~~ → 정해짐(2026-11-06): 둔다(§2-5) | — | — |
 | 17 | ~~짧은 주제 문장 질문 세트~~ → 정해짐(2026-11-06): 만들어 출시 기준에 넣는다(§6-4) | — | — |
 | 18 | ~~"public note만"을 지키는 범위~~ → 정해짐(2026-11-06): 받아들인다(§7-3) | — | — |
 | 19 | ~~topic-api를 끄는 시점~~ → 정해짐(2026-11-06): 지금부터 없다고 본다(§10-2) | — | — |
-| 20 | 옛 DynamoDB 이벤트 로그와 결정 로그를 내보낼지(기본은 내보내지 않고 지운다) | 오너 | 지우기 전 |
-| 21 | dev에서 topic-api가 실제로 꺼져 있는지, 지우기부터 bourbon-agent 전환까지 bourbon-agent의 추천 tool을 끌지 | 오너 | 지우기 전 |
+| 20 | ~~옛 DynamoDB 로그를 내보낼지~~ → 정해짐(2026-11-07): 내보내지 않고 지운다(§3-4) | — | — |
+| 21 | ~~topic-api 상태와 bourbon-agent의 추천 tool~~ → 정해짐(2026-11-07): topic-api는 아직 켜져 있다. 지우기를 낼 때 bourbon-agent에 알리고 bourbon-agent가 대응해 배포한다. 공백은 받아들인다(§10-2) | — | — |
 | 22 | private으로 오래 머무는 note의 파생 데이터를 얼마나 둘지(지금은 public이 되거나 지워질 때까지) | 오너 | v1 뒤 |
 | 23 | 짧은 주제 문장 세트의 크기, 만드는 방법, 판정 깊이(§6-4) | discovery, 오너 | 주제 추천 출시 전 |
 
 ---
 
 ## 검토 기록
+
+**2026-11-07, 오너 결정으로 바뀐 것 (#163 뒤)**
+- 열린 항목 10, 11, 12, 20, 21을 정했다. 14는 확인이 필요해 남기고, 6은 note-api 쪽 작업이 끝나면 확인한다.
+- 보존 기간은 discovery 추천값이다. `decisions` 30일(최근 몇 주면 디버깅과 품질 확인에 충분하고, 그 순간 private이었을 수 있는 note id가 남으므로 짧게), `room_turns`는 마지막 대화 뒤 365일(1년 넘게 대화가 없던 사람은 다시 새로운 사람으로 본다).
 
 **2026-11-07, 오너 결정·note-api 1차 답변 반영분을 셋이 검토(새 Fable, 새 Opus, 작성자)하고 바뀐 것**
 - dev의 note-api(`deploy/2611`, PR #33 초안)는 이미 `note_updated`를 내고, 그 안에 공개 범위 변경과 철회도 담는다. 그래서 `note_updated`도 받는 즉시 숨긴다. 철회된 note는 "없음"과 같이 다룬다(§2-1, §2-2).
