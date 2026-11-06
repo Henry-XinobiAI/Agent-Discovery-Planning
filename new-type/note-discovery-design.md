@@ -83,7 +83,7 @@
 | 파생 데이터 | discovery가 note 본문에서 만들어 저장하는 것. embedding, 등록된 tag, card 연결과 역할, 본문 hash다. 본문 자체는 아니다 |
 | 검색 가능(`searchable`) | 그 note의 파생 데이터를 검색과 사람 점수에 써도 되는지. trusted 조회로 public을 확인했고, 그 뒤에 공개 범위 변경·삭제 신호가 오지 않았을 때만 참이다 |
 | trusted 조회 | note-api의 서비스용 읽기(`trusted/`). private note도 `visibility`와 함께 돌려준다. discovery는 적재, 주기적 다시 맞추기, backfill에 쓴다. 그 내용은 파생 데이터를 만드는 데만 쓰고 저장하지도 응답에 쓰지도 않는다 |
-| public 읽기 | note-api의 agent용 읽기를 `visibility=public`으로 부르는 것. public note의 공유 필드만 오고, private·삭제·탈퇴 유저의 note는 빠지거나 404다(reference §3-1). 요청 경로와 `needs_public_check` 확인에 쓴다. 단건 route는 지금 있고, 여러 개 route(`POST /notes/lookup`)는 note-api가 1차로 받아들였다(§11의 R2) |
+| public 읽기 | note-api의 agent용 읽기를 `visibility=public`으로 부르는 것. public note의 공유 필드만 오고, private·삭제·탈퇴 유저의 note는 빠지거나 404다(reference §3-1). 요청 경로와 `needs_public_check` 확인에 쓴다. 단건 route는 지금 있고, 여러 개 route(`POST /notes/lookup`)는 note-api가 구현했다(PR #34, 리뷰 중, §11의 R2) |
 | 등록된 tag | discovery가 note에 붙이는 system tag. 영어 키, 고정된 한국어 표시 이름, 넓이(specific/mid/broad), 한 줄 정의를 가진다. 목록에서 먼저 고르고, 없을 때만 새로 만든다(메모 §4-2, §12-5) |
 | card | note-api card ledger의 항목. note-api는 element라고도 부른다. 공유 card(`scope: public`)는 유저를 넘어 하나로 합쳐진 대상이고, 이름 여러 개(입력된 표기 + 영어 이름)와 웹 출처의 사실을 갖는다(§2-5) |
 | entity | discovery에서 card 중 고유명사인 것. 장소, 상품, 가게·회사·브랜드·팀, 작품, 인물, 행사다. 일반 종류나 활동을 가리키는 card는 entity로 쓰지 않는다 |
@@ -137,16 +137,17 @@
 | 이벤트 | 보내는 곳 | listener |
 |---|---|---|
 | `bourbon.note_created` `{user_id, note_id, version}` | note-api, 발행 중 | `mark_pending(hide=false)` |
-| `bourbon.note_updated` `{user_id, note_id, version}` | note-api. **dev(`deploy/2611`, PR #33 초안)에서 이미 발행 중이다** | `mark_pending(hide=true)`. dev의 note-api는 내용 수정뿐 아니라 공개 범위 변경과 철회(withdrawn)도 이 이벤트로 낸다(README: "present means show it, absent means hide it"). 무엇이 바뀌었는지 payload로 알 수 없으므로, 다시 읽어 public이 확인될 때까지 숨긴다. 내용만 고친 note는 다시 맞추기가 끝나는 몇 초 동안 검색에서 빠진다 |
+| `bourbon.note_updated` `{user_id, note_id, version}` | note-api, **발행 중**(PR #33, `main` `f527131`) | `mark_pending(hide=true)`. dev의 note-api는 내용 수정뿐 아니라 공개 범위 변경과 철회(withdrawn)도 이 이벤트로 낸다(README: "present means show it, absent means hide it"). 무엇이 바뀌었는지 payload로 알 수 없으므로, 다시 읽어 public이 확인될 때까지 숨긴다. 내용만 고친 note는 다시 맞추기가 끝나는 몇 초 동안 검색에서 빠진다 |
 | `bourbon.note_visibility_changed` `{user_id, note_id, version}` | note-api, 합의만 됨 | `mark_pending(hide=true)`. 다시 읽어 public이 확인돼야 다시 올라간다 |
 | `bourbon.note_deleted` `{user_id, note_id}` | note-api, 합의만 됨 | `mark_pending(hide=true)` |
 | `bourbon.user_deactivated` | bourbon-api | 그 유저를 지우고 `departed_users`에 남긴다(§2-6) |
 | `bourbon.message_created` | bourbon-api | `room_turns`만 센다. "이미 대화한 사람"에 쓴다(§6-3) |
 
 - **네 note 이벤트는 같은 다시 맞추기로 처리한다.** 다른 것은 그 자리에서 검색에서 빼는지(`hide`)뿐이다. 어느 이벤트든 최신 상태를 다시 읽어 맞추므로, 중복되거나 순서가 바뀌어 와도 결과는 마지막 상태가 된다.
-- note-api `main`(`3fee423`)은 `note_created`만 정의한다. dev에 떠 있는 `deploy/2611`(PR #33 초안)은 `note_updated`도 발행한다. `note_visibility_changed`, `note_deleted`는 README에만 있다. discovery는 README의 payload대로 mirror를 두고, 지금처럼 느슨하게 받는다.
-- **철회(withdrawn):** PR #33에서는 note가 철회될 수 있고, 철회된 note는 trusted 조회를 포함한 모든 읽기에서 빠진다. 같은 id로 다시 돌아올 수도 있다. discovery에게는 "없음"과 같다(§2-2). 돌아오면 `note_updated`가 와서 처음 온 note처럼 다시 만든다.
-- 이 세 이벤트는 note-api에 수정·공개 범위 변경·삭제 기능이 생길 때 함께 발행된다(reference §6). deferq queue는 discovery가 listener를 등록할 때 생기므로, **note-api가 발행을 시작하기 전에** discovery를 배포해야 이벤트를 잃지 않는다.
+- note-api `main`(`f527131`)은 `note_created`와 `note_updated`를 발행한다. `note_updated`는 writer가 note를 다시 쓰거나 철회할 때 나간다. `note_visibility_changed`, `note_deleted`는 README에만 있고, 비공개 전환·삭제 기능을 만들 때 함께 발행한다(§11의 R3). discovery는 README의 payload대로 mirror를 두고, 지금처럼 느슨하게 받는다.
+- **철회(withdrawn):** note는 철회될 수 있고(PR #33), 철회된 note는 trusted 조회를 포함한 모든 읽기에서 빠진다. 같은 id로 다시 돌아올 수도 있다. discovery에게는 "없음"과 같다(§2-2). 돌아오면 `note_updated`가 와서 처음 온 note처럼 다시 만든다.
+- `note_visibility_changed`, `note_deleted`는 note-api에 비공개 전환·삭제 기능이 생길 때 함께 발행된다(reference §6). deferq queue는 discovery가 listener를 등록할 때 생기므로, **그 발행이 시작되기 전에** discovery를 배포해야 이벤트를 잃지 않는다.
+- `note_updated`는 이미 발행 중이라, discovery listener가 뜨기 전의 것은 사라진다. 다시 쓰인 note는 주기적 다시 맞추기가 `version` 차이로 잡고, 철회된 note는 "없음"으로 잡는다. 받지 못한 생성은 backfill이 메운다.
 - listener는 지금 코드의 재시도 묶음(`worker/flows.retrying`)으로 감싼다. deferq는 listener가 실패한 이벤트를 버리므로, DB가 잠깐 흔들려도 숨기기가 빠지지 않게 한다.
 - **네 note listener와 `message_created` listener(`count_turn_on_message_created`)의 함수 이름은 바꾸지 않는다.** deferq는 queue 이름을 listener 함수 이름으로 정한다. 이름을 바꾸면 옛 queue가 남아 이벤트를 조용히 모은다. 바꿔야 하면 옛 queue를 비우고 지운다.
 - `bourbon.user_registered` listener와 `agents` 테이블은 지운다(§3-2).
@@ -181,13 +182,17 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
      - **세는 단위:** 묶음 하나가 아니라 최근 `sync.mass_delete_window`(초안 1시간) 동안 "없음"으로 판정된 note 전체다. 그 수가 `max(20, 전체 row의 5%)`를 넘고, 그 note들의 owner가 `sync.mass_delete_min_owners`(초안 5)명 이상일 때만 걸린다. 한두 명의 유저에 몰린 삭제는 그 유저의 일괄 삭제나 탈퇴로 보고 그대로 지운다.
      - **걸리면:** 지우기만 보류한다. 그 note들은 이미 검색에서 빠진 상태(`searchable = false`)로 남고, 다른 note의 처리는 계속된다. 경고를 올린다.
      - **풀기:** 사람이 원인을 확인한 뒤 `cli sync release-deletes`로 보류된 지우기를 진행하거나, `cli sync discard-deletes`로 버리고 다시 맞추기를 건다.
+     - note-api가 많은 note를 한꺼번에 철회할 때(writer 규칙이 바뀌어 여러 유저의 note를 다시 판단하는 경우 등)도 걸릴 수 있다. 그 note들은 이미 숨겨진 상태라 안전하다. 확인하고 진행한다.
      - note-api가 저장 형식을 바꾸며 옛 테이블을 비우는 배포(reference §9)에서는 이 차단이 걸리는 것이 정상이다. 확인하고 진행한 뒤 backfill을 돌린다(§2-3).
    - trusted 조회는 탈퇴 유저의 note도 돌려준다(reference §7). 그래서 탈퇴 이벤트를 놓쳤으면, note-api가 유저 데이터를 지우기 전까지 그 유저의 note가 public으로 읽혀 검색에 들어올 수 있다. 응답에는 나가지 않는다. 요청할 때 public 읽기가 탈퇴 유저를 거르기 때문이다. 4의 `needs_public_check`가 그 note가 검색을 오가는 것을 막는다.
 3. **파생 데이터 만들기(public일 때만. `content_hash`는 public과 private 모두 이 방법으로 계산한다).** 읽은 본문은 이 처리 안에서만 쓰고 저장하지 않는다. 무엇을 다시 할지는 hash로 정한다.
    - 본문 hash(`content_hash`)는 `title`, 각 page의 `text`, `experienced`로 만든다.
    - `embedded_hash`가 `content_hash`와 다르거나 `embedding_spec`이 지금과 다르면 embedding을 만든다. e3llm `POST /v1/embeddings`, `gemini-embedding-001`, 768차원, `input_type=document`다(실험 문서 §2). 입력은 제목과 본문이다.
    - `analyzed_hash`가 `content_hash`와 다르거나, `public_element_ids`가 바뀌었거나, `analysis_spec`이 지금과 다르면 분석을 한다.
-     - 분석 전에 note의 card 이름을 note-api에서 읽어 `cards`를 맞춘다. 이름은 쌓이므로 그 note가 가리키는 card는 매번 다시 읽는다. 이 읽기는 note-api가 1차로 받아들인 `POST /trusted/cards/lookup`(R1)으로 한다. 응답의 card `version`이 저장된 것과 같으면 이름을 다시 쓰지 않는다.
+     - 분석 전에 note의 card 이름을 note-api에서 읽어 `cards`를 맞춘다. 이름은 쌓이므로 그 note가 가리키는 card는 매번 다시 읽는다. 이 읽기는 `POST /trusted/cards/lookup`(R1, note-api PR #34)으로 한다. 응답의 card `version`이 저장된 것과 같으면 이름을 다시 쓰지 않는다. 응답에는 `facts`, `evaluations`, `checked_at`도 오지만 discovery는 이름과 `version`만 둔다. 종류를 정할 때 쓰는 사실은 그 처리 안에서만 쓰고, 평가(`evaluations`, 사람들의 의견)는 종류 프롬프트에 넣지 않는다.
+       - **보내기 전에 card id의 중복을 뺀다.** note-api의 1~100개 한도는 중복을 포함해 센다. 한 묶음의 여러 note가 같은 card를 가리키므로 묶음 단위로 모아 보내되, 중복을 빼고 100개씩 나눈다. note 조회(R2)도 같다.
+       - **`missing`에 든 card:** `public_element_ids`는 공유 card만 담으므로, 여기서 `missing`은 읽을 수 없는 card다. 그 note의 card 연결은 이름 없이 저장하고(종류와 역할도 비운다), card 경로와 card 맞추기에서는 쓰지 않는다. 다음 처리 때 다시 읽는다.
+       - **500(저장된 card가 둘 이상인데 하나도 읽히지 않음):** note-api는 이를 키 오류로 본다. 재시도로 풀리지 않으므로, 묶음을 나눠 다시 읽지 않고 경고를 올린다. card를 읽지 못한 note는 card 없이 처리를 끝내고(card 연결은 이름 없이 둔다), 다음 reindex에서 다시 읽는다. card 하나 때문에 note의 embedding과 tag가 막히지 않게 하기 위해서다.
      - 분석은 LLM 한 번으로 등록된 tag와 card 역할을 함께 정한다(§2-4, §2-5). 처음 보는 card는 종류도 이때 정한다.
      - 새 tag 등록은 다음 쓰기 전에 따로 끝낸다(§2-4).
    - 모두 같으면 아무것도 만들지 않는다.
@@ -201,7 +206,7 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
    ```
 
    - 같은 트랜잭션에서 먼저 탈퇴 여부를 본다(`refuse_departed`와 같은 lock). 탈퇴했으면 예외로 트랜잭션을 되돌리지 않고, 같은 트랜잭션에서 그 note row를 지우고 끝낸다.
-   - **`needs_public_check`가 선 row**는 trusted 조회가 public이라고 해도 바로 `searchable`을 올리지 않는다. 요청 중 public 읽기에서 빠졌던 note라서다(§5-5). 그 note 하나를 public 읽기로 확인한다(R2가 생기면 `POST /notes/lookup`에 넣는다. 응답의 `not_found`는 없음·private·탈퇴 중을 가리지 않으므로, 여기서는 "public이 아니다"로만 읽는다). 있으면 표시를 지우고 올린다. 없으면 숨긴 채 `failed`로 두고 대기를 늘려 다시 확인한다. 탈퇴 이벤트를 놓친 유저의 note가 note-api의 삭제를 기다리는 동안 이 상태에 머문다.
+   - **`needs_public_check`가 선 row**는 trusted 조회가 public이라고 해도 바로 `searchable`을 올리지 않는다. 요청 중 public 읽기에서 빠졌던 note라서다(§5-5). 그 note 하나를 public 읽기(`POST /notes/lookup`, R2. 머지 전에는 단건 public 읽기)로 확인한다. 응답의 `not_found`는 없음·private·철회·탈퇴 중·읽을 수 없음을 가리지 않으므로, 여기서는 "지금 public으로 보일 수 없다"로만 읽는다. 있으면 표시를 지우고 올린다. 없으면 숨긴 채 `failed`로 두고 대기를 늘려 다시 확인한다. 탈퇴 이벤트를 놓친 유저의 note가 note-api의 삭제를 기다리는 동안 이 상태에 머문다.
    - 조건 확인과 쓰기가 한 문장이라, listener의 `mark_pending`이 사이에 끼면 PostgreSQL이 바뀐 row에 대해 조건을 다시 보고 쓰지 않는다. 그래서 처리 중에 온 숨기기를 옛 읽기가 덮지 못한다.
    - 한 row도 바뀌지 않으면 이유를 다시 읽어 갈린다.
      - row가 없으면(탈퇴 처리가 지웠다) 아무것도 하지 않는다.
@@ -287,7 +292,7 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
   2. 없으면 웹 검색과 card 후보 몇 개(`WRITER_ELEMENT_CARD_CANDIDATES`)를 LLM이 보고 같은 대상인지 판정한다.
   3. 같으면 그 card에 이름을 더하고, 아니면 새 card를 만든다. 새 card의 이름은 입력된 표기와 웹에서 확인한 영어 이름이다.
 - note에는 공유 card id가 찾은 순서대로 `public_element_ids`에 모두 실린다. 개인 card(`element_ids`에만 있다)는 쓰지 않는다.
-- 공유 card는 지워지지 않고 합쳐지지도 않는다. card id는 한번 생기면 그대로다(note-api 1차 답변, 2026-11-06). 이름은 늘어나기만 하고, 사실(facts)은 다시 채워지며 바뀌고 그때 card의 `version`이 오른다. card가 바뀌었다는 이벤트는 없다. discovery는 note를 처리할 때 읽은 `version`으로 비교한다.
+- 공유 card는 지워지지 않고 합쳐지지도 않는다. card id는 한번 생기면 그대로다(note-api 답변, 2026-11-06·07). 이름은 늘어나기만 한다. 갱신(refresh) 때 반박된 사실은 빠지고 새 사실이 더해지며, 평가는 상한을 넘으면 오래된 것부터 빠진다. 쓸 때마다 card의 `version`이 1씩 오른다. card가 바뀌었다는 이벤트는 없고 `version` 비교가 유일한 신호다(note-api 답변, 2026-11-07). discovery는 note를 처리할 때 읽은 `version`으로 비교한다.
 - 1의 규칙 때문에 `java`처럼 뜻이 여럿인 이름은 note-api에서 card 하나로 합쳐진다. discovery는 그대로 받는다. card 정밀도의 한계다.
 
 메모 §12-3, §12-5가 discovery에서 하자고 한 일의 대부분이 여기 있다. 정규화, 같은 대상 판정, 다른 언어 표기의 별칭이다. 그래서 discovery는 entity를 새로 뽑지 않는다.
@@ -307,7 +312,7 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
   - 범위는 좁게 둔다. 이름만 두고 사실은 두지 않으며, discovery가 본 note가 가리키는 card만 둔다.
 - **거주지 누출:** 글쓴이가 사는 곳은 프롬프트로 막지 못했다(메모 §12-3). 역할 프롬프트에서 "글쓴이의 거주지·생활권은 `mention`"으로 둔다.
 - **식별 정보:** `place`, `org`, `person`의 이름은 discovery가 만드는 설명 필드에 싣지 않는다(§8).
-- **card 이름 읽기가 필요하다.** 역할을 정하려면 card id가 아니라 이름이 필요하다. 쿼리의 고유명사를 card에 맞추는 데도 이름이 필요하다(§4). 지금 note-api에는 card를 id로 읽는 route가 없고 공유 card 검색(`POST /trusted/cards/search`)만 있다. 여러 개를 id로 읽는 route(`POST /trusted/cards/lookup`)를 요청했고 note-api가 1차로 받아들였다(§11의 R1). 개인 card id를 보내면 `missing`에 들어간다.
+- **card 이름 읽기가 필요하다.** 역할을 정하려면 card id가 아니라 이름이 필요하다. 쿼리의 고유명사를 card에 맞추는 데도 이름이 필요하다(§4). 지금 note-api에는 card를 id로 읽는 route가 없고 공유 card 검색(`POST /trusted/cards/search`)만 있다. 여러 개를 id로 읽는 route(`POST /trusted/cards/lookup`)를 요청했고 note-api가 구현했다(PR #34, 리뷰 중, §11의 R1). 개인 card id와 읽을 수 없는 card는 `missing`에 들어간다. 저장된 card가 둘 이상인데 하나도 읽히지 않으면 500이다(키 오류). discovery는 이를 재시도할 실패로 다룬다.
   - R1이 생기기 전에는 card 연결만 저장하고 종류와 역할은 비워 둔다. card 경로도 꺼 둔다(종류를 모르면 `generic`을 거를 수 없다).
   - 두 route는 card 없이도 tag와 벡터로 동작한다. 그래서 R1이 서비스 시작을 막지 않는다.
   - R1이 생기면 `analysis_spec`을 올리고 `cli reindex`로 분석을 다시 돈다.
@@ -357,7 +362,7 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
 | `note_cards` | `(note_id, card_id)`, `role`(subject/mention, R1 전에는 비어 있다), `position` | private이어도 남는다 |
 
 - `language`, `conversation_ended_at` 같은 note 메타데이터는 저장하지 않는다. v1 순위에 쓰지 않고, 응답에는 요청할 때 읽은 값을 싣는다. 최근성을 순위에 넣게 되면(§5-4) 그때 더한다.
-- `names_norm`은 note-api와 같은 정규화(NFKC, 공백 묶기, casefold, `writer/kb/names.py`의 `normalize_name`)를 거친 이름이다. 쿼리의 고유명사와 정확히 맞출 때 쓴다(§4). note-api는 이 규칙을 계약으로 두기로 했다(1차 답변). 저장된 이름 검색 키가 이 규칙으로 만들어져 있어 바꾸려면 데이터 마이그레이션이 필요한, 바꾸기 어려운 규칙이다.
+- `names_norm`은 note-api와 같은 정규화(NFKC, 공백 묶기, casefold, `writer/kb/names.py`의 `normalize_name`)를 거친 이름이다. 응답의 `names`는 처음 쓰인 표기 그대로라, discovery가 이 규칙으로 정규화해 둔다. 쿼리 쪽도 같은 규칙으로 정규화해 비교한다. 쿼리의 고유명사와 정확히 맞출 때 쓴다(§4). note-api는 이 규칙을 계약으로 두었다(route 문서, API 문서, README). 저장된 이름 검색 키가 이 규칙으로 만들어져 있어 바꾸려면 데이터 마이그레이션이 필요한, 바꾸기 어려운 규칙이다.
 
 **벡터 저장과 검색:**
 - 1안은 pgvector다. `vector(768)` 열을 쓰고, 처음에는 정확 검색으로 한다. 규모가 커지면 HNSW와 iterative scan으로 `searchable` 필터와 함께 쓴다.
@@ -468,12 +473,12 @@ note_score = cosine(note, query)
 
 **순서**
 - 후보 고르기와 점수 계산은 한 읽기 트랜잭션(같은 스냅샷)에서 하고, 결과 순위를 메모리에 둔다. note-api 읽기는 그 뒤에 트랜잭션 밖에서 한다.
-- 응답에 필요한 수보다 넉넉히(각 route에 적은 수) **여러 개 public 조회 1번**으로 읽는다(§11의 R2, `POST /notes/lookup`). 응답은 `{notes: [{user_id, note}], not_found: [{user_id, note_id}]}`이고 요청 순서대로 온다. 결과에 있는 것만으로 응답을 채운다.
+- 응답에 필요한 수보다 넉넉히(각 route에 적은 수) **여러 개 public 조회 1번**으로 읽는다(§11의 R2, `POST /notes/lookup`). 응답은 `{notes: [{user_id, kind: "shared", note}], not_found: [{user_id, note_id}]}`이고 둘 다 요청 순서대로 온다. 같은 쌍은 한 번만 읽는다. note-api는 note 읽기와 탈퇴 확인을 동시에 한다. 결과에 있는 것만으로 응답을 채운다.
 - `not_found`는 이유를 나누지 않는다. 없음, 철회, private, 탈퇴 중, 복호화 실패가 모두 여기에 든다(private이 있다는 사실을 드러내지 않으려는 note-api의 원칙). discovery는 모두 "지금 응답에 쓸 수 없다"로 다룬다. 복호화 실패는 note-api가 건너뛰고 로그만 남기므로 요청 전체가 실패하지 않는다.
 - 결과로 모자라면 메모리의 순위에서 다음 것들을 골라 **1번만** 더 읽는다. 그래도 모자라면 있는 만큼 답한다.
 
 **결과에 없는 note**
-- 결과에 없다는 것은 private, 삭제, 탈퇴 중 하나다. 그 요청에서 버린다. 그 note만 확인된 사람은 응답에 없다.
+- 결과에 없다는 것은 없음, private, 철회, 탈퇴 중, 읽을 수 없음 중 하나다. 그 요청에서 버린다. 그 note만 확인된 사람은 응답에 없다.
 - 응답을 보낸 뒤 그 note마다 `mark_pending(hide=true)`를 부른다. 이벤트가 새서 아직 검색에 남아 있던 note가 여기서 빠진다. 다시 맞추기가 public을 확인하면 다시 올라간다. 한 번 빠진 note는 다음 요청부터 후보에 없으니 같은 note로 쓰기가 몰리지 않는다.
 - **비정상 판단:** 한 번의 읽기에서 `note_api.miss_alert_min`(초안 10)개 이상 빠지고 그 비율이 `note_api.miss_alert_ratio`(초안 50%)를 넘으면, note-api나 설정이 잘못됐을 가능성이 크다. 이때는 `mark_pending`을 부르지 않고 읽기 실패로 다룬다(§7-6). note-api가 빈 결과를 주는 동안 요청마다 인덱스를 비워 가는 일을 막기 위해서다.
   - 빠진 수가 그보다 적으면 비율과 상관없이 늘 검색에서 뺀다. 몇 사람이 note를 private으로 돌린 정상적인 경우에, 같은 note가 매 요청 위로 올라와 결과를 비우는 일을 막기 위해서다.
@@ -769,14 +774,14 @@ topic-api는 지금부터 없다고 보고 작업한다(2026-11-06 오너). 그�
 2. **적재.**
    - note-api client(trusted 조회, card), 새 테이블(migration 0013, `decisions` 포함), 네 note 이벤트 listener, sync loop, resync loop, backfill·reindex CLI를 만든다. route는 아직 없다.
    - **pgvector:** extension은 superuser 권한이 필요해서 migration이 아니라 인프라가 dev DB에 만든다. migration은 extension이 있는지 확인하고 없으면 멈춘다. prod에서 못 켜게 되면 `real[]`로 바꾸는 migration을 따로 둔다(§3-1의 2안). 2안은 스키마가 달라서 interface 뒤의 구현만 바꾸는 것으로 끝나지 않는다.
-   - dev의 note-api는 이미 `note_updated`를 발행한다. listener가 뜨기 전의 이벤트는 사라지지만 backfill과 주기적 다시 맞추기가 메운다.
+   - note-api는 이미 `note_updated`를 발행한다(dev에 배포돼 있다). listener가 뜨기 전의 이벤트는 사라지지만 backfill과 주기적 다시 맞추기가 메운다.
    - dev에 올려 인덱스가 차는 것을 본다. note-api가 수정·공개 범위 변경·삭제 이벤트를 발행하기 전에 listener가 떠 있어야 한다(§2-1).
    - 적재는 note-api의 지금 route만으로 된다. R2를 기다리지 않는다.
 3. **쿼리 분석과 답할 사람 찾기 route.** 오프라인 평가 CLI도 이때 만든다. 여러 개 조회(R2)가 늦으면 단건 읽기로 시작한다(§5-5). 이어서 **주제 추천 route**를 만든다. 둘 다 출시 기준(§6-4, §7-2)을 거친다.
 4. **bourbon-agent 전환.** 새 두 route로 옮긴다. 트리거 시점과 방식은 bourbon-agent의 일이다. 전환 전에 bourbon-agent가 두 route를 부르는 빈도를 받아 요청 비용을 계산한다(§2-7).
 
 - **문제가 보이면** 옛 route로 되돌아갈 곳은 없다. 새 route의 설정(층, 가산, 감점)으로 고친다.
-- **note-api 의존:** note-api의 `trusted/` 경로 이동과 agent용 route는 `main`에 들어갔다(2026-11-06, `3fee423`. 코드는 reference가 읽은 `d84ef04`와 같다). discovery는 이 경로를 쓴다.
+- **note-api 의존:** note-api의 `trusted/` 경로 이동과 agent용 route는 `main`에 들어갔다(2026-11-06, `3fee423`). 지금 `main`은 `f527131`(PR #33까지)이다. discovery는 이 경로를 쓴다.
   - **같은 경로가 뜻만 바뀌었다.** 옛 `main`의 `/api/internal/svc/note/users/{u}/notes/{n}`은 서비스용(private 포함)이었고, 지금은 agent용(private은 404)이다(reference §0의 1). discovery client는 지금 경로만 쓰고, 실제 note 하나로 두 경로를 확인하는 계약 테스트를 둔다.
   - note-api의 prod 배포는 OpenSearch 컬렉션 URL이 정해져야 한다(note-api `k8s/overlays/prod`). discovery의 prod 적재도 그 뒤다.
 
@@ -786,10 +791,10 @@ topic-api는 지금부터 없다고 보고 작업한다(2026-11-06 오너). 그�
 
 | # | 무엇 | 왜 | 언제 | 없으면 |
 |---|---|---|---|---|
-| R1 | **공유 card를 id로 여러 개 읽는 route.** **1차 답변(2026-11-06): 받아들임.** `POST /trusted/cards/lookup {card_ids}`(1~100개), 응답 `{cards: [{id, names, facts, version}], missing: [ids]}`. 이름 정규화(NFKC → 공백 묶기 → casefold)는 계약으로 둔다. card id는 합쳐지거나 사라지지 않는다. card 변경 이벤트는 없고 `version`으로 비교한다. 개인 card는 주지 않는다(`missing`) | card 이름이 있어야 note 안의 역할과 card 종류를 정할 수 있다. 쿼리의 고유명사를 card에 맞추는 데도 필요하다(§2-5, §4) | card 경로를 켜기 전. 서비스 시작은 막지 않는다 | card 연결만 저장하고 card 경로는 꺼 둔다(§2-5) |
-| R2 | **agent용 public 읽기의 여러 개 조회.** **1차 답변(2026-11-06): 받아들임.** `POST /notes/lookup {notes: [{user_id, note_id}]}`, agent용 쪽에 두고 늘 public만 준다. 응답 `{notes: [{user_id, note: SharedNote}], not_found: [{user_id, note_id}]}`, 요청 순서, 중복은 한 번. `not_found`는 이유를 나누지 않는다(없음·private·탈퇴 중·복호화 실패). 복호화 실패는 건너뛰고 로그만 남긴다. 탈퇴 확인은 note 읽기와 동시에 한다. 제목만 주는 선택은 보류(응답 크기가 문제가 될 때 다시). route docstring에 discovery도 부른다고 적는다 | 요청마다 응답에 실을 note를 한 번에 읽는다(§5-5). `needs_public_check` 확인도 이것으로 한다(§2-2) | 답할 사람 찾기 route 뒤라도 된다 | 단건 public 읽기를 동시에 부른다. 답할 사람 찾기는 요청당 16~24번, 주제 추천은 사람마다 1개로 줄여 최대 22번이 된다 |
-| R3 | 수정·공개 범위 변경·삭제 이벤트를 그 기능과 함께 발행하는 것. **1차 답변(2026-11-06): 합의대로.** 저장이 끝난 뒤 발행하고, 공개 범위를 바꿀 때도 `version`을 올린다 | discovery는 listener를 먼저 띄운다 | 그 기능이 생길 때 | 주기적 다시 맞추기(15분)와 요청 경로의 감지가 순위 쪽을 따라간다. 응답 내용은 영향이 없다 |
-| R4 | 일정. **1차 답변(2026-11-06):** `trusted/` 이동은 `main`에 들어갔다(`3fee423`). prod에서 writer를 켜는 일정과 마지막 저장 형식 변경 시점은 note-api가 정할 수 없어 오너가 답한다. dev 배포 전 테이블 비우기 말고 예정된 저장 형식 변경은 없다. prod 배포는 OpenSearch 컬렉션 URL이 정해져야 한다. trusted 조회에 탈퇴 표시를 붙이는 선택 요청은 note-api가 하지 않기로 권했다(trusted는 저장된 그대로를 주는 곳이고, `needs_public_check`는 R2가 대신한다). 받아들인다 | backfill과 prod 적재의 시점이 여기에 걸린다 | prod 적재 전 | — |
+| R1 | **공유 card를 id로 여러 개 읽는 route. 구현됨(note-api PR #34, 리뷰 중, 2026-11-07).** `POST /api/internal/svc/note/trusted/cards/lookup {card_ids}`(1~100개, 중복을 포함해 센다. 같은 id는 한 번만 읽는다. 정의되지 않은 필드는 422). 응답 `{cards, missing}`(요청 순서). card는 card 검색 결과와 같은 모양(`id`, `names`, `facts`, `evaluations`, `checked_at`, `version`). `missing`은 공유 card가 없는 id(개인 card 포함)와 읽을 수 없는 card. 저장된 card가 둘 이상인데 하나도 읽히지 않으면 500. 이름 정규화는 계약이다(route 문서, API 문서, README). card id는 합쳐지거나 사라지지 않고, 변경은 `version`으로만 안다 | card 이름이 있어야 note 안의 역할과 card 종류를 정할 수 있다. 쿼리의 고유명사를 card에 맞추는 데도 필요하다(§2-5, §4) | card 경로를 켜기 전. 서비스 시작은 막지 않는다 | card 연결만 저장하고 card 경로는 꺼 둔다(§2-5) |
+| R2 | **agent용 public 읽기의 여러 개 조회. 구현됨(note-api PR #34, 리뷰 중, 2026-11-07).** `POST /api/internal/svc/note/notes/lookup {notes: [{user_id, note_id}]}`(1~100개, 중복을 포함해 센다. 같은 쌍은 한 번만 읽는다. 정의되지 않은 필드는 422). 응답 `{notes: [{user_id, kind: "shared", note}], not_found: [{user_id, note_id}]}`(요청 순서). public만 공유 필드로 준다. `not_found`는 이유를 나누지 않는다(없음, private, 철회, 탈퇴 중, 읽을 수 없음). 읽을 수 없는 note는 건너뛰고 로그만 남긴다. 탈퇴 확인은 note 읽기와 동시에 한다. 제목만 주는 선택은 넣지 않았다(제목이 암호화된 본문 안에 있어 읽기 비용이 같다). router 모듈 docstring, API 문서, README에 discovery도 부른다고 적었다 | 요청마다 응답에 실을 note를 한 번에 읽는다(§5-5). `needs_public_check` 확인도 이것으로 한다(§2-2) | 답할 사람 찾기 route 전에 머지되면 처음부터 쓴다 | 단건 public 읽기를 동시에 부른다 |
+| R3 | 비공개 전환·삭제 이벤트를 그 기능과 함께 발행하는 것. **답변(2026-11-07): 그 기능을 만들 때 함께 발행한다.** 저장이 끝난 뒤 발행하고, 공개 범위를 바꿀 때도 `version`을 올린다. 다시 쓰기와 철회는 이미 `note_updated`로 나간다(PR #33) | discovery는 listener를 먼저 띄운다 | 그 기능이 생길 때 | 주기적 다시 맞추기(15분)와 요청 경로의 감지가 순위 쪽을 따라간다. 응답 내용은 영향이 없다 |
+| R4 | 일정. **답변(2026-11-07):** `trusted/` 이동은 `main`에 들어갔다(PR #32의 `c961846`, PR #30 머지 `3fee423`와 함께). 철회된 note는 trusted에서도 404·빠짐이다(PR #33). prod에서 writer를 켜는 일정과 마지막 저장 형식 변경 시점은 아직 정해지지 않았다. trusted 조회의 탈퇴 표시는 넣지 않는다(탈퇴 표시가 의미 있는 것은 계정 삭제가 note를 지우기 전 짧은 동안뿐이고, 그 note는 R2가 `not_found`로 숨긴다) | backfill과 prod 적재의 시점이 여기에 걸린다 | prod 적재 전 | — |
 
 요청하지 않기로 한 것:
 - **note에 card 역할이나 종류를 붙여 달라는 것.** discovery의 검색 사정으로 계속 바뀔 판단이다. 메모 §12-4의 "tag는 discovery가 붙이고 관리한다"와 같은 이유다. judge는 이름의 종류를 내보내지 않는다.
@@ -832,7 +837,7 @@ v1은 원본을 두지 않는다. 아래 경우에는 public note의 사본을 d
 | 3 | 이미 등록된 tag끼리 합치는 작업 | discovery | v1 뒤 |
 | 4 | 1층을 늘 벡터와 섞을지, 20개 미만일 때만 폴백할지 | discovery | dev 규모를 본 뒤 |
 | 5 | note가 적은 사람의 완화책(centroid, 개수 정규화) | discovery | 출시 전 오프라인(H-10, H-mix) |
-| 6 | §11의 R1~R4 최종 답(1차 답변은 받았다, 2026-11-06). note-api 쪽 작업이 끝나면 오너가 알려 주고, 그때 코드로 확인한다. R4의 prod writer 일정과 저장 형식 변경 시점도 그때 함께 본다 | note-api, 오너 | note-api 작업이 끝났을 때 |
+| 6 | ~~§11의 R1~R4 최종 답~~ → 받았다(2026-11-07). R1·R2는 note-api PR #34로 구현돼 리뷰 중이다. 머지되면 discovery client를 그 응답 모양으로 맞춘다. prod writer 일정과 저장 형식 변경 시점은 아직 미정이라 prod 적재 전에 다시 본다 | — | — |
 | 7 | card 종류를 discovery가 정하는 방식이 맞는지(`generic` 걸러내기 포함), card를 앞으로 올리는 가산의 크기 | discovery | dev |
 | 8 | 주제 추천에 LLM 재순위를 넣을지 | 오너 | dev 사용 뒤 |
 | 9 | bourbon-agent가 인용한 note id를 돌려주는 방법 | bourbon-agent | v1 뒤 |
@@ -854,6 +859,14 @@ v1은 원본을 두지 않는다. 아래 경우에는 public note의 사본을 d
 ---
 
 ## 검토 기록
+
+**2026-11-07, note-api 최종 답변으로 바뀐 것**
+- R1(card 여러 개 조회)과 R2(public note 여러 개 조회)가 note-api PR #34로 구현됐다(리뷰 중). 응답 모양과 실패 규칙을 §2-2, §2-5, §3-1, §5-5, §11에 맞췄다. card 응답은 card 검색과 같은 모양이라 사실과 평가도 오지만 discovery는 이름과 `version`만 둔다.
+- 제목만 주는 선택은 넣지 않았다(제목이 암호화된 본문 안에 있어 비용이 같다).
+- note-api `main`(`f527131`)에 PR #33이 들어가 `note_updated`가 발행 중이다. 비공개 전환·삭제 이벤트는 그 기능과 함께 나온다.
+- 열린 항목 6을 닫았다. prod writer 일정과 저장 형식 변경 시점은 아직 미정이다.
+- Fable 검토로 더 고친 것: note-api의 1~100개 한도는 중복을 포함해 세므로 보내기 전에 중복을 뺀다. card 조회의 `missing`(읽을 수 없는 card)과 500(키 오류)을 처리하는 규칙을 적었다. `note_updated`는 이미 발행 중이라 listener를 먼저 띄우는 순서는 남은 두 이벤트에만 해당한다. 대량 철회도 삭제 급증 차단에 걸릴 수 있다(§2-1, §2-2, §11).
+- 로컬 note-api(PR #34)에 시험용 note와 card를 넣어 두 route를 직접 확인했다. public만 공유 필드로 오고, private·철회·탈퇴·없음은 모두 `not_found`, 개인 card와 없는 card는 `missing`, 같은 쌍은 한 번만 온다. 같은 쌍의 trusted 조회는 private과 탈퇴 유저의 note를 돌려주고 철회한 note는 뺐다. 시험용 데이터는 확인 뒤 지웠다.
 
 **2026-11-07, 오너 결정으로 바뀐 것 (#163 뒤)**
 - 열린 항목 10, 11, 12, 20, 21을 정했다. 14는 확인이 필요해 남기고, 6은 note-api 쪽 작업이 끝나면 확인한다.
