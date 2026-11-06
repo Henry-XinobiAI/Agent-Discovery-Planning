@@ -1,6 +1,6 @@
 # bourbon-note-api — discovery가 알아야 할 것
 
-> **코드 읽은 기준(2026-11-06):** `main` `3fee423`. `feat/opensearch`(#30)와 `feat/note-audience-policy`(#32)가 머지된 것이고, 코드는 앞서 읽은 `d84ef04`와 같다. 본문의 "이 브랜치"는 지금의 `main`이고, "옛 `main`"은 그 전의 `a367d0e`(#21까지)다.
+> **코드 읽은 기준(2026-11-07):** `main` `f527131`(#30 OpenSearch, #32 audience, #33 note-timing까지)과, 리뷰 중인 `feat/discovery-lookups` `ca372e7`(PR #34, discovery용 여러 개 조회 두 route). #33은 discovery에 닿는 부분(이벤트, 철회, 공유 필드, 공개 범위)만 확인했다. 본문의 "이 브랜치"는 지금의 `main`이고, "옛 `main`"은 그 전의 `a367d0e`(#21까지)다.
 >
 > **이 문서의 역할:** note-api는 개발 중이고 discovery는 그 note를 계속 읽는다. 그래서 note-api 코드에서 discovery에 영향이 있는 사실만 여기 모아 둔다. 우리 쪽 설계와 결정은 [`new-type/ami-note-direction-notes.md`](../new-type/ami-note-direction-notes.md) §13에 있다. 이 문서는 "note-api가 지금 어떻게 되어 있나"만 다룬다.
 >
@@ -12,13 +12,13 @@
 ## 0. 한눈에
 
 1. **읽는 경로가 바뀌었다(`main`에 들어감).** internal route가 서비스용 `/api/internal/svc/note/trusted/...`와 agent의 답에 쓰는 `/api/internal/svc/note/users/...`, `/notes/search` 둘로 나뉘었다. 다시 맞추기와 backfill에 쓸 것은 `trusted/`다. 옛 `main`의 `/api/internal/svc/note/users/...`는 같은 모양으로 남았지만 **뜻이 바뀌었다.** 이제 agent용이고, `visibility`(기본 `public`)에 맞지 않으면 404다. 그래서 discovery client가 이 경로를 서비스용으로 부르면 private note를 삭제로 볼 수 있다(§2, §2-2, §3).
-2. **없는 경로를 부르면 "note 없음"과 같은 404가 온다.** `error_code`도 `not_found`로 같다. 옛 `main`의 `/api/internal/svc/note/notes/lookup`(서비스용, private 포함)은 `trusted/notes/lookup`으로 옮겨졌다. 그런데 note-api가 1차로 받아들인 R2가 같은 경로에 **public만 주는** 여러 개 조회를 만든다. 그러면 적재가 실수로 그 경로를 쓰면 404가 아니라 200이 오고, private이 "없음"으로 읽힌다. client는 경로를 상수로 두고 응답 모양을 계약 테스트로 확인한다(§2-2).
+2. **없는 경로를 부르면 "note 없음"과 같은 404가 온다.** `error_code`도 `not_found`로 같다. 옛 `main`의 `/api/internal/svc/note/notes/lookup`(서비스용, private 포함)은 `trusted/notes/lookup`으로 옮겨졌다. 그런데 R2(PR #34)가 같은 경로에 **public만 주는** 여러 개 조회를 만든다. 그러면 적재가 실수로 그 경로를 쓰면 404가 아니라 200이 오고, private이 "없음"으로 읽힌다. client는 경로를 상수로 두고 응답 모양을 계약 테스트로 확인한다(§2-2).
 3. **trusted로 읽은 것은 agent의 답에 들어가면 안 된다는 것이 note-api의 원칙이다.** 답에 닿는 읽기는 agent용 route에서 `visibility=public`으로 읽으면 된다. 2026-11-06 `1667190`에서 대화 policy가 빠지고 부르는 쪽이 공개 범위를 고르게 바뀌어서, discovery도 대화 정보 없이 부를 수 있다. discovery가 불러도 되는 것은 확인됐다(2026-11-06 오너, §3).
-4. **`main`이 발행하는 이벤트는 `bourbon.note_created` 하나뿐이다.** 다만 dev에 떠 있는 `deploy/2611`(PR #33 초안, `850a638`)은 `note_updated`도 낸다. 내용 수정, 공개 범위 변경, 철회(withdrawn)를 모두 이 이벤트로 내고, 다시 읽어 있으면 보이고 없으면 숨기라고 적는다. `note_visibility_changed`, `note_deleted`는 아직 README에만 있다(§6).
-5. **`main`에서 note는 만들어진 뒤 바뀌지 않는다.** `version`은 항상 1이고 `visibility`는 항상 `public`이다. dev의 `deploy/2611`은 다시 쓰기(rewrite)와 철회가 있어 `version`이 오르고, 철회된 note는 trusted를 포함한 모든 읽기에서 빠진다. 같은 id로 돌아올 수도 있다. 이 문서의 나머지는 `main` 기준이고, PR #33이 `main`에 들어오면 다시 읽는다.
+4. **`main`은 `bourbon.note_created`와 `bourbon.note_updated`를 발행한다(#33).** `note_updated`는 writer가 note를 다시 쓰거나(rewrite) 철회(withdrawn)할 때 나간다. README는 공개 범위 변경도 이 이벤트로 낸다고 적지만, 그 경로는 아직 코드에 없다. 다시 읽어 있으면 보이고 없으면 숨기라고 README가 적는다. `note_visibility_changed`, `note_deleted`는 README에만 있고, 비공개 전환·삭제 기능과 함께 나온다(§6).
+5. **note는 다시 쓰이고 철회될 수 있다(#33).** 다시 쓰면 `version`이 오른다. 철회된 note는 trusted를 포함한 모든 읽기에서 빠지고(trusted 단건은 404), 같은 id로 돌아올 수 있다. `visibility`는 writer가 여전히 `public`으로만 쓴다(`writer/bundle.py`). 공유 필드(`SharedNote`)는 바뀌지 않았다.
 6. **trusted 읽기는 탈퇴한 유저의 note도 돌려준다.** 탈퇴 직후 늦게 저장된 note에 대해 `note_created`가 올 수 있다. discovery가 쓰기 전마다 탈퇴 여부를 확인해야 한다(§7).
 7. **drip 사본이 없어졌다.** note-api는 자체 OpenSearch index(키워드 검색, embedding 없음)를 갖는다. discovery의 semantic·tag·entity 사본을 대신하지 않는다(§8).
-8. **`trusted/` 이동과 OpenSearch는 `main`에 들어갔다(2026-11-06, `3fee423`).** prod 배포는 OpenSearch 컬렉션 URL이 정해져야 한다. 옛 형식 note는 dev 배포 전에 지운다. discovery의 backfill 시점이 여기에 걸려 있다(§9).
+8. **`trusted/` 이동(#32)과 OpenSearch(#30)는 `main`에 들어갔다(2026-11-06, `3fee423`).** prod 배포는 OpenSearch 컬렉션 URL이 정해져야 한다. 옛 형식 note는 dev 배포 전에 지운다. discovery의 backfill 시점이 여기에 걸려 있다(§9).
 
 ## 1. 브랜치 상태
 
@@ -96,12 +96,12 @@ internal 표면은 두 무리로 나뉜다. `/api/internal/svc/note/trusted/` �
 - **`visibility`:** `public`(기본), `private`, `public_private`. README의 규칙은 "그 유저의 agent가 그 유저 한 명과만 대화할 때만 private, 그 밖에는 public"이고, 그 판단은 agent의 서버가 한다.
 - **`public`으로 읽으면** 공유되는 필드만(`kind: shared`) 온다. 제목, 각 page의 `text`, `experienced`, `language`, `public_element_ids`, 네 개의 시각, `version`이다. room, 메시지, 첨부, `questions`, 개인 `element_ids`, `visibility`는 빠진다.
 - **탈퇴한 유저의 note는 어느 공개 범위로도 오지 않는다.** get은 404, list는 빈 목록이다(`shown.py`).
-- 여러 개를 한 번에 읽는 agent용 조회는 지금 없다. note-api가 1차 답변에서 `POST /api/internal/svc/note/notes/lookup`으로 만들기로 했다(약속, 코드 없음, §11).
+- 여러 개를 한 번에 읽는 agent용 조회 `POST /api/internal/svc/note/notes/lookup`은 PR #34로 구현돼 리뷰 중이다(§11).
 
 ### 3-2. discovery의 사용
 
 - **다시 맞추기와 backfill:** 사본을 만드는 일이라 `trusted/`가 맞다.
-- **답에 닿는 데이터:** discovery 설계안(`new-type/note-discovery-design.md` §2-0, §5-5)은 note 본문을 저장하지 않는다. 요청할 때 응답에 실을 note를 agent용 route에서 `visibility=public`으로 읽는다. 지금은 단건 route뿐이고, 여러 개를 한 번에 읽는 public 조회는 note-api가 1차로 받아들였다(설계안 §11의 R2). discovery가 agent용 route를 불러도 되는 것은 확인됐다(2026-11-06 오너).
+- **답에 닿는 데이터:** discovery 설계안(`new-type/note-discovery-design.md` §2-0, §5-5)은 note 본문을 저장하지 않는다. 요청할 때 응답에 실을 note를 agent용 route에서 `visibility=public`으로 읽는다. 지금은 단건 route뿐이고, 여러 개를 한 번에 읽는 public 조회는 note-api PR #34로 구현돼 리뷰 중이다(설계안 §11의 R2). discovery가 agent용 route를 불러도 되는 것은 확인됐다(2026-11-06 오너).
   - 적재(embedding, tag 만들기)와 주기적 다시 맞추기는 위의 `trusted/` 여러 개 조회로 한다. 그 내용은 public인 note의 파생 데이터를 만드는 데만 쓰고, 저장하지도 응답에 쓰지도 않는다. 이 쓰임도 R2와 함께 note-api에 확인한다.
 
 ## 4. Note 모델
@@ -136,10 +136,10 @@ internal 표면은 두 무리로 나뉜다. `/api/internal/svc/note/trusted/` �
 
 ## 5. Note가 만들어지는 과정
 
-- **쓰는 곳은 writer 하나다.** `bourbon_note/writer/bundle.py`의 `_write`(:715-776)가 `save_note`를 부른다. 다른 쓰기 경로는 없다.
-  - trusted router의 docstring도 "Notes are read only"라고 적는다.
-  - `version`은 항상 1(`FIRST_VERSION`)이다.
-  - `visibility`는 항상 `PUBLIC`이다(`bundle.py:760`).
+- **쓰는 곳은 writer 하나다.** `bourbon_note/writer/bundle.py`가 `save_note`로 새 note를 쓰고, #33부터는 `rewrite_note`(다시 쓰기)와 `withdraw_note`(철회)로 바꾼다(`notes/originals.py:284`, `:329`). 둘 다 읽은 `version`에 조건을 건 쓰기이고 `version`을 1 올린다. 다른 쓰기 경로는 없다.
+  - 새 note의 `version`은 1이다.
+  - `visibility`는 writer가 여전히 `PUBLIC`으로만 쓴다(`bundle.py`의 note 만들기). 공개 범위를 바꾸는 경로는 아직 없다.
+  - 철회된 note는 `state`가 withdrawn이 되고 모든 읽기에서 빠진다. 같은 id로 돌아올 수 있다.
 - **Draft:** 아직 note가 될 만큼 모이지 않은 대화 묶음이다(`bourbon_note/drafts/contract.py:32-44`).
   - 열린 Draft는 `started_at`(주인이 그 묶음에서 처음 보낸 메시지 시각)부터 14일(`WRITER_DRAFT_DAYS`)이 지나면 TTL로 사라진다(`contract.py:51-52`). 승격 중인 Draft에는 TTL이 없다(`drafts/store.py:17`).
   - 다른 Draft와 합쳐지거나 note로 승격될 수 있다.
@@ -155,7 +155,7 @@ internal 표면은 두 무리로 나뉜다. `/api/internal/svc/note/trusted/` �
 | 이벤트 | payload | 언제 | 상태 |
 |---|---|---|---|
 | `bourbon.note_created` | `{user_id, note_id, version}` | writer가 note를 저장하고 index에 넣은 뒤 | **발행됨** |
-| `bourbon.note_updated` | `{user_id, note_id, version}` | 내용이 바뀜 | 합의만, 발행 안 됨 |
+| `bourbon.note_updated` | `{user_id, note_id, version}` | 내용, 공개 범위, 상태(철회)가 바뀜. 다시 쓰기도 이것으로 낸다 | **발행됨(#33)** |
 | `bourbon.note_visibility_changed` | `{user_id, note_id, version}` | 공개 범위가 바뀜 | 합의만, 발행 안 됨 |
 | `bourbon.note_deleted` | `{user_id, note_id}` | 유저가 note 하나를 지움(탈퇴 때는 없음) | 합의만, 발행 안 됨 |
 
@@ -168,7 +168,7 @@ internal 표면은 두 무리로 나뉜다. `/api/internal/svc/note/trusted/` �
   - note-api README는 "consumer의 주기적 re-sync가 메운다"고 적는다. 하지만 discovery의 주기적 다시 맞추기는 이미 가진 key만 다시 읽는다.
   - 받지 못한 생성은 유저별 목록 조회로만 찾을 수 있다(메모 §13-4의 1).
   - deferq는 재전달이 없다. 그래서 discovery listener는 실패할 수 있는 일보다 먼저 `pending`을 기록해야 한다(메모 §13-2).
-- **약속(코드 없음):** README에는 이렇게 적혀 있다. "`version`은 내용이든 공개 범위든 바뀔 때마다 정확히 1 오르고, 조건부 쓰기로 지킨다. 아무것도 바뀌지 않으면 발행하지 않는다." 이를 구현할 수정 경로는 아직 없다.
+- **`version` 규칙:** README는 "`version`은 내용이든 공개 범위든 바뀔 때마다 정확히 1 오르고, 조건부 쓰기로 지킨다"고 적는다. 다시 쓰기와 철회는 이미 이 규칙대로 쓴다(#33). 공개 범위 변경은 그 기능이 아직 없어 약속(코드 없음)이다.
 - **broker 연결:** `bourbon_note/broker.py`가 `DEFERQ_AMQP_URL`로 프로세스당 연결 하나를 연다. 지금 발행하는 쪽은 worker뿐이다.
 
 ## 7. 탈퇴
@@ -207,7 +207,7 @@ internal 표면은 두 무리로 나뉜다. `/api/internal/svc/note/trusted/` �
 
 - **discovery 쪽 설정:** `NOTE_API_BASE_URL=http://bourbon-note-api`(메모 §13-4). 경로 prefix(서비스용 `/api/internal/svc/note/trusted`, agent용 `/api/internal/svc/note`)는 client 코드 상수로 둔다(§2-2).
 - **prod 조건:** `main`에 들어갔지만 prod overlay의 `OPENSEARCH_URL`은 아직 자리표시(`REPLACE_WITH_PROD_OPENSEARCH_URL`)다(`k8s/overlays/prod/configmap-patch.yaml:14-15`). prod 배포는 컬렉션 URL이 정해져야 한다.
-- **예정된 저장 형식 변경:** dev 배포 전에 테이블을 비우는 것 말고는 없다(note-api 1차 답변, 2026-11-06).
+- **저장 형식 변경:** 1차 답변(2026-11-06)에서는 dev 배포 전 테이블 비우기 말고는 예정이 없다고 했고, 최종 답변(2026-11-07)에서는 마지막 저장 형식 변경 시점이 아직 미정이라고 했다. prod 적재 전에 다시 묻는다.
 - **옛 형식 note:** 형식이 바뀔 때마다 옛 note는 읽히지 않는다(#10 `doc` 형식, `language`가 없는 형식). note-api는 "그런 note가 든 테이블은 배포 전에 비운다"고 적어 두었다. 이렇게 사라지는 note에는 이벤트가 없다.
   - **discovery backfill은 note-api가 마지막으로 형식을 바꾼 배포 뒤에 한다.**
 - **시작할 때 확인:** note-api API와 worker는 index alias가 없으면 뜨지 않는다.
@@ -225,16 +225,16 @@ internal 표면은 두 무리로 나뉜다. `/api/internal/svc/note/trusted/` �
 
 ## 11. note-api와 합의하거나 확인할 것
 
-note-api에서 1차 답변을 받았다(2026-11-06). 최종 구현 계획은 아니다. 아래 route는 **약속(코드 없음)**이다.
+note-api에서 1차 답변(2026-11-06)과 최종 답변(2026-11-07)을 받았다. 아래 두 route는 PR #34(`feat/discovery-lookups`)로 구현됐고 리뷰 중이다.
 
-1. **agent용 public 읽기의 여러 개 조회(§3-2, 설계안 §11의 R2): 받아들임.** `POST /api/internal/svc/note/notes/lookup {notes: [{user_id, note_id}]}`. 늘 public만 주고, 응답은 `{notes: [{user_id, note: SharedNote}], not_found: [{user_id, note_id}]}`이다. 요청 순서대로, 중복은 한 번. `not_found`는 이유를 나누지 않는다(없음, private, 탈퇴 중, 복호화 실패). 복호화 실패는 건너뛰고 로그만 남긴다. 탈퇴 확인은 note 읽기와 동시에 한다. 제목만 주는 선택은 보류. route docstring에 discovery도 부른다고 적는다. discovery가 agent용 route를 부르는 것은 오너가 확인했다.
-   - **공유 card 여러 개 조회(설계안 R1): 받아들임.** `POST /api/internal/svc/note/trusted/cards/lookup {card_ids}`(1~100개), 응답 `{cards: [{id, names, facts, version}], missing: [ids]}`. 이름 정규화(NFKC → 공백 묶기 → casefold)는 계약으로 둔다. card id는 합쳐지거나 사라지지 않는다. card 변경 이벤트는 없고 `version`으로 비교한다. 개인 card는 주지 않는다.
+1. **agent용 public 읽기의 여러 개 조회(§3-2, 설계안 §11의 R2): 구현(PR #34).** `POST /api/internal/svc/note/notes/lookup {notes: [{user_id, note_id}]}`(1~100개, 중복을 포함해 센다. 같은 쌍은 한 번만 읽는다. 정의되지 않은 필드는 422). 응답 `{notes: [{user_id, kind: "shared", note}], not_found: [{user_id, note_id}]}`, 둘 다 요청 순서. public만 공유 필드로 준다. `not_found`는 이유를 나누지 않는다(없음, private, 철회, 탈퇴 중, 읽을 수 없음). 읽을 수 없는 note는 건너뛰고 로그만 남긴다. note 읽기와 탈퇴 확인을 동시에 한다(`notes/shown.py`의 `lookup_public`). 제목만 주는 선택은 넣지 않았다(제목이 암호화된 본문 안에 있어 비용이 같다). discovery도 부른다고 router 모듈 docstring, API 문서, README에 적었다.
+   - **공유 card 여러 개 조회(설계안 R1): 구현(PR #34).** `POST /api/internal/svc/note/trusted/cards/lookup {card_ids}`(1~100개, 중복을 포함해 센다. 같은 id는 한 번만 읽는다. 정의되지 않은 필드는 422). 응답 `{cards, missing}`, 둘 다 요청 순서. card는 card 검색 결과와 같은 모양(`id`, `names`, `facts`(출처 포함), `evaluations`, `checked_at`, `version`). `missing`은 공유 card가 없는 id(개인 card 포함)와 읽을 수 없는 card. 저장된 card가 둘 이상인데 하나도 읽히지 않으면 500(키 오류). 이름 정규화(NFKC → 연속 공백을 하나로 → casefold)는 계약이다. `names`는 처음 쓰인 표기 그대로라 비교할 때 양쪽을 정규화한다. card id는 합쳐지거나 사라지지 않는다. 이름은 늘기만 하고, 갱신 때 반박된 사실은 빠지고 새 사실이 더해지며, 평가는 상한을 넘으면 오래된 것부터 빠진다. 쓸 때마다 `version`이 1 오른다. card 변경 이벤트는 없다. 같은 id가 여러 번 들어오면 500이 나던 문제(card 검색에도 있던 것)도 고쳤다.
    - **trusted 조회에 탈퇴 표시:** 하지 않는다. trusted는 저장된 그대로를 주는 곳이다.
 2. ~~`feat/note-audience-policy`의 머지 시점~~ → `main`에 들어갔다(`3fee423`). dev 배포 시점과 prod OpenSearch 컬렉션 URL은 아직이다(§9).
 3. 형식 변경으로 dev 테이블을 비우는 일이 끝났는지. discovery backfill 시점이 여기에 걸려 있다. PR #33 쪽 리뷰에서 끝났다는 말이 있었지만 확인하지 못했다.
-6. PR #33(`deploy/2611`)의 `note_updated`, 철회 계약이 `main`에 들어오는 시점. discovery 설계안은 이미 이 계약에 맞췄다(설계안 §2-1).
-4. 수정·공개 범위 변경·삭제 기능의 일정. 1차 답변: 그 기능을 만들 때 저장이 끝난 뒤 이벤트를 내고, 공개 범위를 바꿀 때도 `version`을 올린다. 기능이 생기면 §6의 약속이 코드가 되는지 확인한다.
-5. prod에서 writer를 켜는 일정. note-api가 정할 수 없어 오너가 답한다.
+4. 비공개 전환·삭제 기능의 일정. 답변: 그 기능을 만들 때 저장이 끝난 뒤 이벤트를 내고, 공개 범위를 바꿀 때도 `version`을 올린다. 기능이 생기면 §6의 약속이 코드가 되는지 확인한다.
+5. prod에서 writer를 켜는 일정과 마지막 저장 형식 변경 시점: 아직 미정(답변, 2026-11-07).
+6. ~~PR #33의 `note_updated`, 철회 계약이 `main`에 들어오는 시점~~ → 들어갔다(`f527131`).
 
 ## 갱신 기록
 
@@ -244,3 +244,4 @@ note-api에서 1차 답변을 받았다(2026-11-06). 최종 구현 계획은 아
 | 2026-11-06 | `main` `a367d0e` 그대로, `feat/note-audience-policy` `d84ef04` | `delegated/`와 대화 policy가 없어지고 부르는 쪽이 공개 범위를 고르는 agent용 route로 바뀐 것(`1667190`)을 반영했다. §0, §1, §2, §3, §7, §8, §9, §10, §11 |
 | 2026-11-06 | `main` `3fee423`(코드는 `d84ef04`와 같다) | `trusted/` 이동과 OpenSearch가 `main`에 머지된 것, prod OpenSearch URL이 아직인 것, note-api의 1차 답변(card 여러 개 조회, public note 여러 개 조회, 이벤트, 일정)을 반영했다. §0, §9, §11 |
 | 2026-11-07 | `main` `3fee423`, dev `deploy/2611` `850a638` | dev에 떠 있는 PR #33 초안의 `note_updated`와 철회(withdrawn)를 §0에 적고, R2가 옛 서비스용 `/notes/lookup`과 같은 경로를 쓰는 점, 머지 전 표현을 고쳤다 |
+| 2026-11-07 | `main` `f527131`, `feat/discovery-lookups` `ca372e7`(PR #34) | #33의 `note_updated` 발행과 철회를 `main` 기준으로 고쳤다. note-api 최종 답변과 PR #34의 두 route(card 여러 개 조회, public note 여러 개 조회)를 §3, §11에 적었다 |
