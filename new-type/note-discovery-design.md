@@ -317,6 +317,7 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
   - 두 route는 card 없이도 tag와 벡터로 동작한다. 그래서 R1이 서비스 시작을 막지 않는다.
   - R1이 생기면 `analysis_spec`을 올리고 `cli reindex`로 분석을 다시 돈다.
 - entity가 잘 맞는지, 거주지가 얼마나 새는지는 재지 않았다(실험 계획 E 미실행). entity가 잘 맞는지는 로컬 합성 card로 방향을 보고 dev note로 값을 잰다. 거주지 누출은 dev에서 잰다(§9). 그때까지 card는 후보를 뒤에 더하는 데만 쓰고 순위 가산은 0이다(§5-2, §5-3).
+  - 로컬 합성 card로 본 방향(2026-11-08)은 §9의 "합성 card 결과"에 있다. card 종류는 대체로 맞고(`generic` 27%를 걸러낸다), 역할 프롬프트는 `subject`를 적게 준다.
 
 ### 2-6. 탈퇴
 
@@ -463,7 +464,8 @@ note_score = cosine(note, query)
            + w_tag · (겹친 쿼리 tag 수 / 쿼리 tag 수)
 ```
 
-- **v1의 가중치는 모두 0이다.** 실험에서 잰 것은 위 1·2층의 cosine 순서다. 가산은 오프라인 CLI(tag, 그리고 합성 card로 card 가산의 방향)와 dev(card 가산의 값)에서 나빠지지 않는 것을 확인한 뒤 켠다. 가중치는 설정 레지스터에 둔다(`rank.note.*`).
+- **v1의 가중치는 모두 0이다.** 실험에서 잰 것은 위 1·2층의 cosine 순서다. 가산은 오프라인 CLI(tag, 그리고 합성 card로 card 가산의 방향)와 dev(card 가산의 값)에서 나빠지지 않는 것을 확인한 뒤 켠다. 가중치는 설정 레지스터에 둔다. card 가산은 답할 사람 찾기만 쓰므로 `answer.card_subject_boost`, `answer.card_mention_boost`로 두었다(기본값 0, phase 4d). 가산을 켜면 1~3층을 cosine + 가산으로 함께 정렬하고, 4층은 그 뒤에 둔다. tag 가산(`w_tag`)은 만들지 않았다.
+- **합성 card로 본 방향(2026-11-08): card 가산은 0으로 둔다.** 가산 0.05/0.025와 0.1/0.05는 이름이 있는 질문에서도 recall@10을 조금 낮췄다(§9의 "합성 card 결과").
 - 점수 임계값은 두지 않는다. 순위로만 쓴다. 답할 수 있는지는 bourbon-agent가 판단한다.
 
 ### 5-4. 최근성
@@ -742,7 +744,7 @@ note_score = cosine(note, query)
 
     | 단계 | 방법 | 실제와의 차이 |
     |---|---|---|
-    | 이름과 공개 범위 | note-api writer judge 프롬프트의 이름·scope 규칙(`writer/judge/prompt.py`의 `NAMES_RULES_BLOCK`)을 합성 note 본문에 돌린다. 규칙은 복사하지 않고 note-api checkout에서 import하며, 만든 때의 note-api 커밋을 기록한다 | 규칙은 같은 바이트다. 입력이 다르다. 실제 writer는 note가 생기기 전의 대화 bundle(owner 메시지)에서 이름을 뽑지만, 여기서는 다 쓴 note 본문을 owner 메시지처럼 넣는다. 근사다 |
+    | 이름과 공개 범위 | note-api writer judge 호출(`writer/judge/prompt.py`의 `JUDGE_SYSTEM`과 `JudgeResult`, 이름·scope 규칙 `NAMES_RULES_BLOCK` 포함)을 합성 note 본문에 돌린다. 모델과 호출 설정도 note-api와 같다(`gpt-6-luna`, temperature 0, reasoning none). 판정이 Note도 Draft도 아니면 이름이 없다(`judge_bundle`과 같다). 규칙은 복사하지 않고 note-api checkout에서 import하며, 만든 때의 note-api 커밋을 기록한다 | 규칙은 같은 바이트다. 입력이 다르다. 실제 writer는 note가 생기기 전의 대화 bundle(owner 메시지)에서 이름을 뽑지만, 여기서는 다 쓴 note 본문을 owner 메시지처럼 넣는다. 근사다 |
     | 정확히 같은 이름 합치기 | note-api의 `normalize_name`을 그대로 쓴다 | 없다 |
     | 같은 대상 판정과 영어 이름 | 웹 검색 결과 대신 LLM의 지식으로 판정한다 | 근사다. 실제로는 검색 결과가 없거나 element 판정이 public이 아니라고 하면 개인 card가 되는데, 이 경우가 빠져 공유 card가 조금 많아질 수 있다. 합쳐지는 비율도 다를 수 있다 |
     | 사실(facts) | 비우거나 LLM이 짧게 쓴다 | discovery는 이름과 사실로 card 종류를 정하므로, 종류 판정의 정확도는 dev에서 다시 잰다 |
@@ -753,6 +755,17 @@ note_score = cosine(note, query)
   - 이 세트는 card를 앞으로 올리는 쪽에 유리하다. 그래서 card 가산은 사람 찾기 95개에서 나빠지지 않는다는 조건(§6-4의 허용선)과 함께 본다.
   - **로컬에서 정하는 것:** `generic` 거르기가 동작하는지, 역할(`subject`/`mention`) 프롬프트, 3층의 순서, 가산의 방향(올리면 나아지는지 나빠지는지).
   - **dev로 넘기는 것:** 실제 사실로 판정한 card 종류의 정확도, 뜻이 여럿인 이름이 한 card로 합쳐지는 오류(`java`류), 거주지 누출, 가산의 최종 값.
+  - **합성 card 결과(2026-11-08, discovery `cli evaluate cards`, phase 4d).** 만드는 코드와 데이터는 exp 브랜치 `ami_note/cards.py`, `ami_note/roles.py`에 있다(note-api 3bc3344).
+    - **card:** 합성 note 1,000개에서 public 이름 2,877개가 나왔고 card 1,773개가 됐다. 정확히 같은 이름 929, 같은 대상 판정으로 합쳐진 것 174, 개인 card 1이다. card가 있는 note는 802개다. 표기 변형은 잘 합쳐진다(하리오 V60 card에 이름 6개). "12년", "솔루션"처럼 짧은 이름도 note-api 규칙대로 card에 붙는다.
+    - **card가 없는 note:** judge가 Note도 Draft도 아니라고 본 note 156개에는 이름이 없다. 대부분 의료(81), 다이어트(19), 투자(11)다. note-api 프라이버시 규칙(진단·투약, 자산·수익) 때문이고, 실제 note-api였다면 이런 note가 그대로 공개되지 않는다. 그래서 의료 쪽 질문에서는 card 층이 거의 동작하지 않는다.
+    - **종류:** product 34%, `generic` 27%, place 21%, org 15%, work 2%, event 1%, person 0%. 60개를 손으로 읽으면 `generic` 14개는 모두 맞았고(미역국, 두부, 르방, 수면교육 등) 경계 사례가 3개다(제주 암장을 place, 지옥온천 순례를 event, 샤토를 product로 봄). `generic` 거르기는 동작한다.
+    - **역할:** 별도 프롬프트(같은 모델 `gemini-3.5-flash`)로 만든 기준과 연결 2,869개 중 80.0%가 같다. 틀리는 쪽이 한쪽이다. 기준이 `subject`라고 본 432개(23%)를 운영 프롬프트는 `mention`으로 봤고, 반대는 141개다. 운영 프롬프트가 `subject`를 적게 준다. 3층 순서와 가산이 `subject`를 쓰기 전에 프롬프트를 다시 볼 일이다.
+    - **쿼리 고유명사 → card:** note 검색 `single` 질문 150개 중 본문에 이름이 있는 것은 56개다(작성자가 직접 셈. 나라·대륙과 일반 종류는 세지 않음. 장소 이름만 있는 것 35개). 56개 중 49개에서 card가 맞았고, 35개에서 정답 note의 card가 맞았다. 장소 이름만 있는 질문이 약하다(35개 중 18개). 정답 note가 그 장소를 card로 갖지 않는 경우가 많다.
+    - **순위(답할 사람 찾기, 운영 프롬프트, 섞기, 상한 3):** card 없이 hit@5 / recall@10은 이름 있는 질문 56개에서 1.000 / 0.936, 337개 전체에서 0.991 / 0.876이다.
+      - v1(3층을 뒤에 두고 가산 0)은 card 없을 때와 같다. 구조상 그렇다: 섞으면 2층이 최대 200개를 먼저 내므로 3층은 읽는 10개에 닿지 않는다. 그래서 3층 안의 순서(`subject` 먼저)는 이 세트로 잴 수 없다.
+      - 가산 0.05/0.025: 이름 있는 질문 recall@10 −0.013 [−0.036, +0.004], 전체 −0.003 [−0.007, −0.000].
+      - 가산 0.1/0.05: 이름 있는 질문 −0.015 [−0.038, +0.002], 전체 hit@5 −0.003, recall@10 −0.005 [−0.009, −0.001]. 모두 −0.02 허용선 안이다.
+      - **방향: 이 세트에서는 card 가산의 이득이 없다.** 이름 있는 질문의 정답을 embedding이 이미 찾는다(hit@5 1.000). 다만 이 질문들은 정답 note를 보고 썼기 때문에 단어가 겹친다. card가 도움이 될 자리(표기를 바꾼 질문, embedding이 놓치는 이름)는 고유명사 세트(phase 4e)에서 본다.
 
 **동작 확인(테스트):**
 - 공개 범위 변경 신호가 처리 중인 다시 맞추기와 겹치면 `searchable`이 다시 올라가지 않는다(조건부 UPDATE가 0 row).
@@ -885,7 +898,7 @@ v1은 원본을 두지 않는다. 아래 경우에는 public note의 사본을 d
 | 4 | ~~1층을 늘 벡터와 섞을지, 20개 미만일 때만 폴백할지~~ → 늘 섞는다(2026-11-07 오너, §5-2). dev에서 벡터 쿼리 지연과 품질을 다시 본다 | discovery | dev |
 | 5 | ~~note가 적은 사람의 완화책(centroid, 개수 정규화)~~ → tag 점수를 note 수로 나눈다(M2, 2026-11-08 오너, §6-2). 실제 note 수 분포에서의 효과는 dev에서 본다 | discovery | dev |
 | 6 | ~~§11의 R1~R4 최종 답~~ → 받았다(2026-11-07). R1·R2는 note-api PR #34로 구현돼 리뷰 중이다. 머지되면 discovery client를 그 응답 모양으로 맞춘다. prod writer 일정과 저장 형식 변경 시점은 아직 미정이라 prod 적재 전에 다시 본다 | — | — |
-| 7 | card 종류를 discovery가 정하는 방식이 맞는지(`generic` 걸러내기 포함), card를 앞으로 올리는 가산의 크기 | discovery | 로컬 합성 card(note-api judge 프롬프트 기반)와 고유명사 질문 세트로 방향을 정하고, dev에서 값을 다시 잰다(§9) |
+| 7 | card 종류를 discovery가 정하는 방식이 맞는지(`generic` 걸러내기 포함), card를 앞으로 올리는 가산의 크기 | discovery | 로컬 합성 card로 1차 방향을 봤다(2026-11-08, §9): 종류와 `generic` 거르기는 동작하고, 역할 프롬프트는 `subject`를 적게 주며, 기존 질문에서는 가산 이득이 없어 0으로 둔다. 고유명사 질문 세트(phase 4e)로 방향을 마저 보고, dev에서 값을 다시 잰다 |
 | 8 | 주제 추천에 LLM 재순위를 넣을지 | 오너 | dev 사용 뒤 |
 | 9 | bourbon-agent가 인용한 note id를 돌려주는 방법 | bourbon-agent | v1 뒤 |
 | 10 | ~~두 route의 이름과 필드~~ → 정해짐(2026-11-07): 이 안대로(§6-1, §7-1) | — | — |
