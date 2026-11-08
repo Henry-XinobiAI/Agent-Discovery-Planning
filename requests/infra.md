@@ -1,12 +1,13 @@
 # 인프라 요청서 — bourbon-agent-discovery-api
 
-> **2026-11-08 현재 상태**: dev PostgreSQL DB와 계정(§1), Redis DB 번호(§3), AMQP 계정(§4)은 받아서 dev가 돌고 있다(2026-09-24부터). 설계가 topic 기반에서 공개 note 기반으로 바뀌면서(`new-type/note-discovery-design.md`) 새로 필요하거나 없어지는 것이 생겼다. **다음 dev 배포 전에 꼭 필요한 것은 §1-1의 `vector` 확장 하나다.** 나머지는 그 배포와 함께 또는 뒤에 하면 된다.
+> **2026-11-08 현재 상태**: dev PostgreSQL DB와 계정(§1), Redis DB 번호(§3), AMQP 계정(§4)은 받아서 dev가 돌고 있다(2026-09-24부터). 설계가 topic 기반에서 공개 note 기반으로 바뀌면서(`new-type/note-discovery-design.md`) 필요한 것이 달라졌다.
 >
 > 이번에 부탁드리는 것:
-> 1. **(배포 전 필수)** dev DB `bourbon_agent_discovery`에 `vector` 확장 생성(§1-1).
-> 2. 새 테이블에 앱 계정 권한이 붙는지 확인(§1-2).
-> 3. DynamoDB: 공용 `bourbon-app` role에서 우리 테이블 권한을 빼고, dev 테이블 삭제(§2).
-> 4. RabbitMQ: 큐 깊이 상한 요청의 큐 이름을 새것으로(§4). 옛 큐는 배포 때 우리가 지운다.
+> 1. **(경우에 따라)** dev DB에 `vector` 확장. 우리 관리 계정으로 먼저 만들어 보고, 권한이 없다고 거부되면 부탁드린다(§1-1).
+> 2. dev DynamoDB 테이블 삭제. 우리 배포 뒤에(§2).
+> 3. RabbitMQ 큐 깊이 상한과 알람. 예전 요청에서 큐 이름만 바뀌었다(§4).
+>
+> 다음 배포는 잠깐 멈춤이 있는 배포다(옛 api·워커를 내리고 마이그레이션을 적용한 뒤 새 코드를 올린다). 그동안 울리는 api·워커 알람은 장애가 아니다. 되돌림은 없다. 우리 데이터는 note-api에서 다시 읽어 만든다(backfill).
 
 ## 0. 서비스 개요 (한 단락)
 
@@ -14,29 +15,26 @@ bourbon-agent-discovery-api는 유저의 **공개 note**로 "대화해 볼 사�
 
 ## 1. PostgreSQL
 
-**받은 것(2026-09-21)**: 기존 `pensieve-pg-tokyo-dev`(PostgreSQL 18.4)에 DB `bourbon_agent_discovery`와 앱 계정 `bourbon_agent_discovery_app`(CRUD만, 테이블 소유 안 함). 접속 문자열은 Secret `bourbon-agent-discovery-api`의 `DATABASE_URL`. 마이그레이션은 우리가 bastion 터널로 직접 적용한다(배포 파이프라인에 마이그레이션 단계가 없다).
+**받은 것(2026-09-21)**: 기존 `pensieve-pg-tokyo-dev`(PostgreSQL 18)에 DB `bourbon_agent_discovery`, 관리 계정 `bourbon_agent_discovery_dbadmin`(테이블 소유, 마이그레이션 적용), 앱 계정 `bourbon_agent_discovery_app`(CRUD만). 앱의 접속 문자열은 Secret `bourbon-agent-discovery-api`의 `DATABASE_URL`. 마이그레이션은 우리가 관리 계정으로 bastion 터널을 거쳐 적용한다(배포 파이프라인에 마이그레이션 단계가 없다).
 
 인스턴스를 공유해도 서비스 경계는 흐려지지 않는다. PostgreSQL에서는 한 커넥션이 한 데이터베이스에 묶여서, 같은 인스턴스여도 남의 DB를 읽지 못한다(`postgres_fdw` 없이는). 공유가 실제로 나눠 쓰게 만드는 것은 커넥션 수, 백업 단위, 파라미터 그룹이고, 커넥션 수는 §1-3에 있다.
 
-### 1-1. `vector` 확장 — 다음 배포 전에 필요 (새 요청)
+### 1-1. `vector` 확장 — 다음 배포 전에 필요
 
-**요청 한 줄**: dev DB `bourbon_agent_discovery`에서 `CREATE EXTENSION vector;`를 실행해 주세요.
+note embedding을 `vector(768)` 컬럼에 두고 요청마다 cosine 거리로 검색한다(pgvector). 예전 요청서에서 "pgvector는 나중에 필요해지면 다시 요청한다"고 했던 그 시점이 왔다. 마이그레이션 0013이 확장이 있는지 먼저 보고, 없으면 무엇을 하라는 메시지와 함께 멈춘다.
 
-- **왜:** note embedding을 `vector(768)` 컬럼에 두고 요청마다 cosine 거리로 검색한다(pgvector). 예전 요청서에서 "pgvector는 나중에 필요해지면 다시 요청한다"고 했던 그 시점이 왔다.
-- **왜 우리가 못 하나:** `CREATE EXTENSION`은 superuser(RDS에서는 `rds_superuser`)가 필요하다. 앱 계정에는 그 권한이 없고, 없어야 맞다.
-- **순서:** 마이그레이션 0013이 확장이 있는지 먼저 보고, 없으면 무엇을 하라는 메시지와 함께 멈춘다. 그래서 확장 생성 → 우리가 0012~0014 적용 → 코드 배포 순서다.
+- **우리가 먼저 한다:** pgvector는 trusted 확장이라, DB에 CREATE 권한이 있는 계정이면 superuser가 아니어도 만들 수 있다. 관리 계정으로 `CREATE EXTENSION vector;`를 실행해 본다.
+- **거부되면 부탁드린다:** 관리 계정에 그 권한이 없거나, RDS가 이 확장을 trusted로 두지 않아 권한 오류가 나면, `rds_superuser` 계정으로 dev DB `bourbon_agent_discovery`에서 같은 문장을 실행해 주세요.
 - **가능 여부:** dev 인스턴스에서 켤 수 있다는 것은 2026-11-06에 확인했다. 확장은 DB 단위라 pensieve의 DB에는 영향이 없다.
 - **prod:** prod RDS에서 켤 수 있는지는 prod 인프라 세팅 때 다시 묻는다(설계 열린 항목 1). 안 되면 설계 §3-1의 2안으로 간다.
 
-### 1-2. 새 테이블과 앱 계정 권한 (확인 부탁)
+### 1-2. 테이블 정리 (우리가 한다, 알려 드리는 것)
 
-마이그레이션 0012~0014가 topic 시절 테이블 9개를 지우고 새 테이블 6개를 만든다.
+마이그레이션 0012~0014가 topic 시절 테이블 9개를 지우고 새 테이블 6개를 만든다. 앱 계정 권한은 관리 계정이 직접 준다.
 
 | 지우는 테이블 (0012) | 새 테이블 (0013, 0014) | 남는 테이블 |
 |---|---|---|
 | `visible_topic_rows`, `catalog_edges`, `catalog_snapshots`, `friends`, `popularity`, `attributions`, `interactions`, `population_stats`, `agents` | `notes`, `tags`, `note_tags`, `cards`, `note_cards`, `decisions` | `room_turns`, `departed_users` |
-
-앱 계정은 테이블을 소유하지 않고 CRUD만 갖는다. 지금까지 새 테이블이 생길 때(0011 `departed_users` 등) 앱 계정이 쓸 수 있었는데, 그것이 기본 권한(`ALTER DEFAULT PRIVILEGES`)으로 붙는 것인지 그때마다 GRANT를 한 것인지 확인 부탁드린다. GRANT가 필요하면 위 새 테이블 6개에 앱 계정 CRUD를 부탁드린다(`tags.tag_id`는 identity 컬럼이다. 시퀀스 권한이 따로 필요한지도 함께 봐 주세요). 권한이 없으면 워커가 첫 쓰기에서 42501로 실패하고, deferq는 그 이벤트를 버린다.
 
 ### 1-3. 커넥션 수 — 공유하기 때문에 우리가 먼저 줄인 것
 
@@ -45,7 +43,7 @@ bourbon-agent-discovery-api는 유저의 **공개 note**로 "대화해 볼 사�
 | | api 프로세스당 | worker 프로세스당 | api pod | worker pod | 정상 최대 | 롤링 배포 중 |
 |---|---|---|---|---|---|---|
 | dev (공유, 지금) | 2+3=**5** | 8+8=**16** | 1~3 (HPA) | 1 | **31** | ~52 |
-| prod (전용 가정) | 5+10=15 | 8+8=16 | 2~5 (HPA) | 1 | **91** | ~137 |
+| prod | 5+10=15 | 8+8=16 | 2~5 (HPA) | 1 | **91** | ~137 |
 
 `pensieve-pg-tokyo-dev`(`db.t4g.small`)의 RDS 기본 `max_connections`는 약 225이고, iac가 걸어 둔 커넥션 알람 임계는 125다. 여기에 pensieve 자신의 사용량이 더해진다.
 
@@ -53,15 +51,15 @@ bourbon-agent-discovery-api는 유저의 **공개 note**로 "대화해 볼 사�
 
 하한을 밑돌아도 풀 오류는 나지 않는다. 남는 핸들러가 기다리다가 재시도 끝에 이벤트를 버린다(deferq에 DLQ가 없다). 커넥션이 모자란 풀은 "응답 없는 데이터베이스"처럼 보이므로, 하한을 코드에서 지킨다.
 
-### 1-4. 확인이 필요한 것
+### 1-4. 알고 있는 것
 
-- **TLS:** `rds.force_ssl`이 켜져 있는지. dev는 지금 접속이 되고 있으니 맞춰져 있다. prod에서 다시 확인한다.
-- **`statement_timeout`은 역할 기본값으로 짧게 걸지 말아 주시길.** 요청 경로 쿼리는 짧지만, backfill과 주기적 다시 맞추기는 note 전체를 훑는다. 요청 경로의 상한은 앱이 건다.
-- **terraform에는 이 DB와 확장이 나타나지 않는다.** rds 모듈은 `db_name` 하나만 만들므로 우리 DB, 계정, `vector` 확장은 손으로 만든 것이 된다. 기록해 둔다.
+- **TLS:** iac의 rds 모듈 파라미터 그룹이 `rds.force_ssl = 0`이다. 그래서 dev는 TLS 설정 없이 접속하고 있다.
+- **`statement_timeout`은 역할 기본값으로 짧게 걸지 말아 주시길 부탁드린다.** 요청 경로 쿼리는 짧지만, backfill과 주기적 다시 맞추기는 note 전체를 훑는다. 요청 경로의 상한은 앱이 건다.
+- **terraform에는 이 DB, 계정, 확장이 나타나지 않는다.** rds 모듈은 `db_name` 하나만 만들므로 모두 손으로 만든 것이 된다. 기록해 둔다.
 
 ### 1-5. prod에서 다시 물어야 하는 것
 
-dev를 공유로 간 판단이 prod로 자동으로 이어지지는 않는다. 배포 시점에 정할 것:
+iac에 이미 `pensieve-pg-tokyo-prod`(PostgreSQL 18, multi-AZ, 백업 7일)가 정의돼 있는 것을 봤다. dev처럼 그 인스턴스에 얹을지, 전용으로 갈지는 prod 배포 시점에 정한다. 그때 함께 볼 것:
 
 - **`vector` 확장(§1-1)을 prod RDS에서 켤 수 있는지.** 설계 열린 항목 1.
 - **복원 단위.** PITR이 인스턴스 단위라, 공유하면 옆 서비스 사고로 우리 데이터가 같은 시점으로 되감긴다. 우리 데이터는 note-api에서 다시 읽어 만들 수 있어서(backfill) 손실은 시간 문제지만, prod에서도 받아들일지는 따로 정한다.
@@ -70,30 +68,28 @@ dev를 공유로 간 판단이 prod로 자동으로 이어지지는 않는다. �
 
 **왜 PostgreSQL인가.** 요청마다 하는 일이 cosine 검색(pgvector)과 사람별 집계(검색 가능한 모든 note로 사람 점수를 내고 z-score를 계산)다. 둘 다 한 DB에서 SQL로 하는 것이 맞고, OpenSearch를 더하지 않아도 된다. 규모는 note 1만 개(768차원)에서 요청당 수 ms~수십 ms로 본다(설계 §6-2 "비용"). 실제 지연은 dev에서 잰다.
 
-## 2. DynamoDB — 더 이상 쓰지 않는다 (정리 요청)
+## 2. DynamoDB — 더 이상 쓰지 않는다
 
 예전에는 결정 로그·이벤트 로그·CF 후보 등을 테이블 하나에 두었다. note 기반으로 다시 만들면서 결정 로그는 PostgreSQL `decisions` 테이블로 옮겼고(30일 보존), 나머지는 없어졌다. 코드에서 DynamoDB를 쓰는 곳은 없다(discovery phase 1, 2026-11-07).
 
-**요청:**
-1. 공용 `bourbon-app` role의 인라인 정책에서 우리 테이블 권한을 빼 주세요. dev는 `bourbon-*-tokyo-dev` 와일드카드라, 우리 것만 빼려면 정책 모양을 봐야 할 수 있다. **다른 서비스가 같은 와일드카드를 쓰므로 와일드카드 자체를 지우지는 말아 주시기 바란다.**
-2. 그다음 dev 테이블 `bourbon-agent-discovery-tokyo-dev`를 삭제해 주세요. 옛 로그는 내보내지 않는다(2026-11-07 오너).
-3. prod 테이블은 만들지 않는다. 예전에 부탁했던 "prod IAM에 우리 테이블 ARN 추가"도 필요 없다.
+**요청:** 우리 배포 뒤에 dev 테이블 `bourbon-agent-discovery-tokyo-dev`를 삭제해 주세요. 옛 로그는 내보내지 않는다(2026-11-07 오너). 새 코드가 테이블을 읽지 않으므로, 배포가 끝난 뒤라면 언제든 괜찮다.
 
-순서는 코드 배포 뒤다. 새 코드가 테이블을 읽지 않는 것을 확인한 다음에 지워야, 옛 pod가 남아 있는 동안 오류가 나지 않는다.
+- **IAM은 그대로 두셔도 된다.** dev의 `bourbon-app` 정책은 `bourbon-*-tokyo-dev` 와일드카드 한 줄이라 우리 테이블만 뺄 수 없고, 다른 서비스가 같은 줄을 쓴다. 테이블이 지워지면 그 줄이 우리에게 허용하는 것은 없다.
+- **prod 테이블은 만들지 않는다.** 예전에 부탁했던 "prod IAM에 우리 테이블 ARN 추가"도 필요 없다.
 
 ## 3. Redis — deferq 전용 DB 번호
 
-**받은 것**: 공유 ElastiCache `pensieve-redis-tokyo-dev`의 DB 13(ConfigMap `DEFERQ_REDIS_URL`). 우리 데이터는 Redis에 두지 않는다. deferq의 예약만 들어간다. prod 번호는 prod 배포 때 받는다.
+**받은 것**: 공유 ElastiCache `pensieve-redis-tokyo-dev`의 DB 13(ConfigMap `DEFERQ_REDIS_URL`). 우리 데이터는 Redis에 두지 않는다. 새 워커에는 예약 작업이 없어서, 들어가는 것은 deferq 워커 등록 key뿐이다. prod 번호는 prod 배포 때 받는다.
 
-topic 시절의 예약 key(topic refresh 작업)는 배포 때 우리가 지운다(§4의 옛 큐와 함께).
+topic 시절 예약 작업(`agent_discovery.refresh_user_topics`)이 남긴 key는 배포 뒤 우리가 지운다. deferq가 작업 이름을 hash tag로 붙여 두는 `deferq:time:{agent_discovery.refresh_user_topics}`, `deferq:args:{…}`, `deferq:ceil:{…}`, `deferq:run:*:{…}`다.
 
 ## 4. RabbitMQ
 
 **계정**: dev는 받았다(Secret `DEFERQ_AMQP_URL`). 우리는 발행하는 이벤트가 없고 소비만 한다.
 
-**큐 깊이 상한과 알람 (2026-09-16 요청, 큐 이름만 바뀜).** 우리 워커는 데이터베이스에 닿지 못하면 뜨지 않는다. deferq가 실패한 리스너의 메시지를 ack하고 재전달도 DLQ도 하지 않아서, 뜬 채로 소비하면 그 이벤트는 영구 손실이고 안 뜨면 큐에 남기 때문이다. 그런데 우리 큐에는 `x-max-length`도 `x-message-ttl`도 없고, 브로커는 `SINGLE_INSTANCE`이며 여러 서비스가 같은 vhost를 쓰고, 큐 깊이 알람이 없다. 그래서 둘을 부탁드린다.
+**큐 깊이 상한과 알람 (2026-09-16 요청, 큐 이름만 바뀜).** 우리 워커는 데이터베이스에 닿지 못하면 뜨지 않는다. deferq는 실패한 리스너의 메시지를 ack하고, 재전달도 DLQ도 하지 않는다. 그래서 뜬 채로 소비하면 그 이벤트는 영구 손실이고, 안 뜨면 큐에 남는다. 그런데 우리 큐에는 `x-max-length`도 `x-message-ttl`도 없고, 브로커는 `SINGLE_INSTANCE`이며 여러 서비스가 같은 vhost를 쓰고, 큐 깊이 알람이 없다. 그래서 둘을 부탁드린다.
 
-- **(가)** 우리 큐에 `x-max-length`(또는 `x-max-length-bytes`)와 overflow 동작을 정책으로 걸어 주시고, 며칠치 백로그를 감당할 수 있는지 알려 주세요. **패턴을 `deferq.*`로 잡지는 말아 주시기 바란다.** deferq는 모든 서비스의 컨슈머 큐를 그 접두어로 짓기 때문에 다른 팀의 큐까지 건드린다. 지금 우리 큐는 여섯이다:
+- **(가)** 우리 큐에 `x-max-length`(또는 `x-max-length-bytes`)와 overflow 동작을 정책으로 걸어 주시고, 며칠치 백로그를 감당할 수 있는지 알려 주세요. **패턴을 `deferq.*`로 잡지는 말아 주세요.** deferq는 모든 서비스의 컨슈머 큐를 그 접두어로 짓기 때문에 다른 팀의 큐까지 건드린다. 지금 우리 큐는 여섯이다:
   - `deferq.count_turn_on_message_created`
   - `deferq.erase_on_user_deactivated`
   - `deferq.mark_pending_on_note_created`
@@ -102,7 +98,11 @@ topic 시절의 예약 key(topic refresh 작업)는 배포 때 우리가 지운�
   - `deferq.mark_pending_on_note_deleted`
 - **(나)** 큐 깊이(`MessageCount` 등) 알람. 임계는 브로커 용량 쪽에서 정해 주시는 편이 정확하다. note 이벤트의 실제 발생률은 dev 배포 뒤에 알려 드린다.
 
-**옛 큐는 우리가 지운다.** topic 시절 큐 `deferq.arm_refresh_on_topics_updated`, `deferq.arm_refresh_on_topic_visibility_changed`, `deferq.mirror_friends_on_friendship_changed`, `deferq.create_agent_on_user_registered`(와 이름이 바뀐 옛 큐, topic refresh 작업 큐)는 리스너가 없어졌다. 바인딩이 남아 있어 이벤트가 계속 쌓이므로, 배포 뒤 워커가 새 큐를 소비하는 것을 확인하고 우리가 손으로 지운다. 이 큐들에 정책을 걸어 두셨다면 함께 풀어 주세요.
+**옛 큐는 우리가 지운다.** topic 시절 큐 넷은 리스너가 없어졌는데 바인딩이 남아 이벤트가 계속 쌓인다. 배포 뒤 워커가 새 큐를 소비하는 것을 확인하고 우리가 지운다. 이 큐들에 정책을 걸어 두셨다면 함께 풀어 주세요.
+- `deferq.arm_refresh_on_topics_updated`
+- `deferq.arm_refresh_on_topic_visibility_changed`
+- `deferq.mirror_friends_on_friendship_changed`
+- `deferq.create_agent_on_user_registered`
 
 **순서 주의:** 큐와 바인딩은 컨슈머가 선언한다. 새 리스너(`mark_pending_on_note_*`)가 한 번 뜨기 전에 발행된 note 이벤트는 브로커가 버린다. 그래서 note-api가 `note_visibility_changed`, `note_deleted`를 발행하기 시작하기 전에 우리 워커가 먼저 떠 있어야 한다. 놓친 것은 배포 뒤 `cli backfill`과 주기적 다시 맞추기가 메운다.
 
@@ -114,8 +114,7 @@ topic 시절의 예약 key(topic refresh 작업)는 배포 때 우리가 지운�
 
 ## 6. 확인 질문
 
-1. §1-1 — dev DB에 `vector` 확장을 만들어 주실 수 있는지, 언제 가능한지. 다음 배포가 이것을 기다린다.
-2. §1-2 — 새 테이블에 앱 계정 권한이 기본 권한으로 붙는지, GRANT가 필요한지.
-3. §2 — `bourbon-app` 정책에서 우리 테이블만 빼는 방법과 dev 테이블 삭제 시점(우리 배포 뒤).
-4. §4 — 여섯 큐에 걸 수 있는 깊이 상한과 기대할 수 있는 백로그 기간, 알람 임계.
-5. prod — §1-5의 네 가지는 prod 배포 시점에 다시 묻는다.
+1. §1-1 — 우리 관리 계정으로 `CREATE EXTENSION vector`가 거부되면 `rds_superuser`로 실행해 주실 수 있는지.
+2. §2 — dev DynamoDB 테이블 삭제(우리 배포 뒤).
+3. §4 — 여섯 큐에 걸 수 있는 깊이 상한과 기대할 수 있는 백로그 기간, 알람 임계.
+4. prod — §1-5는 prod 배포 시점에 다시 묻는다.
