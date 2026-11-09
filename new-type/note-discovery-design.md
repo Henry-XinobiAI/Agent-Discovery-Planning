@@ -262,11 +262,14 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
 - note-api가 마지막으로 저장 형식을 바꾼 배포 뒤에 돌린다. 그 전 note는 note-api가 지운다(reference §9).
 
 **스냅샷으로 다시 적재하기(개발 단계, 2026-11-09 오너):**
-- note-api는 개발 중에 저장소를 비우고 note를 다시 쓰는 일이 잦고, 그때 본문이 바뀔 수 있다. live 경로로 따라가면 discovery에는 삭제 급증으로 보여 2의 차단이 지우기를 보류하고, 그 뒤 모든 note를 다시 읽는다. 그래서 이때는 인덱스를 통째로 바꾼다. discovery `cli snapshot` → `build` → `load`다(discovery README "Reloading the note index").
-- **snapshot:** bourbon-api의 유저 목록, 유저마다 note 전체(public과 private), note가 가리키는 공유 card를 받아 노트북의 gitignore된 폴더에 둔다. 유저 하나나 card 조회 하나라도 실패하면 미완료로 두고, 그 스냅샷으로는 만들지 않는다. note 본문이 들어 있으므로 build 뒤 `--forget-text`로 지운다.
+- note-api는 개발 중에 저장소를 비우고 note를 다시 쓰는 일이 잦고, 그때 본문이 바뀔 수 있다. live 경로로 따라가면 discovery에는 삭제 급증으로 보여 §2-2의 삭제 급증 차단이 지우기를 보류하고, 그 뒤 모든 note를 다시 읽는다. 그래서 이때는 인덱스를 통째로 바꾼다. discovery `cli snapshot` → `build` → `load`다(discovery README "Reloading the note index").
+- **snapshot:** bourbon-api의 유저 목록, 유저마다 note 전체(public과 private), note가 가리키는 공유 card를 받아 노트북의 gitignore된 폴더에 둔다. 유저 하나나 card 조회 하나라도 실패하면 미완료로 두고, 그 스냅샷으로는 만들지 않는다. note 본문이 들어 있으므로 build 뒤 `--forget-text`로 본문과 card 사실을 지운다.
 - **build:** 로컬 DB에서 sync를 그대로 돌린다. note-api 읽기만 스냅샷으로 바꾸고, note는 live와 같이 `mark_pending`으로 표시해 sync가 읽고 만들고 쓴다. 그래서 row가 sync의 것과 같다. 매번 새로 분석한다(본문이 바뀔 수 있어서). public note를 먼저 만들고, private note는 아래 불변식 7의 예외대로 만든다. 끝내 분석이 실패한 note는 `failed`로 남겨 워커가 이어 받게 한다.
-- **load:** 대상 DB(dev는 bastion 터널)에서 `notes`, `note_tags`, `note_cards`, `cards`, `tags`, `decisions`를 TRUNCATE하고 build의 row를 쓴다. 한 transaction이다. DROP하지 않는다(앱 계정 권한이 사라지고 alembic 밖의 스키마가 된다). `room_turns`와 `departed_users`는 남긴다. DB나 build가 코드의 migration head가 아니거나, build의 embedding·분석 spec이 지금 코드와 다르면 거부한다. tag id sequence는 옮긴 id 다음으로 맞춘다.
-- **순서:** 워커를 멈춘다 → note-api의 다시 쓰기가 끝나길 기다린다 → snapshot → build → load → 워커를 켠다. 워커를 스냅샷보다 먼저 멈춰야, 그 사이 처리한 이벤트가 적재로 덮이지 않는다. 멈춘 동안의 이벤트는 큐에 남아 있다가 처리되고, 놓친 것은 주기적 다시 맞추기가 version으로 잡는다.
+- **load:** 대상 DB(dev는 bastion 터널)에서 `notes`, `note_tags`, `note_cards`, `cards`, `tags`, `decisions`를 TRUNCATE하고 build의 row를 쓴다. 한 transaction이다. DROP하지 않는다(앱 계정 권한이 사라지고 alembic 밖의 스키마가 된다). `room_turns`와 `departed_users`는 남기고, 대상 DB가 아는 탈퇴 유저의 note는 쓰지 않는다(불변식 5). DB나 build가 코드의 migration head가 아니거나, build의 embedding·분석 spec이 지금 코드와 다르면 거부한다. tag id sequence는 옮긴 id 다음으로 맞춘다.
+- **순서:** 워커를 멈춘다 → note-api의 다시 쓰기가 끝나길 기다린다 → note listener 큐 넷을 비운다 → snapshot → build → load → 워커를 켠다.
+  - 워커를 스냅샷보다 먼저 멈춰야, 그 사이 처리한 이벤트가 적재로 덮이지 않는다.
+  - 큐를 스냅샷 직전에 비우는 이유: 큐에는 note-api가 다시 쓰면서 낸 이벤트가 쌓여 있는데, 그 결과는 스냅샷에 이미 있다. 그대로 두면 적재 뒤 `note_updated`마다 note가 다시 읽힐 때까지 검색에서 빠지고, 다시 쓰기로 사라진 옛 note의 이벤트는 삭제 급증 차단을 건다.
+  - 비운 뒤에 생긴 이벤트는 큐에 남아 있다가 적재 뒤에 처리되고, 놓친 것은 주기적 다시 맞추기가 version으로 잡는다.
 
 ### 2-4. 등록된 tag
 
