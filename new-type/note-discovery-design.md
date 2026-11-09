@@ -261,6 +261,13 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
 - backfill은 언제든 다시 돌릴 수 있다. 처음 채울 때 말고도 `sync.backfill_interval`(초안 주 1회)로 돈다. 한 번도 받지 못한 생성과, 잘못 지워진 note(row가 없어 주기적 다시 맞추기가 보지 못한다)를 이것으로 되찾는다. 이미 있는 note는 건드리지 않으니 비용은 유저마다 목록 조회뿐이다.
 - note-api가 마지막으로 저장 형식을 바꾼 배포 뒤에 돌린다. 그 전 note는 note-api가 지운다(reference §9).
 
+**스냅샷으로 다시 적재하기(개발 단계, 2026-11-09 오너):**
+- note-api는 개발 중에 저장소를 비우고 note를 다시 쓰는 일이 잦고, 그때 본문이 바뀔 수 있다. live 경로로 따라가면 discovery에는 삭제 급증으로 보여 2의 차단이 지우기를 보류하고, 그 뒤 모든 note를 다시 읽는다. 그래서 이때는 인덱스를 통째로 바꾼다. discovery `cli snapshot` → `build` → `load`다(discovery README "Reloading the note index").
+- **snapshot:** bourbon-api의 유저 목록, 유저마다 note 전체(public과 private), note가 가리키는 공유 card를 받아 노트북의 gitignore된 폴더에 둔다. 유저 하나나 card 조회 하나라도 실패하면 미완료로 두고, 그 스냅샷으로는 만들지 않는다. note 본문이 들어 있으므로 build 뒤 `--forget-text`로 지운다.
+- **build:** 로컬 DB에서 sync를 그대로 돌린다. note-api 읽기만 스냅샷으로 바꾸고, note는 live와 같이 `mark_pending`으로 표시해 sync가 읽고 만들고 쓴다. 그래서 row가 sync의 것과 같다. 매번 새로 분석한다(본문이 바뀔 수 있어서). public note를 먼저 만들고, private note는 아래 불변식 7의 예외대로 만든다. 끝내 분석이 실패한 note는 `failed`로 남겨 워커가 이어 받게 한다.
+- **load:** 대상 DB(dev는 bastion 터널)에서 `notes`, `note_tags`, `note_cards`, `cards`, `tags`, `decisions`를 TRUNCATE하고 build의 row를 쓴다. 한 transaction이다. DROP하지 않는다(앱 계정 권한이 사라지고 alembic 밖의 스키마가 된다). `room_turns`와 `departed_users`는 남긴다. DB나 build가 코드의 migration head가 아니거나, build의 embedding·분석 spec이 지금 코드와 다르면 거부한다. tag id sequence는 옮긴 id 다음으로 맞춘다.
+- **순서:** 워커를 멈춘다 → note-api의 다시 쓰기가 끝나길 기다린다 → snapshot → build → load → 워커를 켠다. 워커를 스냅샷보다 먼저 멈춰야, 그 사이 처리한 이벤트가 적재로 덮이지 않는다. 멈춘 동안의 이벤트는 큐에 남아 있다가 처리되고, 놓친 것은 주기적 다시 맞추기가 version으로 잡는다.
+
 ### 2-4. 등록된 tag
 
 메모 §12-1, §12-5와 실험 문서 §1을 따른다. 카탈로그 topic은 없다.
@@ -734,6 +741,7 @@ note_score = cosine(note, query)
 5. **탈퇴한 유저의 데이터는 쓰지 않고 내보내지도 않는다.** 모든 쓰기가 `refuse_departed`를 거치고, 모든 검색 쿼리가 `departed_users`를 거른다.
 6. **지운 note는 늦게 끝난 처리로 되살아나지 않는다.** 쓰기는 lease를 가진 처리만, 가져간 뒤 새 신호가 없을 때만 할 수 있다.
 7. **private note는 분석하지 않는다.** 내용이 바뀌어도 hash만 적는다. 그래서 등록된 tag가 private note에서 새로 생기지 않는다(분석 도중 private이 된 경우는 예외, §2-4).
+   - **스냅샷 다시 적재의 예외(2026-11-09 오너, §2-3).** note는 public으로 생기고, 공개 범위만 바꾸는 note-api API는 본문을 바꾸지 않는다. 그래서 지금 private인 note의 본문은 public이던 때의 본문이고, live 경로는 그때 분석해 두었다가 private이 된 뒤에도 남겼을 것이다. build는 이 이력대로 private note를 public으로 읽혀 분석한 뒤, private으로 다시 읽혀 검색에서 뺀다. 한계: private인 동안 본문을 고친 note는 구별하지 못해 고친 본문으로 분석된다. note-api가 공개 범위 API를 낼 때 공개 범위를 바꾼 시각(`visibility_changed_at` 같은 것)을 함께 받으면 거를 수 있다(§11).
 8. **`place`, `org`, `person` card의 이름은 discovery가 만드는 설명 필드(`matched_tags` 등)에 싣지 않는다.** note 본문이나 제목에 그 이름이 있는 것은 owner가 공개한 글이라 그대로 둔다.
 9. **요청자 자신과 `exclude_user_ids`는 결과에 나오지 않는다.**
 
@@ -874,6 +882,7 @@ topic-api는 지금부터 없다고 보고 작업한다(2026-11-06 오너). 그�
 | R2 | **agent용 public 읽기의 여러 개 조회. 구현됨(note-api PR #34, 리뷰 중, 2026-11-07).** `POST /api/internal/svc/note/notes/lookup {notes: [{user_id, note_id}]}`(1~100개, 중복을 포함해 센다. 같은 쌍은 한 번만 읽는다. 정의되지 않은 필드는 422). 응답 `{notes: [{user_id, kind: "shared", note}], not_found: [{user_id, note_id}]}`(요청 순서). public만 공유 필드로 준다. `not_found`는 이유를 나누지 않는다(없음, private, 철회, 탈퇴 중, 읽을 수 없음). 읽을 수 없는 note는 건너뛰고 로그만 남긴다. 탈퇴 확인은 note 읽기와 동시에 한다. 제목만 주는 선택은 넣지 않았다(제목이 암호화된 본문 안에 있어 읽기 비용이 같다). router 모듈 docstring, API 문서, README에 discovery도 부른다고 적었다 | 요청마다 응답에 실을 note를 한 번에 읽는다(§5-5). `needs_public_check` 확인도 이것으로 한다(§2-2) | 답할 사람 찾기 route 전에 머지되면 처음부터 쓴다 | 단건 public 읽기를 동시에 부른다 |
 | R3 | 비공개 전환·삭제 이벤트를 그 기능과 함께 발행하는 것. **답변(2026-11-07): 그 기능을 만들 때 함께 발행한다.** 저장이 끝난 뒤 발행하고, 공개 범위를 바꿀 때도 `version`을 올린다. 다시 쓰기와 철회는 이미 `note_updated`로 나간다(PR #33) | discovery는 listener를 먼저 띄운다 | 그 기능이 생길 때 | 주기적 다시 맞추기(15분)와 요청 경로의 감지가 순위 쪽을 따라간다. 응답 내용은 영향이 없다 |
 | R4 | 일정. **답변(2026-11-07):** `trusted/` 이동은 `main`에 들어갔다(PR #32의 `c961846`, PR #30 머지 `3fee423`와 함께). 철회된 note는 trusted에서도 404·빠짐이다(PR #33). prod에서 writer를 켜는 일정과 마지막 저장 형식 변경 시점은 아직 정해지지 않았다. trusted 조회의 탈퇴 표시는 넣지 않는다(탈퇴 표시가 의미 있는 것은 계정 삭제가 note를 지우기 전 짧은 동안뿐이고, 그 note는 R2가 `not_found`로 숨긴다) | backfill과 prod 적재의 시점이 여기에 걸린다 | prod 적재 전 | — |
+| R5 | **공개 범위만 바꾸는 API를 낼 때, 공개 범위를 바꾼 시각을 trusted 읽기에 함께 주는 것(`visibility_changed_at` 같은 것).** 아직 요청하지 않았다(2026-11-09) | 스냅샷 다시 적재가 private note를 public이던 때 본문으로 분석한다. private이 된 뒤 본문을 고친 note를 이것으로 거른다(불변식 7의 예외, §2-3) | note-api가 공개 범위 API를 낼 때 | 그런 note는 고친 본문으로 분석된다. 개발 단계에서는 받아들인다 |
 
 요청하지 않기로 한 것:
 - **note에 card 역할이나 종류를 붙여 달라는 것.** discovery의 검색 사정으로 계속 바뀔 판단이다. 메모 §12-4의 "tag는 discovery가 붙이고 관리한다"와 같은 이유다. judge는 이름의 종류를 내보내지 않는다.
@@ -938,6 +947,10 @@ v1은 원본을 두지 않는다. 아래 경우에는 public note의 사본을 d
 ---
 
 ## 검토 기록
+
+**2026-11-09, 스냅샷으로 note 인덱스를 다시 적재하는 길 (discovery phase 5)**
+- note-api가 개발 중에 저장소를 비우고 다시 쓰는 일이 잦아, live 경로 대신 인덱스를 통째로 바꾸는 `snapshot` → `build` → `load`를 두었다(§2-3). build는 sync 자체를 돌려 row가 live와 같다.
+- private note는 public이던 때 본문으로 분석한다. 불변식 7의 예외로 적고, 한계와 note-api에 요청할 것(R5)을 남겼다(§8, §11).
 
 **2026-11-08, card 경로를 v1에서 켠 것 (discovery phase 4f)**
 - 오너 결정: 답할 사람 찾기는 card `subject` 가산 0.1(`mention` 0), 주제 추천은 card 항 0.5(§5-3, §6-2). 열린 항목 7의 v1 결정을 닫았다. 값은 dev에서 다시 잰다.
