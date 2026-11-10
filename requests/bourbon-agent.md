@@ -1,47 +1,223 @@
-# bourbon-agent 요청서 — 타입 ① 호출의 새 계약과 카드 meta
+# bourbon-agent 요청서 — 공개 note 기반 추천 API를 쓰는 법
 
-> 코드 읽은 기준: bourbon-agent main `208a6286`(2026-09-08), persona 쪽 2026-09-10. 결정: R02(타입 ①), R24(`recommendation_id`), R40(`lang`), R42(HEXACO — **이 요청서에 넣지 않는다**).
+> **코드 읽은 기준:** bourbon-agent `origin/deploy/2611` `25cfc9a3`(2026-11-10; 추천 관련 파일은 `main`과 같다). discovery `note-discovery` `ee1938c`(phase 7 머지). 설계는 `new-type/note-discovery-design.md` §6(주제 추천)·§7(답할 사람 찾기)이다.
+>
+> **요약:** agent-discovery-api가 topic 기반에서 **공개 note 기반**으로 바뀐다. discovery의 dev 배포(`deploy/2611`)와 함께 지금 bourbon-agent가 부르는 `POST /recommend/explicit`가 없어진다. 대신 route가 둘 생긴다.
+>
+> 1. **부탁 (dev 배포에 맞춰 필요):** `recommend_agents` 도구가 부르는 곳을 `/recommend/subject`로 바꿔 주시면 된다(§4).
+> 2. **제안 (선택, 결정은 bourbon-agent):** 다른 사람의 공개 note로 질문에 답하는 새 도구를 `/recommend/answerers`로 만들 수 있다(§5).
+>
+> 이전 요청서(topic 시절, `/recommend/explicit`·카드 meta의 `recommendation_id`)는 `archive/2026-11-10_topic-era-bourbon-agent-request/`로 옮겼다. 그 요청은 철회한다.
 
-## 1. 타입 ① 호출을 새 계약으로
+## 1. 용어
 
-지금 `bourbon_agent/api_internal_client/agent_discovery.py`가 `POST /recommend`를 부르고 `agents/personal_agent/recommendation/tools.py`가 사용한다. 새 route는 아래다(내부 API, edge-auth 없음).
+- **note:** note-api가 대화에서 만든 기록. 제목과 page(본문 조각) 몇 개로 되어 있고, 소유자가 있다.
+- **공개 note:** `visibility`가 public인 note. agent-discovery는 **공개 note만** 근거로 쓴다. 비공개로 바꾼 note는 다음 요청부터 응답에 나오지 않는다.
+- **tag:** agent-discovery가 note마다 붙이는 주제 라벨(예: key `peaty whisky`, label "피트 위스키"). key는 영어, label은 한국어 하나뿐이다.
+- **주제 추천 (`/recommend/subject`):** "이 주제로 이야기할 만한 사람"을 찾는다. 지금 `recommend_agents`가 하는 일이 이것이다.
+- **답할 사람 찾기 (`/recommend/answerers`):** 질문에 답이 되는 다른 사람의 공개 note와 그 소유자를 찾는다. note 본문이 응답에 실린다.
+- **requester:** 요청의 `user_id`. 결과에서 자동으로 빠지고, "이미 대화한 사람" 판단과 결정 로그의 기준이 된다.
 
-```
-POST /api/internal/svc/agent-discovery/recommend/explicit
+## 2. agent-discovery가 제공하는 것
+
+두 route 모두 내부 API다(edge-auth 없음, `/api/internal/svc/agent-discovery` 아래). 공통으로:
+
+- **응답에 나오는 사람과 내용은 그 요청에서 note-api에 다시 확인한 공개 note에서만 나온다.** 그 사이 비공개로 바꿨거나 지웠거나 탈퇴한 사람은 나오지 않는다.
+- **requester 본인은 결과에 나오지 않는다.** `exclude_user_ids`로 더 뺄 수 있다(같은 방에 있는 사람 등).
+- **응답 시간:** 목표는 p95 2.5초다. 질문 분석(LLM 한 번 + embedding 한 번)과 note-api 확인에 3초 마감이 걸려 있고, 그 밖의 DB 조회는 마감 밖이다. 지금 bourbon-agent 클라이언트의 10초 타임아웃이 실제 상한이 된다.
+- **agent-discovery는 note 본문과 제목을 저장하지 않고, 질문 원문을 로그나 결정 로그에 남기지 않는다.**
+- **`recommendation_id`:** 응답 하나에 하나. 우리 결정 로그의 키다. bourbon-agent 로그에 남겨 주시면 서로 추적할 수 있다. 다른 데 실어 보낼 필요는 없다(예전 카드 meta 요청은 철회).
+- **`agent_id`:** `uuid5(AGENT_NAMESPACE, "personal_agent:{user_id}")`. bourbon-agent `utils/ids.personal_agent_id`와 같은 값이다.
+- **`contract_version`:** 지금 `"1"`. 필드의 뜻이 바뀌거나 빠질 때만 올린다. 필드가 늘어나는 것은 버전을 올리지 않으니, 모르는 응답 필드는 무시해 주시면 된다.
+
+### 2-1. 주제 추천 — `POST /recommend/subject`
+
+**요청.** 모르는 필드가 있으면 422다 — 예전의 `room_id`, `lang`, `topic_text`는 보내면 안 된다.
+
+| 필드 | 타입 | 뜻 |
+|---|---|---|
+| `user_id` | UUID | requester |
+| `subject` | 1~2000자 | 이야기하고 싶은 주제. 짧은 말이든 문장이든 된다. 예전처럼 "짧고 일반적인 주제 하나"로 줄일 필요가 없다(catalogue grounding이 없어졌다) |
+| `context` | ≤8000자, 선택 | 대화 맥락. tag를 고르는 LLM에만 쓰고 embedding에는 넣지 않는다 |
+| `exclude_user_ids` | UUID 목록 ≤100, 선택 | 결과에서 뺄 사람. 100개를 넘으면 422다 |
+| `max_results` | 1~20, 기본 3 | 최대 몇 명 |
+
+**응답:**
+
+```json
 {
-  "user_id": "uuid",               // 요청자 — 아래 §1-1. 결과에서 본인은 제외
-  "topic_text": "…",               // 유저가 말한 topic. 1~200자
-  "context": "…",                  // 최근 대화 일부. ≤2000자, 선택
-  "max_results": 3,                // 1~20, 기본 3
-  "room_id": "uuid",               // 로그 추적용, 선택. 우리는 room을 읽지 않는다
-  "lang": "ko"                     // ko | en | ja. 보내 주기를 요청한다 — 없으면 en으로 답한다(R40)
+  "contract_version": "1",
+  "recommendation_id": "c0b09266-…",
+  "agents": [
+    {
+      "agent_id": "806e57fa-…",
+      "owner_user_id": "019ddd04-…",
+      "position": 1,
+      "matched_tags": [{"key": "board game", "label": "보드게임"}],
+      "notes": [{"note_id": "01a1b149-…", "title": "적당히 강한 가문으로 시작하는 섭정 플레이"}],
+      "already_talked": false
+    }
+  ],
+  "empty": false,
+  "empty_reason": null,
+  "degraded": []
 }
 ```
 
-응답 envelope는 `contract_version`, `recommendation_id`, `resolved_topics[]`(free text에서 확정된 topic 1~3개), `agents[]`(각각 agent_id, owner_user_id, position, matched_topics[{topic_id, label, requested, owner_note}], signals, fit), `empty`, `degraded[]`다. 스키마는 `agent_discovery_contract.md` §2-1·§3. 기존 `POST /recommend`는 전환 기간 뒤 닫는다 — 시점은 §4에서 맞춘다.
+- **`agents`:** 관련도 높은 순. 각 사람은 공개 note가 그 요청에서 확인된 사람이다.
+- **`matched_tags`:** 그 사람의 확인된 note에 붙은 tag 중 질문과 겹치는 것. 비어 있을 수 있다 — 그때는 embedding으로 가까운 note 때문에 뽑힌 사람이다. label은 한국어뿐이다.
+- **`notes`:** 그 사람의 note 중 질문과 가장 가까운 것 최대 3개의 id와 제목. 제목은 note가 쓰인 언어 그대로다. **"왜 이 사람인지"는 `matched_tags`와 이 제목으로 말하면 된다.**
+- **`already_talked`:** requester가 이 사람의 Ami와 1:1 방(agent DM)에서 대화한 적이 있다(그 방의 마지막 메시지에서 365일까지). `start_thread`로 연 guest 방은 세지 않는다. 순위가 조금 내려가지만 빠지지는 않는다.
+- 이름은 싣지 않는다. 지금처럼 bourbon-api에서 `owner_user_id`로 조회해 주시면 된다.
 
-### 1-1. 요청자는 "실제로 말한 사람"
+### 2-2. 답할 사람 찾기 — `POST /recommend/answerers`
 
-지금 코드는 항상 agent **소유자**를 요청자로 보낸다. 자기 agent에게 묻는 경우는 소유자와 같으니 문제없다. 타인의 agent 방에서 그 agent에게 "추천해 줘"라고 묻는 경우가 제품에 있다면, 요청자는 **말한 사람**이어야 한다 — 추천은 요청자의 topic·친구 관계로 필터되고 요청자 본인은 결과에서 빠지기 때문이다. 그 경우가 제품에 없다면 지금 코드 그대로도 맞다. **어느 쪽인지 알려 주시면 된다.**
+**요청:**
 
-### 1-2. 우리 API가 유저의 글을 다루는 방식
+| 필드 | 타입 | 뜻 |
+|---|---|---|
+| `user_id` | UUID | requester |
+| `question` | 1~2000자 | 질문. "그거", "새로 나온 거" 같은 지칭은 bourbon-agent가 풀어서 보내 주시면 된다 |
+| `context` | ≤8000자, 선택 | 질문이 가리키는 것. tag 고르기에만 쓴다 |
+| `exclude_user_ids` | UUID 목록 ≤100, 선택 | 이 사람들의 note는 빼고 |
+| `max_notes` | 1~12, 기본 8 | 최대 몇 개의 note |
 
-`topic_text`·`context`는 topic 확정에만 쓰고 로그·예외·Sentry에 원문으로 남기지 않는다(계약 §5 불변식 7). 응답의 `owner_note`는 소유자가 쓴 문장이라 카드에 그대로 보여 주기만 하면 된다 — bourbon-agent 쪽 로그에도 남기지 않기를 요청한다.
+**응답:**
 
-## 2. 추천 카드 meta에 `recommendation_id`
+```json
+{
+  "contract_version": "1",
+  "recommendation_id": "…",
+  "notes": [
+    {
+      "note_id": "01a1b149-…",
+      "owner_user_id": "019ddd04-…",
+      "agent_id": "806e57fa-…",
+      "position": 1,
+      "version": 1,
+      "title": "적당히 강한 가문으로 시작하는 섭정 플레이",
+      "pages": ["…본문…"],
+      "truncated": false,
+      "experienced": false,
+      "language": "ko",
+      "conversation_ended_at": "2026-10-12T00:52:11Z"
+    }
+  ],
+  "owners": [
+    {"agent_id": "806e57fa-…", "owner_user_id": "019ddd04-…", "position": 1,
+     "matched_tags": [{"key": "strategy game", "label": "전략 게임"}],
+     "notes": [{"note_id": "01a1b149-…", "title": "…"}]}
+  ],
+  "empty": false,
+  "empty_reason": null,
+  "degraded": []
+}
+```
 
-타입 ① 응답의 `recommendation_id`를 추천 카드(bourbon-api를 거쳐 클라이언트로 가는 메시지)의 meta에 실어 주시면 된다. 클라이언트는 그 카드에서 대화를 시작할 때 이 값을 우리 route `POST /api/svc/agent-discovery/recommendations/opened`에 `entry="recommend_explicit"`과 함께 보고한다(클라이언트 요청서 §2, R47). bourbon-api는 거치지 않는다. 카드 하나에 agent가 여럿이면 `recommendation_id`는 하나(응답 단위)다.
+- **`notes`는 답을 쓰는 근거다.** 관련도 높은 순이고, 한 사람의 note는 최대 3개까지만 들어간다(한 사람의 경험에 답이 갇히지 않게).
+- **`pages`:** 본문. 합쳐서 3,000자까지만 싣고, 넘으면 `truncated: true`다. 기본값 8개면 최대 약 24,000자이니, 모델 컨텍스트가 부담이면 `max_notes`를 4~5로 줄여 주시면 된다.
+- **`experienced`:** 소유자가 직접 경험한 일인지(note-api의 값). 답에서 "직접 해 본 분"과 "알아본 분"을 구분하는 데 쓸 수 있다.
+- **`language`, `conversation_ended_at`:** note의 언어와, note가 나온 대화가 끝난 시각.
+- **`version`:** 같은 note를 나중에 다시 볼 때 같은 내용인지 확인하는 용도.
+- **`owners`:** `notes`를 소유자로 묶은 것(모양은 주제 추천의 사람과 같고 `already_talked`만 없다). 답을 쓰지 못했을 때 "이 분들과 이야기해 보세요"에 쓰라고 있는 것이다.
 
-**왜**: 우리는 이 보고를 bourbon-api의 방 생성 이벤트와 이어 결정 로그와 조인해 "이 추천이 대화를 만들었나"를 잰다. 소급이 안 되는 값이라 첫 배포부터 필요하다.
+### 2-3. 빈 결과와 오류
 
-## 3. 요청하지 않는 것 — 기록으로
+| 응답 | 뜻 | bourbon-agent가 할 일 |
+|---|---|---|
+| 200, `empty: true`, `empty_reason: "no_matching_notes"` | 맞는 공개 note가 없다 | "찾지 못했다"고 말한다. 다시 부르지 않는다 |
+| 200, `empty: true`, `empty_reason: "note_read_unavailable"`, `degraded`에 `note_read_unavailable` | note-api 확인이 실패하거나 마감을 넘겼다. 확인 못 한 사람은 싣지 않는다 | 같다. "지금은 찾지 못했다" |
+| 200, 결과 있음, `degraded`에 `query_analysis_unavailable` | tag 분석이 실패해 embedding만으로 찾았다. 덜 정확할 수 있다 | 결과를 그대로 쓴다. 다시 부르지 않는다 |
+| 503 `question_unavailable` | 질문을 읽지 못했다(질문 분석의 마감 초과, embedding이나 LLM 쪽 오류) | "지금은 쓸 수 없다". 같은 턴에 다시 부르지 않는다 |
+| 503 `database_unavailable` | DB가 응답하지 않았다 | 같다 |
+| 422 `validation_error` | 요청 모양이 틀렸다(모르는 필드, 길이·개수 초과 등) | 코드 버그다. 모델에게는 "지금은 쓸 수 없다" |
 
-- **HEXACO 성향 벡터**(R42·O20): persona 중 topic으로 오지 않는 HEXACO 추정치를 나중에 타입 ③ feature로 쓸 방향이 정해져 있고, 받는 경로는 **이벤트**(확정 아님)다. bourbon-agent에 API를 열 가능성은 없다는 것을 알고 있다. 무엇을 내보낼지와 동의 범위가 정해진 뒤 별도로 요청한다(추출 노트의 추정치에는 visibility 구분이 없다). 지금 우리 코드는 자리만 있고 값은 0이다.
-- **turn 이벤트**: 필요 없다. bourbon-api의 `message_created`로 센다.
-- **`persona_updated`**: 그대로 두면 된다. 우리는 직접 사용하지 않고 topic-api의 `topics_updated`를 받는다.
+오류 본문은 `{"request_id", "error_code", "message"}`다. 예전의 422 `grounding_failed`/`grounding_ambiguous`는 **없어졌다.** `degraded`는 앞으로 값이 늘 수 있으니 모르는 값은 무시해 주시면 된다.
 
-## 4. 확인 질문
+## 3. 지금 bourbon-agent가 하는 일 (`deploy/2611` 기준)
 
-1. §1-1 — 타인 agent 방에서 추천을 요청하는 경우가 제품에 있는가.
-2. §1 — 기존 `POST /recommend`를 닫아도 되는 배포 시점.
-3. §2 — 카드 meta의 필드 이름(클라이언트와 같은 이름을 쓰면 된다).
+- `agents/personal_agent/recommendation/tools.py`의 `recommend_agents(topic, context)`는 모든 모드에서 켜진다. 조건은 `owner_user_id`, `AGENT_DISCOVERY_URL`, `BOURBON_API_URL`, 워커의 공유 HTTP 세션이다(`enable_agent_recommendation_tools`). `RECOMMENDATION_GUIDANCE`가 "추천해 줘, 찾아 줘, 소개해 줘"마다 반드시 부르도록 한다.
+- `api_internal_client/agent_discovery.py`의 `AgentDiscoveryClient.recommend`가 `/recommend/explicit`에 `{user_id, room_id, topic_text, context, max_results: 1, lang}`을 보낸다. 도구 인자도 같은 파일의 `TopicText`(≤200자)·`Context`(≤2000자) 타입을 쓴다.
+- 첫 사람 하나만 쓰고, bourbon-api에서 이름을 조회해 `{topic, agents: [{id, owner_user_id, owner_name, topics, narrower_topics, owner_notes}]}`를 모델에게 돌려준다.
+- 조회 직후 방에 `agent_profiles_v1` 카드를 올리고, `note_recommended()`로 이번 턴의 `start_thread` 초대 목록에 넣는다.
+- 422 grounding이면 "짧은 주제로 다시"라는 힌트를, 그 밖의 오류면 "지금은 쓸 수 없다"를 돌려준다.
+- `recommendation/thread.py`의 `start_thread`는 소유자 혼자 있는 방에서만 켜진다. 초대할 수 있는 사람은 이번 턴에 `note_recommended()`로 들어온 사람과, **이 Ami가 앞서 보낸 `agent_profiles_v1` 카드에 있는 사람**이다(`_recommended_in_cards`). `THREAD_GUIDANCE`가 먼저 묻게 하므로 보통 다음 턴에 불리고, 그때는 카드가 유일한 근거다.
+- `notes/tools.py`의 `search_notes`는 note-api 키워드 검색으로 **소유자 자신의 note**를 찾는다. 다른 사람의 note는 찾지 않는다.
+
+## 4. 부탁: `recommend_agents`를 주제 추천으로 (dev 배포에 맞춰 필요)
+
+아래를 바꿔 주시면 된다. 카드, `start_thread`, 이름 조회, `RECOMMENDATION_GUIDANCE`는 `owner_user_id`만 쓰므로 그대로 두면 된다.
+
+**`api_internal_client/agent_discovery.py`**
+
+- URL을 `/api/internal/svc/agent-discovery/recommend/subject`로 바꿔 주시면 된다.
+- 요청 모델: `topic_text` → `subject`. 길이 타입 `TopicText`는 2000자, `Context`는 8000자로 늘려 주시면 된다(도구 인자도 이 타입을 쓴다). `exclude_user_ids: list[UUID]`(≤100)를 더하고, **`room_id`·`lang`은 빼 주시면 된다**(보내면 422).
+- 응답 모델: §2-1의 모양으로. `matched_topics` 대신 `matched_tags[{key, label}]`, `notes[{note_id, title}]`, `already_talked`, envelope의 `empty`, `empty_reason`. 지금처럼 쓰는 필드만 선언하면 된다. `MatchedTopicResponse`는 필요 없어진다.
+- `GROUNDING_ERROR_CODES`, `topic_not_grounded`는 지워 주시면 된다.
+
+**`agents/personal_agent/recommendation/tools.py`**
+
+| 지금 | 바꿀 것 |
+|---|---|
+| `RecommendRequest(topic_text=args.topic, room_id=…, lang=…, max_results=1)` | `subject=args.topic`, `max_results=1`(카드 한 장이니 그대로), `exclude_user_ids` = 방의 다른 사람. `payload.room_members`의 `UserInfo.id`와 사람 소유 Ami의 `AgentInfo.owner_user_id` 중 requester가 아닌 것, 100개까지. 이를 위해 `RecommendationToolContext`에 방 구성원을 넣어 주시면 된다. 소유자 혼자 있는 방에서는 비어 있고, 다른 사람이 있는 방(deputy)에서만 의미가 있다 |
+| 결과의 `topics`, `narrower_topics`, `owner_notes`(`RecommendedAgentNote`) | `tags`(= `matched_tags`의 label), `note_titles`(= `notes`의 title), `already_talked` |
+| `RecommendAgentsArgs.topic`의 설명과 도구 설명의 "one short, general subject… never a list of qualifiers" (두 곳) | 그 제약을 풀어 주시면 된다. 예: "the subject the person should know about, in a few words or a sentence; details of what the owner wants go in context" |
+| 도구 설명의 "using topics, narrower_topics and the owner's own notes, quoting the notes…"와 "If an Ami appears only through narrower_topics…" | 예: "say why each one matches from their tags and the titles of their notes; if already_talked, mention that your owner has talked with their Ami before" |
+| 422 grounding 재시도 분기 | 지워 주시면 된다 |
+| `lang`: `Lang`, `_RECOMMEND_LANGS`, `_recommend_lang`, `RecommendationToolContext.lang` | 필요 없어진다 |
+| `RecommendError` 그 밖, 예외 | 그대로("unavailable") |
+| `empty: true` | 지금처럼 빈 `agents`로 돌려주면 된다(모델은 "찾지 못했다"고 말한다) |
+| 로그: `topic=args.topic`(INFO, 여러 곳), 결과 전체(DEBUG, `personal_agent.recommendation.result`) | 결과에는 다른 사람의 note 제목이 들어간다. §6-1을 봐 주시면 된다 |
+
+**함께 바뀌는 것**
+
+- 테스트 `tests/bourbon_agent/agents/personal_agent/test_recommendation_tools.py`(옛 필드를 쓰는 곳이 많다).
+- 도구 설명이 들어간 프롬프트 스냅샷 `tests/prompt_snapshots/personal_agent/agent/{personal,deputy_present,deputy_absent}.txt`.
+- 문서 `docs/personal_agent/tools-and-memory.md`.
+
+**참고**
+
+- **label은 한국어뿐이다.** 소유자가 영어·일본어를 쓰면 모델이 옮겨 말하게 된다. 지금 `lang`이 하던 일을 우리 쪽에서 채우려면 tag에 다른 언어 label이 필요하다(§7).
+- **requester:** 지금처럼 Ami의 소유자를 보내면 된다. 다른 사람이 있는 방에서 남이 "추천해 줘"라고 할 때 그 사람을 requester로 할지는 제품 판단이다 — 바꾸면 결과에서 빠지는 사람과 `already_talked`가 그 사람 기준이 된다(§8).
+
+## 5. 제안: 답할 사람 찾기 도구 (선택)
+
+지금 Ami는 다른 사람의 경험으로 답할 방법이 없다. `search_notes`는 소유자 자신의 note만 본다. `/recommend/answerers`를 쓰면 "제주 갈 때 어디 들르면 좋아?" 같은 질문에 다른 사람의 공개 note로 답하고, 그 note를 쓴 사람과 이어 줄 수 있다. 붙일지, 언제 부를지는 bourbon-agent가 정해 주시면 된다. 붙인다면 이런 모양을 제안한다.
+
+- **도구:** 예를 들어 `ask_other_amis(question, context)`. 소유자가 다른 사람의 경험이 도움이 될 질문을 할 때 부른다. 자기 기억이나 자기 note로 답할 질문이면 `search_notes`와 메모리 쪽이다.
+- **모델에 돌려줄 것:** note마다 소유자 이름, 제목, 본문(`pages`), `experienced`, 그리고 `note_id`나 순번 — 모델이 어느 note를 인용했는지 말할 수 있게.
+- **답 쓰기 지침 (지켜 주시면 하는 것, 설계 §7-5):**
+  - 답에 **실제로 쓴 note의 소유자만** "이 분의 경험"으로 소개한다. 쓰지 않은 note의 소유자를 근거처럼 말하지 않는다.
+  - 근거 밖 일반론을 섞지 않는다. 섞는다면 "다른 분들의 경험"과 "Ami의 생각"을 나눠서 말한다. 실험에서 모호한 질문과 두 note를 합치는 질문의 답 13~19%에 일반론이 섞였다.
+  - 답을 쓸 근거가 없으면 `owners`로 "이 분들이 비슷한 이야기를 남겼다"고만 하고, 내용을 지어내지 않는다.
+- **이어서 대화방 열기:** 지금의 `start_thread`는 다음 턴에 불리고, 그때 초대할 수 있는 사람은 **이 Ami가 보낸 `agent_profiles_v1` 카드에 있는 사람**뿐이다(§3). handler는 모델이 누구를 인용할지 모르므로, 방법은 둘 중 하나다.
+  - (a) 결과의 소유자 전부를 한 장의 카드에 담아 올린다(카드 한 장에 최대 10명). 간단하지만 인용하지 않은 사람도 카드에 나온다.
+  - (b) 답을 쓴 뒤 인용한 소유자만 카드로 올리는 별도 단계를 둔다(모델이 인용한 `note_id`를 말하게 하고 그것으로 고른다).
+  우리는 (b)를 권한다 — 카드가 "이 분이 답에 쓰였다"로 읽히기 때문이다.
+- **크기:** `max_notes` 4~5부터 시작하기를 권한다(§2-2).
+
+## 6. 지켜 주셨으면 하는 것
+
+1. **받은 note 본문과 제목은 그 답을 쓰는 데만 쓰고 남기지 않아 주시면 된다.** 대화 기록에 남는 답 문장은 예외다. 비공개로 바뀐 note를 우리는 다음 요청부터 빼지만, 이미 넘긴 내용은 회수할 수 없다. 지금 bourbon-agent에서 이것이 남을 수 있는 곳은 둘이다.
+   - `recommendation/tools.py`의 `personal_agent.recommendation.result`(DEBUG, 결과 전체).
+   - `llm/tool_loop.py`의 `tool_loop.result`(DEBUG, 모든 도구 결과를 2,000자로 잘라서).
+   두 도구(§4, §5)의 결과를 이 로그에서 빼 주시거나, 로그가 보관되는 환경에서 DEBUG를 끄는 것이 보장된다면 그것으로 충분하다. 어느 쪽인지 알려 주시면 된다.
+2. **빈 결과와 `degraded`에서 다시 부르지 않아 주시면 된다.** "지금은 찾지 못했다"로 끝낸다. 같은 질문을 바꿔 연달아 부르면 결과는 그대로이고 LLM 비용만 는다.
+3. **응답에 없는 사람을 지어내지 않는다.** 지금 `RECOMMENDATION_GUIDANCE`가 이미 그렇게 한다.
+
+참고로, 질문 원문은 우리 쪽에서 로그에 남기지 않는다. bourbon-agent의 `tool_loop.call`(INFO, 도구 인자)과 `topic=` 로그에 질문이 남는 것은 bourbon-agent의 로그 정책이고, 이 요청서에서 바꿔 달라고 하지 않는다.
+
+## 7. 배포 순서와 우리 쪽 후속
+
+- **공백:** discovery dev 배포가 나가면 `/recommend/explicit`가 404가 되고, bourbon-agent가 바뀔 때까지 `recommend_agents`는 "지금은 쓸 수 없다"만 말한다. 내부 테스트 단계라 이 공백은 받아들이기로 했다(설계 §10-2, 2026-11-07 오너). 공백을 줄이려면 우리 배포 직후에 §4를 배포해 주시면 된다. 순서를 반대로 하면 그 사이에는 새 route가 404다. 우리 배포 시점은 미리 알린다.
+- **우리가 나중에 할 수 있는 것:**
+  - tag label 다국어(지금 한국어뿐) — `lang`이 하던 일.
+  - 답에 실제로 인용한 note id를 돌려받는 길(설계 열린 항목 9). 인용 횟수는 note 품질 신호가 된다. v1에는 없다.
+
+## 8. 확인 질문
+
+1. §4 — 다른 사람이 있는 방에서 requester를 누구로 할지. 지금처럼 소유자로 둘지.
+2. §4 — `exclude_user_ids`에 방의 다른 사람을 넣는 데 이견이 없는지.
+3. §5 — 답할 사람 찾기 도구를 붙일지, 붙인다면 언제쯤이고 방 열기는 (a)·(b) 중 어느 쪽인지.
+4. §6-1 — 로그에서 빼는 것과 DEBUG를 끄는 것 중 어느 쪽인지.
+5. §7 — §4를 배포할 수 있는 시점.
