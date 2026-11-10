@@ -21,7 +21,7 @@ bourbon-agent-discovery-api는 유저의 **공개 note**로 "대화해 볼 사�
 
 ### 1-1. `vector` 확장 — 다음 배포 전에 필요
 
-note embedding을 `vector(768)` 컬럼에 두고 요청마다 cosine 거리로 검색한다(pgvector). 예전 요청서에서 "pgvector는 나중에 필요해지면 다시 요청한다"고 했던 그 시점이 왔다. 마이그레이션 0013이 확장이 있는지 먼저 보고, 없으면 무엇을 하라는 메시지와 함께 멈춘다.
+note embedding을 `vector(768)` 컬럼에 두고 요청마다 cosine 거리로 검색한다(pgvector). 예전 요청서에서 "pgvector는 나중에 필요해지면 다시 요청한다"고 했던 그 시점이 왔다. 기준 마이그레이션(0015, 예전 0013)이 확장이 있는지 먼저 보고, 없으면 무엇을 하라는 메시지와 함께 멈춘다.
 
 - **우리가 먼저 한다:** pgvector는 trusted 확장이라, DB에 CREATE 권한이 있는 계정이면 superuser가 아니어도 만들 수 있다. 관리 계정으로 `CREATE EXTENSION vector;`를 실행해 본다.
 - **거부되면 부탁드린다:** 관리 계정에 그 권한이 없거나, RDS가 이 확장을 trusted로 두지 않아 권한 오류가 나면, `rds_superuser` 계정으로 dev DB `bourbon_agent_discovery`에서 같은 문장을 실행해 주세요.
@@ -31,6 +31,8 @@ note embedding을 `vector(768)` 컬럼에 두고 요청마다 cosine 거리로 �
 ### 1-2. 테이블 정리 (우리가 한다, 알려 드리는 것)
 
 마이그레이션 0012~0014가 topic 시절 테이블 9개를 지우고 새 테이블 6개를 만든다. 앱 계정 권한은 관리 계정이 직접 준다.
+
+**2026-11-10: migration을 기준 하나(0015)로 합쳤다.** 0001~0014는 discovery `df05ccb`까지만 있다. dev는 한 번만 손으로 옮긴다: 옛 api와 worker를 멈춤 → `df05ccb` worktree에서 `alembic upgrade 0014`(관리 계정) → 새 테이블 권한 → dev 스키마를 새 기준과 비교(읽기만, 차이가 없어야 한다) → `alembic stamp --purge 0015` → 배포 후 두 deployment를 1로 되돌림. 절차는 discovery README "Database migrations"에 있다. 테이블과 남는 데이터(아래 표)는 그대로다. prod에는 아직 DB가 없어 이 절차가 필요 없다.
 
 | 지우는 테이블 (0012) | 새 테이블 (0013, 0014) | 남는 테이블 |
 |---|---|---|
