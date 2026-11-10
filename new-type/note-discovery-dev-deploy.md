@@ -1,6 +1,6 @@
 # note 기반 agent-discovery-api — dev 첫 배포 절차
 
-> discovery `deploy/2611`을 dev에 처음 올린다(5-A를 쓰려면 phase 8 `cli rebuild-index`가 들어간 커밋이어야 한다. 아니면 `ee1938c`에 5-B). dev는 지금 `60bf02f`(topic 기반), DB는 migration `0011`. prod는 DB도 배포도 없다.
+> discovery `deploy/2611`(`e73f1f9`, phase 8 `cli rebuild-index` 포함)을 dev에 처음 올린다. dev는 지금 `60bf02f`(topic 기반), DB는 migration `0011`. prod는 DB도 배포도 없다.
 > 되돌림은 없다(topic 시절 테이블을 지운다). 문제가 생기면 앞으로 고친다.
 > 근거: discovery README "Database migrations"·"Rebuilding the note index in the cluster"·"Reloading the note index from a snapshot", 설계 §2-3·§10-2, `requests/infra.md`.
 
@@ -14,7 +14,7 @@
 
 ## 1. 준비
 
-- `deploy/2611`로 옮겨서 pull한다(`ee1938c`, tree가 깨끗해야 한다).
+- `deploy/2611`로 옮겨서 pull한다(`e73f1f9`, tree가 깨끗해야 한다).
 - bastion 터널을 연다(직접 만든 스크립트). DB는 로컬 **15432** → dev RDS 5432를 가정한다. 다른 포트면 아래 URL의 포트만 바꾼다. 7-2에서 Redis(DB 13)도 터널로 닿아야 한다.
 - 로컬 compose: 빌드와 3-4의 비교에 쓴다. `init` 이미지가 오래됐으면 먼저 다시 빌드한다.
 
@@ -128,7 +128,7 @@ kubectl --context dev-tokyo-cluster -n dev get pods
 
 ### 5-A. 클러스터 안에서
 
-배포된 이미지에 `cli rebuild-index`가 있어야 한다(Job은 worker의 이미지로 돈다). 먼저 `--dry-run`으로 Job의 이미지가 이번 배포의 것인지 본다.
+Job은 worker의 이미지로 돈다. 먼저 `--dry-run`으로 Job의 이미지가 이번 배포의 태그(`e73f1f9`)인지 본다.
 
 ```bash
 k8s/scripts/rebuild-index.sh dev --dry-run
