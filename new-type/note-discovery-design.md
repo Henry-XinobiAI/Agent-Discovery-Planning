@@ -271,6 +271,14 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
   - 큐를 스냅샷 직전에 비우는 이유: 큐에는 note-api가 다시 쓰면서 낸 이벤트가 쌓여 있는데, 그 결과는 스냅샷에 이미 있다. 그대로 두면 적재 뒤 `note_updated`마다 note가 다시 읽힐 때까지 검색에서 빠지고, 다시 쓰기로 사라진 옛 note의 이벤트는 삭제 급증 차단을 건다.
   - 비운 뒤에 생긴 이벤트는 큐에 남아 있다가 적재 뒤에 처리되고, 놓친 것은 주기적 다시 맞추기가 version으로 잡는다.
 
+**클러스터 안에서 제자리 재구축하기(2026-11-10):**
+- 스냅샷 다시 적재는 노트북, bastion 터널, 관리 계정, broker 콘솔이 있어야 한다. note-api가 note를 다시 쓰는 일이 잦아서, kubectl만으로 되는 길을 하나 더 둔다. discovery `k8s/scripts/rebuild-index.sh dev`가 워커를 멈추고 `cli rebuild-index --confirm`을 일회용 Job으로 돌린 뒤 워커를 다시 켠다(discovery README "Rebuilding the note index in the cluster").
+- **순서:** 인덱스를 한 transaction의 `DELETE`로 비운다(앱 계정 권한 안. `room_turns`, `departed_users`는 남긴다) → note listener 큐 넷을 비운다(다른 큐는 건드리지 않는다. `erase_on_user_deactivated`를 비우면 탈퇴 처리가 사라진다) → backfill로 모든 유저의 note를 표시한다. 다시 켠 워커의 sync가 읽고 분석한다.
+- 비우기는 필요하다. note-api가 같은 id로 더 낮은 version의 note를 다시 쓰면, 남은 row가 원하는 version을 영영 만나지 못한다.
+- DB가 코드의 migration head가 아니거나 note 큐에 consumer가 있으면(워커가 돌고 있으면) 아무것도 하지 않고 거부한다. 각 단계는 다시 돌려도 된다. 목록을 읽지 못한 유저가 있으면 실패로 끝내고 `cli backfill`로 다시 한다.
+- **대가:** 채워지는 동안(note 수에 따라 몇 분) 인덱스가 일부만 차 있어 검색 결과가 덜 나온다. 빈틈 없이 바꿔야 하면 스냅샷 다시 적재를 쓴다. LLM 비용은 같다(public note마다 embedding 하나, 분석 하나).
+- private note는 live 경로대로 분석하지 않는다(불변식 7을 예외 없이 지킨다). 스냅샷 build와 다른 점이다. 검색에는 public만 쓰이므로 결과는 같다.
+
 ### 2-4. 등록된 tag
 
 메모 §12-1, §12-5와 실험 문서 §1을 따른다. 카탈로그 topic은 없다.
@@ -745,6 +753,7 @@ note_score = cosine(note, query)
 6. **지운 note는 늦게 끝난 처리로 되살아나지 않는다.** 쓰기는 lease를 가진 처리만, 가져간 뒤 새 신호가 없을 때만 할 수 있다.
 7. **private note는 분석하지 않는다.** 내용이 바뀌어도 hash만 적는다. 그래서 등록된 tag가 private note에서 새로 생기지 않는다(분석 도중 private이 된 경우는 예외, §2-4).
    - **스냅샷 다시 적재의 예외(2026-11-09 오너, §2-3).** note는 public으로 생기고, 공개 범위만 바꾸는 note-api API는 본문을 바꾸지 않는다. 그래서 지금 private인 note의 본문은 public이던 때의 본문이고, live 경로는 그때 분석해 두었다가 private이 된 뒤에도 남겼을 것이다. build는 이 이력대로 private note를 public으로 읽혀 분석한 뒤, private으로 다시 읽혀 검색에서 뺀다. 한계: private인 동안 본문을 고친 note는 구별하지 못해 고친 본문으로 분석된다. note-api가 공개 범위 API를 낼 때 공개 범위를 바꾼 시각(`visibility_changed_at` 같은 것)을 함께 받으면 거를 수 있다(§11).
+   - 클러스터 안의 제자리 재구축(§2-3)에는 이 예외가 없다. private note는 hash만 적힌다.
 8. **`place`, `org`, `person` card의 이름은 discovery가 만드는 설명 필드(`matched_tags` 등)에 싣지 않는다.** note 본문이나 제목에 그 이름이 있는 것은 owner가 공개한 글이라 그대로 둔다.
 9. **요청자 자신과 `exclude_user_ids`는 결과에 나오지 않는다.**
 
