@@ -7,7 +7,7 @@
 | 인프라 | [`infra.md`](infra.md) | PostgreSQL 인스턴스(플랫폼에 처음 — 근거 포함), DynamoDB 테이블 1개(prod terraform 시점), deferq용 Redis DB 번호, AMQP 계정 정보 | 1차 배포 2주 전 |
 | bourbon-api | [`bourbon-api.md`](bourbon-api.md) | **남은 요청 하나** — 공개 prefix `/api/svc/agent-discovery/`의 경로 레지스트리 등록. ~~`discoverable` + `personal_agent_visibility_changed`(R23)~~ 철회(R57), ~~친구 게이트 해제~~ **완료**(#325·#326, 2026-09-13), 방 생성 이벤트 철회(R51). 문서에 남은 나머지는 요청이 아니라 알림 셋(백필 없음·리컨사일 재시도 없음·우리가 못 보는 게이트 조건) | 배포 준비 시점 — 더 이상 "가장 먼저"가 아니다. 막고 있던 게이트가 내려갔다 |
 | 클라이언트 | [`client.md`](client.md) | 탐색 탭이 우리 API를 직접 호출(`lang` 전달), 카드에서 대화를 시작할 때 우리 route `POST /recommendations/opened`에 보고(R47) | bourbon-api와 같이 |
-| bourbon-agent | [`bourbon-agent.md`](bourbon-agent.md) | 타입 ① 호출을 새 계약(`/recommend/explicit`)으로, 요청자 = 실제 말한 사람, 카드 meta에 `recommendation_id`(R24·R47). HEXACO는 **아직 요청하지 않는다**(O20) | bourbon-api 다음 |
+| bourbon-agent | [`bourbon-agent.md`](bourbon-agent.md) | **2026-11-10 새로 씀(공개 note 기반).** `recommend_agents`를 `/recommend/subject`로 옮기는 부탁(필수, discovery dev 배포에 맞춰), `/recommend/answerers`로 다른 사람의 note에서 답하는 도구 제안(선택), 지켜 달라는 것. topic 시절 요청서(`/recommend/explicit`, 카드 meta)는 `archive/2026-11-10_topic-era-bourbon-agent-request/`로 옮기고 철회 | discovery dev 배포 전 |
 | bourbon-topic-api | [`bourbon-topic-api.md`](bourbon-topic-api.md) | ~~api 프로세스 AMQP 연결 + visibility 변경 신호 발행(R48)~~ **완료**(#68·#69 — `topic_visibility_changed`, `consistent=true`). 남은 것은 **prod 워커 replicas** 하나와 bulk 발행에 대한 알림 하나 | prod 배포 전 |
 
 **쓰는 규칙**
