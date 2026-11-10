@@ -1,8 +1,8 @@
 # note 기반 agent-discovery-api — dev 첫 배포 절차
 
-> discovery `deploy/2611`(`ee1938c`)을 dev에 처음 올린다. dev는 지금 `60bf02f`(topic 기반), DB는 migration `0011`. prod는 DB도 배포도 없다.
+> discovery `deploy/2611`을 dev에 처음 올린다(5-A를 쓰려면 phase 8 `cli rebuild-index`가 들어간 커밋이어야 한다. 아니면 `ee1938c`에 5-B). dev는 지금 `60bf02f`(topic 기반), DB는 migration `0011`. prod는 DB도 배포도 없다.
 > 되돌림은 없다(topic 시절 테이블을 지운다). 문제가 생기면 앞으로 고친다.
-> 근거: discovery README "Database migrations"·"Reloading the note index from a snapshot", 설계 §10-2, `requests/infra.md`.
+> 근거: discovery README "Database migrations"·"Rebuilding the note index in the cluster"·"Reloading the note index from a snapshot", 설계 §2-3·§10-2, `requests/infra.md`.
 
 ## 순서
 
@@ -121,7 +121,38 @@ kubectl --context dev-tokyo-cluster -n dev get pods
 
 ## 5. 인덱스 채우기
 
-README "Reloading the note index from a snapshot"과 같은 순서다. 나중에 note-api가 note를 다시 쌓을 때도 이대로 한다.
+둘 중 하나로 한다. 나중에 note-api가 note를 다시 쌓을 때도 같다.
+
+- **5-A. 클러스터 안에서(권장, kubectl만).** 첫 배포는 인덱스가 어차피 비어 있어서, 채워지는 동안의 빈틈이 문제가 되지 않는다.
+- **5-B. 스냅샷으로(빈틈 없이 바꿔야 할 때).** 노트북, 터널, 관리 계정, broker 콘솔이 필요하다.
+
+### 5-A. 클러스터 안에서
+
+배포된 이미지에 `cli rebuild-index`가 있어야 한다(Job은 worker의 이미지로 돈다). 먼저 `--dry-run`으로 Job의 이미지가 이번 배포의 것인지 본다.
+
+```bash
+k8s/scripts/rebuild-index.sh dev --dry-run
+k8s/scripts/rebuild-index.sh dev
+```
+
+- 스크립트가 worker를 멈추고 파드가 없어질 때까지 기다린 뒤, Job으로 인덱스 비우기 → note queue 넷 purge → 모든 유저의 note 표시를 하고, 출력을 보여 준 다음 worker를 다시 켠다. 어떻게 끝나든 worker는 다시 켜진다.
+- DB가 0015가 아니거나 worker가 아직 돌고 있으면 아무것도 하지 않고 거부한다.
+- 첫 실행에서 AMQP 계정에 purge 권한이 있는지가 처음 확인된다. 권한 오류로 실패하면 5-B의 5-2처럼 콘솔에서 비우고 다시 돌린다(비우기와 backfill은 다시 해도 된다).
+- 채워지는 것을 본다. `pending`이 줄고 `ready`가 늘다가 멈추면 끝이다.
+
+```bash
+kubectl --context dev-tokyo-cluster -n dev exec deploy/bourbon-agent-discovery-worker -- python -m cli rebuild-index --status
+```
+
+- 목록을 읽지 못한 유저가 있어 Job이 실패했으면, worker가 켜진 상태에서 다시 표시한다.
+
+```bash
+kubectl --context dev-tokyo-cluster -n dev exec deploy/bourbon-agent-discovery-worker -- python -m cli backfill
+```
+
+### 5-B. 스냅샷으로
+
+README "Reloading the note index from a snapshot"과 같은 순서다.
 
 **5-1. worker 멈춤.** 파드가 없어질 때까지 기다린다(종료 유예 90초). 그 전에 스냅샷을 찍으면, 그 사이 반영된 이벤트를 적재가 덮는다.
 
