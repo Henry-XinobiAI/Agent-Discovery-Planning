@@ -137,7 +137,7 @@ k8s/scripts/rebuild-index.sh dev
 
 - 스크립트가 worker를 멈추고 파드가 없어질 때까지 기다린 뒤, Job으로 인덱스 비우기 → note queue 넷 purge → 모든 유저의 note 표시를 하고, 출력을 보여 준 다음 worker를 다시 켠다. 어떻게 끝나든 worker는 다시 켜진다.
 - DB가 0015가 아니거나 worker가 아직 돌고 있으면 아무것도 하지 않고 거부한다.
-- 첫 실행에서 AMQP 계정에 purge 권한이 있는지가 처음 확인된다. 권한 오류로 실패하면 5-B의 5-2처럼 콘솔에서 비우고 다시 돌린다(비우기와 backfill은 다시 해도 된다).
+- 첫 실행에서 AMQP 계정에 purge 권한이 있는지가 처음 확인된다. 권한 오류로 실패하면 인덱스는 이미 비워진 상태다. 다시 돌리지 말고, 5-B의 5-2처럼 콘솔에서 note queue 넷을 비운 뒤 worker가 켜진 상태에서 아래의 `cli backfill`을 돌린다(다시 돌리면 같은 권한 오류에서 또 멈춘다).
 - 채워지는 것을 본다. `pending`이 줄고 `ready`가 늘다가 멈추면 끝이다.
 
 ```bash
