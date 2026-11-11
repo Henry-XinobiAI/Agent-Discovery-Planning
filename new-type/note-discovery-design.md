@@ -512,7 +512,7 @@ note_score = cosine(note, query)
   - 이 판단이 짧은 시간에 여러 번 걸리면 경고를 올린다.
 
 **결과에 있는 note**
-- 읽은 `version`이 discovery의 `version`보다 크면, discovery가 아직 그 변경을 모른다(이벤트가 새거나 늦었다). 내용은 그대로 싣되 그 note의 tag는 `matched_tags`에 쓰지 않는다. 그리고 응답을 보낸 뒤 `mark_pending(hide=false, version=읽은 version)`을 부른다. 이벤트가 샌 수정도 여기서 잡힌다. discovery가 변경을 이미 알지만 파생 데이터가 아직 옛것인 경우는 §5-1의 hash 조건이 막는다.
+- 읽은 `version`이 discovery의 `version`보다 크면, discovery가 아직 그 변경을 모른다(이벤트가 새거나 늦었다). 그 note는 읽은 `version`으로 응답에 싣되, 그 note의 tag와 card 역할은 `reason`에 쓰지 않는다(`matched_by`는 `meaning`이다). 그리고 응답을 보낸 뒤 `mark_pending(hide=false, version=읽은 version)`을 부른다. 이벤트가 샌 수정도 여기서 잡힌다. discovery가 변경을 이미 알지만 파생 데이터가 아직 옛것인 경우는 §5-1의 hash 조건이 막는다.
 
 **R2 전**
 - 단건 public 읽기를 동시에 부른다. 동시 수는 `note_api.read_concurrency`(초안 8)로 묶는다.
@@ -527,32 +527,37 @@ note_score = cosine(note, query)
 
 ### 6-1. route
 
-`POST /api/internal/svc/agent-discovery/recommend/subject`. 이름과 필드는 이 안대로 간다(2026-11-07 오너).
+`POST /api/internal/svc/agent-discovery/recommend/agents`. 처음 이름은 `/recommend/subject`였고(2026-11-07 오너), 무엇을 추천하는지 드러나게 바꿨다(2026-11-11 오너, discovery phase 9).
 
 **요청:**
 
 | 필드 | 뜻 |
 |---|---|
 | `user_id` | 요청자 |
-| `subject` | 이야기하고 싶은 주제. 짧은 말이든 문장이든 된다 |
+| `topic` | 이야기하고 싶은 주제. 짧은 말이든 문장이든 된다. 카탈로그 topic이 아니라 자유 텍스트다 |
 | `context` | 선택. 대화 맥락 요약. 쿼리 분석의 LLM에만 쓴다 |
 | `exclude_user_ids` | 선택. 이미 같은 방에 있는 사람 등 |
 | `max_results` | 1~20, 기본 3 |
+| `explain` | 선택, 기본 false. 켜면 한 줄 설명(`reason.text`)을 더한다(§7-1의 "설명") |
 
 **응답:**
 
 ```json
 {
-  "contract_version": "...",
+  "contract_version": "1",
   "recommendation_id": "...",
   "agents": [
     {
       "agent_id": "...",
       "owner_user_id": "...",
       "position": 1,
-      "matched_tags": [{"key": "peaty whisky", "label": "피트 위스키"}],
-      "notes": [{"note_id": "...", "title": "..."}],
-      "already_talked": false
+      "already_talked": false,
+      "reason": {
+        "matched_tags": [{"key": "peaty whisky", "label": "피트 위스키", "note_count": 2}],
+        "matched_by": ["tags", "card_subject"],
+        "notes": [{"note_id": "...", "title": "...", "experienced": true}],
+        "text": null
+      }
     }
   ],
   "empty": false,
@@ -561,11 +566,14 @@ note_score = cosine(note, query)
 }
 ```
 
-- 사람 점수(§6-2)로 상위 `max_results + subject.read_buffer`(초안 +2)명을 고르고, 그 사람들의 쿼리와 가장 가까운 note 최대 3개씩을 여러 개 public 조회 1번으로 읽는다(최대 22명 × 3 = 66개, 한 번에 읽는 100개 안).
+- 사람 점수(§6-2)로 상위 `max_results + agents.read_buffer`(초안 +2)명을 고르고, 그 사람들의 쿼리와 가장 가까운 note 최대 3개씩을 여러 개 public 조회 1번으로 읽는다(최대 22명 × 3 = 66개, 한 번에 읽는 100개 안).
 - **확인된 note가 하나도 없는 사람은 빼고**, 순위에서 다음 사람으로 채운다(§5-5).
-- `notes`는 그 읽기에 있는 note의 id와 제목이다.
-- `matched_tags`는 그 읽기에 있는 note에 붙은 tag 중 쿼리 tag와 겹치는 것이다(§5-5의 version 비교로 옛 tag는 뺀다). 순위는 파생 데이터로 정했지만, 응답에 드러나는 사람과 이유는 방금 public으로 확인된 note에서만 나온다. "왜 이 사람인지"는 이것과 `notes`의 제목으로 만든다(메모 §11-3). card 이름은 싣지 않는다(§8).
-- agent 하나의 모양(`agent_id`, `owner_user_id`, `position`, `matched_tags`, `notes`)은 답할 사람 찾기의 `owners`와 같은 타입으로 둔다. bourbon-agent client는 타입 하나로 읽는다.
+- **`reason`은 그 요청에서 확인된 note에서만 만든다**(불변식 2). 순위는 파생 데이터로 정했지만, 응답에 드러나는 사람과 이유는 방금 public으로 확인된 note에서만 나온다(메모 §11-3).
+  - `notes`: 확인된 note의 id, 제목, 직접 경험 여부.
+  - `matched_tags`: 그 note들의 지금 tag 중 쿼리 tag와 겹치는 것과, 그 tag가 붙은 확인된 note 수(`note_count`). 확인된 note만 센다(2026-11-11 오너). 검색 가능한 note 전체 수는 응답에 드러나지 않는다.
+  - `matched_by`: 그 note들이 찾힌 방법을 모은 것이다(§7-1). `meaning`은 다른 방법으로 찾힌 note가 하나도 없을 때만 온다.
+  - note-api가 인덱스보다 새 version을 가진 note는 옛 분석의 tag와 card 역할을 쓰지 않는다(§5-5의 version 비교).
+  - card는 이름이 아니라 역할(`card_subject`, `card_mention`)로만 드러난다(§8).
 
 ### 6-2. 사람 점수
 
@@ -582,7 +590,7 @@ note_score = cosine(note, query)
 - 사람이 3명보다 적으면 z-score 없이 가까운 note 유사도로 줄을 세우고, card 항과 감점도 그 값에 그대로 더하고 뺀다.
 
 - 계산의 모든 입력(사람 수, tag를 쓴 사람 수, note 수, 가까운 note)은 검색 가능한 note만으로 센다(§8).
-- **card 항(2026-11-08 오너, v1에 넣었다).** 질문의 card를 `subject`로 연결한 검색 가능한 note(지금 내용의 분석)가 있는 사람은 `subject.card_term`(0.5, z-score 단위)을 더 받는다. mention은 받지 않는다(거주지 누출, §2-5). z-score를 낸 뒤에 더하므로 다른 사람의 점수는 바뀌지 않는다. 결정 로그에 항의 값과 이 항을 받은 사람을 남긴다. 실험에 없던 항이라 값은 dev에서 다시 잰다.
+- **card 항(2026-11-08 오너, v1에 넣었다).** 질문의 card를 `subject`로 연결한 검색 가능한 note(지금 내용의 분석)가 있는 사람은 `agents.card_term`(0.5, z-score 단위)을 더 받는다. mention은 받지 않는다(거주지 누출, §2-5). z-score를 낸 뒤에 더하므로 다른 사람의 점수는 바뀌지 않는다. 결정 로그에 항의 값과 이 항을 받은 사람을 남긴다. 실험에 없던 항이라 값은 dev에서 다시 잰다.
   - **로컬 결과(2026-11-08, 고유명사 세트):** 질문의 card를 `subject`로 연결한 note가 있는 사람(인덱스의 역할로)에게 z-score 단위로 w를 더하면, 정답 사람 비율(상위 5명에 든 정답 사람 수를, 들어갈 수 있는 최대 수 — 정답 사람 수, 최대 5 — 로 나눈 값)이 w 0.5에서 +0.053 [+0.012, +0.107], w 1.0에서 +0.083 [+0.029, +0.149] 올랐고 언급만 한 사람은 거의 늘지 않았다(+0.017 [+0.000, +0.050]). 이 결과로 w 0.5를 v1에 넣었다.
 - **note가 적은 사람이 밀린다.** 이 점수로 note 1개인 직접 경험자는 상위 5명에 13%만 들었다(실험 문서 §12, 재순위 전부터). 실험 문서는 "선정 점수가 note 수를 타는 것으로 보인다"고 적었다. 완화책(note embedding 중심, 개수를 정규화한 top-k 등)은 아직 재지 않았다.
   - 실험 문서 §6에서 note embedding 중심(centroid)은 첫 판정(`gpt-5.5`) 라벨로 "관련 경험 + 관심" p@5가 결합과 같았고(0.84) 직접 경험자 hit@10이 가장 좋았다(0.65). 기준 라벨(Gemini)로는 다시 잰다.
@@ -601,7 +609,7 @@ note_score = cosine(note, query)
 - **판정:** 요청자가 그 사람의 agent와 대화한 방 id는 계산할 수 있다(`identity.agent_dm_room_id(요청자, personal_agent_id(owner))`). 그 방이 `room_turns`에 있으면 대화한 것이다.
   - `room_turns`는 `message_created`가 agent DM의 유저 메시지마다 센다. 추천한 방만이 아니다.
   - 후보 전체의 방 id를 계산해 DB 조회 한 번으로 본다.
-- 대화했으면 `subject.already_talked_penalty`를 뺀다. 감점 크기는 실험에 없으니 dev에서 정한다.
+- 대화했으면 `agents.already_talked_penalty`를 뺀다. 감점 크기는 실험에 없으니 dev에서 정한다.
 - 응답에 `already_talked`를 실어 화면이 "다시 이야기해 보기"처럼 보여줄 수 있게 한다.
 - 지금 `interactions`는 discovery가 추천한 방만 기록한다(`worker/conversations.py`). 그래서 이 판정에는 쓰지 않고 지운다.
 
@@ -647,7 +655,7 @@ note_score = cosine(note, query)
 
 ### 7-1. route
 
-`POST /api/internal/svc/agent-discovery/recommend/answerers`. 이름과 필드는 이 안대로 간다(2026-11-07 오너).
+`POST /api/internal/svc/agent-discovery/recommend/notes`. 처음 이름은 `/recommend/answerers`였고(2026-11-07 오너), 무엇을 추천하는지 드러나게 바꿨다(2026-11-11 오너, discovery phase 9). 이름은 그대로 "답할 사람 찾기"로 부르지만, 돌려주는 것은 note다.
 
 **요청:**
 
@@ -657,13 +665,14 @@ note_score = cosine(note, query)
 | `question` | 질문. 지칭은 bourbon-agent가 채운다 |
 | `context` | 선택 |
 | `exclude_user_ids` | 선택 |
-| `max_notes` | 1~12, 기본 8(실험 문서 §4의 상위 8개) |
+| `max_results` | 1~12, 기본 8(실험 문서 §4의 상위 8개). 처음 이름은 `max_notes`였다 |
+| `explain` | 선택, 기본 false. 아래 "설명" |
 
 **응답:**
 
 ```json
 {
-  "contract_version": "...",
+  "contract_version": "1",
   "recommendation_id": "...",
   "notes": [
     {
@@ -673,30 +682,42 @@ note_score = cosine(note, query)
       "position": 1,
       "version": 3,
       "title": "...",
-      "pages": ["..."],
-      "truncated": false,
       "experienced": true,
       "language": "ko",
-      "conversation_ended_at": "..."
+      "conversation_ended_at": "...",
+      "reason": {
+        "matched_tags": [{"key": "peaty whisky", "label": "피트 위스키"}],
+        "matched_by": ["tags"],
+        "text": null
+      }
     }
   ],
-  "owners": [{"agent_id": "...", "owner_user_id": "...", "position": 1, "matched_tags": [], "notes": [{"note_id": "...", "title": "..."}]}],
   "empty": false,
   "empty_reason": null,
   "degraded": []
 }
 ```
 
-- `notes`는 답의 재료다. 내용은 그 요청에서 note-api public 읽기로 가져온 것이다. bourbon-agent의 모델이 이 note로 답을 쓰고 **실제로 인용한 note**를 고른다. 인용한 note의 owner가 함께 추천할 사람이다(메모 §9-2).
-- note 하나의 `pages`는 합쳐서 `answer.note_max_chars`(초안 3,000자)까지만 싣는다. 넘으면 `truncated: true`다. 실험은 한 문단 note였고, 긴 note 8개를 그대로 넘긴 적은 없다.
-- `owners`는 `notes`를 owner로 묶은 것이다. 답을 쓰지 못했을 때 "이 분들과 이야기해 보세요"에 쓴다(메모 §0의 2단계). 순서는 각자의 가장 높은 note 순서다. 모양은 주제 추천의 agent와 같다(`already_talked`만 없다). `matched_tags`는 그 요청에서 읽기에 있는 note의 것만 쓴다.
-- `version`은 bourbon-agent가 나중에 그 note를 직접 다시 볼 때 같은 내용인지 확인하는 데 쓸 수 있다.
+- **note는 참조로만 준다. 본문(`pages`)은 싣지 않는다(2026-11-11 오너).** bourbon-agent가 note-api public 읽기로 직접 읽는다(`requests/bourbon-agent.md` §5). 받은 `version`과 다르거나 없으면(404) 그 note는 버린다. 그래서 `answer.note_max_chars`와 `truncated`는 없앴다.
+- **`owners`는 없앴다(2026-11-11 오너).** note마다 `owner_user_id`와 `agent_id`가 있으니 owner로 묶는 일은 bourbon-agent가 한다. bourbon-agent의 모델이 답을 쓰고 **실제로 인용한 note**의 owner가 함께 추천할 사람이다(메모 §9-2).
+- **`reason`(구조화된 이유, 늘 온다):** 그 요청에서 확인된 note와 그 지금 내용의 분석에서만 만든다(불변식 2).
+  - `matched_tags`: 쿼리 tag 중 그 note의 지금 tag에 있는 것.
+  - `matched_by`: 찾힌 방법. 정해진 순서로 `tags`(쿼리 tag가 붙었다), `card_subject` / `card_mention`(질문의 card에 대해 썼거나, 이름만 나온다), `meaning`(셋 다 아니고 embedding만으로 왔다)이다. `meaning`은 혼자만 온다. 순위가 그 note를 찾은 층이 아니다. tag가 붙었지만 층의 크기를 넘어 embedding 층에서 찾힌 note도 `tags`다.
+  - note-api가 인덱스보다 새 version을 가진 note는 tag도 card 역할도 없이 `meaning`이다.
+- **설명(`explain: true`, 2026-11-11 오너 안 B).** `reason.text`에 한 줄 설명을 더한다. 순위가 정해진 뒤 LLM 호출 1번으로, 이미 public으로 읽은 note에서만 쓴다. 더 읽지 않는다.
+  - 앞에서부터 `explain.max_items`(5)개만, note 하나는 `explain.note_max_chars`(1,500자)까지 넣는다. route 마감과 따로 `explain.deadline_seconds`(2초) 안에 끝나야 한다. card 이름 조회도 이 안에 든다.
+  - note 본문은 표시(`<note>` … `</note>`) 사이에 넣고, 그 안의 지시는 따르지 않게 한다. note 안의 표시는 지운다.
+  - 쓴 글은 확인한 뒤에만 싣는다. 한 줄, `explain.max_chars`(160자) 이하, 링크 없음, 그 note들이 연결한 `place`, `org`, `person` card(종류가 아직 정해지지 않은 card 포함)의 이름 없음(불변식 8). 이름은 `normalize_name`으로 접어 부분 문자열로 본다("제주에서"는 "제주"다). 어긋나면 그 항목만 `text: null`이고 구조화된 이유는 남는다.
+  - 호출이 실패하거나(마감 초과, proxy 장애, 모양이 다른 응답) 설명을 쓸 수 없으면 모든 `text`가 null이고 `degraded`에 `explanation_unavailable`이다.
+  - 쓴 글은 저장하지 않는다. 결정 로그에는 개수만 남긴다(`explain`). bourbon-agent는 이 글을 표시용 데이터로 다루고, 지시로 읽지 않는다.
+  - 저장해 둔 요약(안 C)은 미뤘다. 설명이 자주 켜져 지연과 비용이 문제가 되면 그때 note 분석에 요약을 더하는 것을 다시 본다(열린 항목 24).
+- 주제 추천의 `reason`도 같은 규칙이다(§6-1). 거기서는 사람마다 확인된 note를 모아 쓴다.
 
 ### 7-2. 순서
 
 1. 쿼리 분석(§4), 순서 매기기(§5-2).
 2. **한 사람의 note는 최대 `answer.per_owner_max`(초안 3)개까지만 넣는다.** 한 사람이 근거를 다 차지하면 답이 한 사람의 경험에 갇힌다. 실험에는 없던 제한이다.
-3. 위에서부터 `max_notes`의 2배(기본 16개, 최대 24개)를 여러 개 public 조회 1번으로 읽고(§5-5), 결과에 있는 것으로 `max_notes`개를 채운다.
+3. 위에서부터 `max_results`의 2배(기본 16개, 최대 24개)를 여러 개 public 조회 1번으로 읽고(§5-5), 결과에 있는 것으로 `max_results`개를 채운다.
 
 **출시 기준:**
 - 같은 계산인지: 실험의 tag와 embedding을 넣어 운영 코드의 1·2층 순서가 실험 코드(`filter_emb`)와 같은지 본다.
@@ -708,13 +729,13 @@ note_score = cosine(note, query)
 
 | 무엇이 | 언제 빠지나 |
 |---|---|
-| **응답에 실리는 note 내용**(제목, 본문) | **private으로 바꾸는 즉시.** 요청할 때마다 note-api가 public인지 확인하고 돌려준다 |
-| **응답에 실리는 사람**과 이유(`matched_tags`) | 즉시. 그 요청에서 확인된 note가 있는 사람만, 그 note의 tag로만 싣는다 |
+| **응답에 실리는 note**(id, 제목) | **private으로 바꾸는 즉시.** 요청할 때마다 note-api가 public인지 확인하고 돌려준다. 본문은 응답에 없고 bourbon-agent가 직접 public으로 읽는다 |
+| **응답에 실리는 사람**과 이유(`reason`) | 즉시. 그 요청에서 확인된 note가 있는 사람만, 그 note의 tag, card 역할, 본문으로만 만든다 |
 | 순위에 끼치는 영향(그 note의 tag·embedding이 사람 점수와 후보에 들어가는 것) | 보통 몇 초(이벤트 → listener). 이벤트가 새거나 listener가 실패하면 다음 주기적 다시 맞추기(초안 15분)나, 그 note가 요청 중 읽기에서 빠질 때까지 |
 
 - 마지막 줄은 내용이 아니라 순위다. 예를 들어 private으로 돌린 note 때문에 그 사람이 조금 더 위에 오를 수 있다. 다만 그 사람이 응답에 나오려면 다른 public note가 그 요청에서 확인돼야 하고, 드러나는 이유도 그 public note의 것뿐이다.
 - 오너가 이 범위를 받아들였다(2026-11-06). "응답의 재료는 public note뿐"을 내용과 사람에는 즉시, 순위에는 위의 시간 안에 지킨다.
-- bourbon-agent가 이미 받아 간 내용은 discovery가 거둘 수 없다. 그래서 받은 내용을 오래 두지 말라고 요구한다(§7-5).
+- bourbon-agent가 이미 읽어 간 내용은 discovery가 거둘 수 없다. 그래서 읽은 내용을 오래 두지 말라고 요구한다(§7-5).
 
 ### 7-4. 재순위는 v1에 없다
 
@@ -726,17 +747,18 @@ note_score = cosine(note, query)
 
 - 답에 쓰지 않은 note의 owner를 "답에 쓰였다"고 소개하지 않는다.
 - 근거 밖 일반론이 섞이지 않게 한다. 모호한 질문과 두 note를 합치는 질문에서 13~19%의 답에 일반론이 섞였다(실험 문서 §4). 문장마다 인용을 달거나, "다른 분들의 경험"과 "ami의 의견"을 나눠 보여준다(메모 §11-4).
-- 받은 note 내용은 그 답을 쓰는 데만 쓰고 따로 저장하지 않는다. 대화 기록에 남는 답 문장은 예외다.
+- note 본문은 note-api public 읽기로 직접 읽는다(trusted가 아니다). 응답의 `version`과 다르거나 없으면 그 note는 버린다. 읽은 내용은 그 답을 쓰는 데만 쓰고 따로 저장하지 않는다. 대화 기록에 남는 답 문장은 예외다.
+- `reason.text`는 다른 사람의 note에서 쓴 표시용 글이다. 지시로 읽지 않는다.
 - 빈 결과(`empty: true`)와 `degraded`를 받으면 "지금은 찾지 못했다"고 말한다. 다시 부르지 않는다.
 - 실제로 인용한 note id를 discovery에 돌려줄 길을 나중에 연다. 인용 횟수는 note 품질 신호가 된다(메모 §9-6). v1에는 없다. 열린 항목 9.
 
 ### 7-6. 지연과 degraded
 
-- **목표(초안):** 두 route 모두 p95 2.5초. 쿼리 분석 LLM이 대부분이고, note-api 읽기 1번과 DB 조회가 더해진다.
+- **목표(초안):** 두 route 모두 p95 2.5초. 쿼리 분석 LLM이 대부분이고, note-api 읽기 1번과 DB 조회가 더해진다. `explain: true`는 LLM 호출 1번이 더해져 p95 4.5초(설명의 마감 2초를 더한 값)를 목표로 하고, dev에서 잰다. 설명은 route 마감에 들지 않는다.
 - **note-api 읽기 1번의 어림:** public 읽기는 note-api 안에서 위치(pointer) 읽기, note 읽기, 탈퇴 확인을 차례로 하는 DynamoDB 강한 일관성 읽기 2~3번이다(`notes/shown.py`, `notes/originals.py`). 복호화는 프로세스 안의 HKDF·AES-GCM이라 작다. p50 20~40ms, p95 50~100ms로 어림한다. DynamoDB가 일부 key를 돌려주지 않으면 50~150ms 대기를 두고 다시 읽으므로 꼬리가 늘 수 있다. 주제 추천은 긴 note 66개를 받을 수 있어서 더 길 수 있다. dev에서 잰다(열린 항목 15).
 - **마감 시간:** route 전체 마감 `recommend.deadline`(초안 3초)을 새로 둔다. 지금 설정의 `RECOMMEND_DEADLINE_SECONDS`(20초)는 옛 route의 것이다. 쿼리 분석이 마감 안에 끝나지 않으면 503이다.
 - **note-api 읽기가 실패하거나, 마감을 넘거나, 비정상으로 판단되면(§5-5):** 확인된 note가 없으니 사람도 싣지 않는다. 두 route 모두 `empty: true`, `degraded`에 `note_read_unavailable`이다. 파생 데이터로만 고른 사람을 내보내면, 그 사이 private이 되거나 탈퇴한 사람이 섞일 수 있어서다.
-- **`degraded`는 알림이다.** bourbon-agent는 받은 결과를 그대로 쓴다. 다시 부르지 않는다. v1의 값은 `query_analysis_unavailable`, `note_read_unavailable` 둘이다.
+- **`degraded`는 알림이다.** bourbon-agent는 받은 결과를 그대로 쓴다. 다시 부르지 않는다. v1의 값은 `query_analysis_unavailable`, `note_read_unavailable`, `explanation_unavailable`(설명만 빠졌다) 셋이다.
 - 요청자별 호출 상한은 두지 않는다. 내부 route이고 부르는 쪽이 bourbon-agent 하나다.
 
 ---
@@ -746,15 +768,15 @@ note_score = cosine(note, query)
 1. **검색과 사람 점수는 검색 가능한 note의, 지금 내용과 맞는 파생 데이터만 본다.**
    - 후보와 사람 점수의 모든 입력이 그렇다.
    - 모든 검색용 DB 쿼리가 §5-1의 한 곳을 거친다. 조건이 빠지면 실패하는 테스트를 둔다(메모 §13-4의 3).
-2. **응답에 드러나는 것(note 내용, 사람, `matched_tags`)은 그 요청에서 note-api public 읽기로 확인된 note에서만 나온다.** 확인된 note가 없으면 응답이 빈다.
-3. **discovery는 note 본문과 제목을 저장하지 않는다.** trusted 조회의 내용도 저장하지 않는다. private이 된 note의 파생 데이터는 남지만 검색, 점수, 응답 어디에도 쓰이지 않는다.
+2. **응답에 드러나는 것(note, 사람, `reason`)은 그 요청에서 note-api public 읽기로 확인된 note에서만 나온다.** 확인된 note가 없으면 응답이 빈다.
+3. **discovery는 note 본문과 제목을 저장하지 않고, 응답에도 본문을 싣지 않는다.** trusted 조회의 내용도 저장하지 않는다. 설명(`reason.text`)도 저장하지 않는다. private이 된 note의 파생 데이터는 남지만 검색, 점수, 응답 어디에도 쓰이지 않는다.
 4. **`searchable`은 public을 확인한 처리만 올린다.** 올리는 쓰기는 `claim_id`, `generation`, `wanted_version`을 한 번에 확인하는 조건부 UPDATE다. 공개 범위 변경·삭제 신호, 주기적 다시 맞추기의 불일치, 요청 중 읽기에서 빠진 것은 받는 즉시 내린다.
 5. **탈퇴한 유저의 데이터는 쓰지 않고 내보내지도 않는다.** 모든 쓰기가 `refuse_departed`를 거치고, 모든 검색 쿼리가 `departed_users`를 거른다.
 6. **지운 note는 늦게 끝난 처리로 되살아나지 않는다.** 쓰기는 lease를 가진 처리만, 가져간 뒤 새 신호가 없을 때만 할 수 있다.
 7. **private note는 분석하지 않는다.** 내용이 바뀌어도 hash만 적는다. 그래서 등록된 tag가 private note에서 새로 생기지 않는다(분석 도중 private이 된 경우는 예외, §2-4).
    - **스냅샷 다시 적재의 예외(2026-11-09 오너, §2-3).** note는 public으로 생기고, 공개 범위만 바꾸는 note-api API는 본문을 바꾸지 않는다. 그래서 지금 private인 note의 본문은 public이던 때의 본문이고, live 경로는 그때 분석해 두었다가 private이 된 뒤에도 남겼을 것이다. build는 이 이력대로 private note를 public으로 읽혀 분석한 뒤, private으로 다시 읽혀 검색에서 뺀다. 한계: private인 동안 본문을 고친 note는 구별하지 못해 고친 본문으로 분석된다. note-api가 공개 범위 API를 낼 때 공개 범위를 바꾼 시각(`visibility_changed_at` 같은 것)을 함께 받으면 거를 수 있다(§11).
    - 클러스터 안의 제자리 재구축(§2-3)에는 이 예외가 없다. private note는 hash만 적힌다.
-8. **`place`, `org`, `person` card의 이름은 discovery가 만드는 설명 필드(`matched_tags` 등)에 싣지 않는다.** note 본문이나 제목에 그 이름이 있는 것은 owner가 공개한 글이라 그대로 둔다.
+8. **`place`, `org`, `person` card의 이름은 discovery가 만드는 설명 필드(`reason`의 `matched_tags`, `text` 등)에 싣지 않는다.** card는 역할(`matched_by`)로만 드러난다. `text`는 싣기 전에 이름을 거른다(§7-1). note 본문이나 제목에 그 이름이 있는 것은 owner가 공개한 글이라 그대로 둔다.
 9. **요청자 자신과 `exclude_user_ids`는 결과에 나오지 않는다.**
 
 ---
@@ -817,7 +839,7 @@ note_score = cosine(note, query)
 - 주기적 다시 맞추기는 처리 중인 row를 건드리지 않는다.
 - 주제 추천의 사람 점수는 요청자와 `exclude_user_ids`를 빼기 전에 계산한다.
 - 요청 중 public 읽기에서 빠진 note는 응답에 없고, 검색에서도 빠진다. 빠진 수와 비율이 모두 비정상이면 검색에서 빼지 않고 빈 결과로 응답한다. 몇 개만 빠지면 늘 뺀다.
-- 확인된 note가 없는 사람은 응답에 없다. `matched_tags`는 읽기에 있는 note의 tag만으로 만들고, version이 앞선 note의 tag는 쓰지 않는다.
+- 확인된 note가 없는 사람은 응답에 없다. `reason`은 읽기에 있는 note만으로 만들고, version이 앞선 note의 tag와 card 역할은 쓰지 않는다.
 - note-api 읽기가 실패하면 빈 결과와 `note_read_unavailable`로 응답한다.
 - backfill도 `wanted_version`보다 낮은 읽기로 `searchable`을 올리지 못한다.
 - 모든 검색 쿼리가 §5-1을 거친다.
@@ -955,10 +977,17 @@ v1은 원본을 두지 않는다. 아래 경우에는 public note의 사본을 d
 | 21 | ~~topic-api 상태와 bourbon-agent의 추천 tool~~ → 정해짐(2026-11-07): topic-api는 아직 켜져 있다. 지우기를 낼 때 bourbon-agent에 알리고 bourbon-agent가 대응해 배포한다. 공백은 받아들인다(§10-2) | — | — |
 | 22 | private으로 오래 머무는 note의 파생 데이터를 얼마나 둘지(지금은 public이 되거나 지워질 때까지) | 오너 | v1 뒤 |
 | 23 | ~~짧은 주제 문장 세트와 고유명사 질문 세트의 크기, 만드는 방법, 판정 깊이~~ → 짧은 주제 100개를 만들어 상위 10명 깊이로 판정했고 주제 추천은 통과했다(2026-11-08, §6-4). 고유명사 세트는 사람 단위 판정 없이 60개를 만들었다(2026-11-08, §9) | — | — |
+| 24 | 저장해 둔 요약(안 C)을 둘지. 설명(`explain`)이 자주 켜져 지연이나 비용이 문제가 되면 note 분석에 요약을 더한다(§7-1) | 오너 | dev에서 설명을 써 본 뒤 |
 
 ---
 
 ## 검토 기록
+
+**2026-11-11, 두 route를 목적에 맞게 다시 그린 것 (discovery phase 9)**
+- route와 필드 이름: `/recommend/subject` → `/recommend/agents`(`subject` → `topic`), `/recommend/answerers` → `/recommend/notes`(`max_notes` → `max_results`). 설정 묶음 `subject.*` → `agents.*`(§6-1, §7-1).
+- 응답에 note 본문을 싣지 않는다. bourbon-agent가 note-api public 읽기로 직접 읽는다. `answer.note_max_chars`, `truncated`, `owners`를 없앴다(§7-1).
+- 모든 항목에 구조화된 이유(`reason`: `matched_tags`, `matched_by`, 사람은 `notes`)를 단다(안 A). `note_count`는 확인된 note만 센다(§6-1).
+- `explain: true`로 한 줄 설명을 더한다(안 B). 저장된 요약(안 C)은 미뤘다(열린 항목 24). degraded 값 `explanation_unavailable`, 설명의 지연 목표, 불변식 2·3·8을 고쳤다(§7-6, §8).
 
 **2026-11-09, 스냅샷으로 note 인덱스를 다시 적재하는 길 (discovery phase 5)**
 - note-api가 개발 중에 저장소를 비우고 다시 쓰는 일이 잦아, live 경로 대신 인덱스를 통째로 바꾸는 `snapshot` → `build` → `load`를 두었다(§2-3). build는 sync 자체를 돌려 row가 live와 같다.
