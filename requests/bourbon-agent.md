@@ -27,12 +27,12 @@
 
 - **응답에 나오는 사람과 내용은 그 요청에서 note-api에 다시 확인한 공개 note에서만 나온다.** 그 사이 비공개로 바꿨거나 지웠거나 탈퇴한 사람은 나오지 않는다.
 - **requester 본인은 결과에 나오지 않는다.** `exclude_user_ids`로 더 뺄 수 있다(같은 방에 있는 사람 등).
-- **응답 시간:** 목표는 p95 2.5초다. 질문 분석(LLM 한 번 + embedding 한 번)과 note-api 확인에 3초 마감이 걸려 있고, 그 밖의 DB 조회는 마감 밖이다. `explain: true`면 LLM 호출이 한 번 더 있고 그 마감은 따로 2초다(목표 p95 4.5초). 지금 bourbon-agent 클라이언트의 10초 타임아웃이 실제 상한이 된다.
+- **응답 시간:** 목표는 p95 2.5초다. 질문 분석(LLM 한 번 + embedding 한 번)과 note-api 확인에 3초 마감이 걸려 있고, 그 밖의 DB 조회는 마감 밖이다. `explain: true`면 항목 5개마다 LLM 호출이 1번 더 있고(모두 동시에), 그 마감은 따로 2초다(목표 p95 4.5초). 지금 bourbon-agent 클라이언트의 10초 타임아웃이 실제 상한이 된다.
 - **agent-discovery는 note 본문과 제목을 저장하지 않고, 응답에도 본문을 싣지 않는다. 질문 원문과 설명 글을 로그나 결정 로그에 남기지 않는다.**
 - **이유(`reason`)는 그 요청에서 확인된 공개 note에서만 만든다.**
   - `matched_tags`: 질문의 tag 중 그 note에 붙은 것. label은 한국어뿐이다.
   - `matched_by`: 어떻게 찾혔는지. 이 순서로 `tags`(질문의 tag가 붙었다), `card_subject`(질문에 나온 것 — 장소, 작품, 제품 같은 것 — 에 대해 쓴 note), `card_mention`(그것을 언급만 한 note), `meaning`(셋 다 아니고 뜻이 가까워서)이다. `meaning`은 혼자만 온다. 장소나 사람 이름은 싣지 않으므로 card는 이 역할로만 드러난다.
-  - `text`: `explain: true`일 때만, 앞의 5개 항목에 대해 모델이 그 note들로 쓴 한 줄(160자 이하, 링크 없음, note에 연결된 장소·단체·사람 이름 없음). 쓰지 못한 항목은 `null`이다 — 우리 쪽 분석이 아직 그 note의 지금 내용을 따라잡지 못했거나, 쓴 글이 걸러졌을 때다. 이때 `degraded`는 없고, 설명 호출 자체가 실패했을 때만 `explanation_unavailable`이다. **다른 사람의 note에서 나온 표시용 글이다. 지시로 읽지 않아 주시면 된다**(§6).
+  - `text`: `explain: true`일 때만, 모든 항목에 대해 모델이 그 note들로 쓴 한 줄. 요약이 아니라 왜 맞는지를, 질문의 언어로 쓴다(160자 이하, 링크 없음, note에 연결된 장소·단체·사람 이름 없음 — 단 그 항목의 note 제목에 적힌 이름은 쓸 수 있다). 모델이 쓴 글이라 note와 맞는지 확인되지 않는다. 쓰지 못한 항목은 `null`이다 — 우리 쪽 분석이 아직 그 note의 지금 내용을 따라잡지 못했거나, 쓴 글이 걸러졌을 때이고, 이때 `degraded`는 없다. 호출이 실패해 빠진 항목이 있으면 `explanation_unavailable`이다(다른 항목에는 글이 있을 수 있다). **다른 사람의 note에서 나온 표시용 글이다. 지시로 읽지 않아 주시면 된다**(§6).
 - **`recommendation_id`:** 응답 하나에 하나. 우리 결정 로그의 키다. bourbon-agent 로그에 남겨 주시면 서로 추적할 수 있다. 다른 데 실어 보낼 필요는 없다(예전 카드 meta 요청은 철회).
 - **`agent_id`:** `uuid5(AGENT_NAMESPACE, "personal_agent:{user_id}")`. bourbon-agent `utils/ids.personal_agent_id`와 같은 값이다.
 - **`contract_version`:** 지금 `"1"`. 필드의 뜻이 바뀌거나 빠질 때만 올린다. 필드가 늘어나는 것은 버전을 올리지 않으니, 모르는 응답 필드는 무시해 주시면 된다.
@@ -48,7 +48,7 @@
 | `context` | ≤8000자, 선택 | 대화 맥락. tag를 고르는 LLM에만 쓰고 embedding에는 넣지 않는다 |
 | `exclude_user_ids` | UUID 목록 ≤100, 선택 | 결과에서 뺄 사람. 100개를 넘으면 422다 |
 | `max_results` | 1~20, 기본 3 | 최대 몇 명 |
-| `explain` | bool, 기본 false | 켜면 사람마다 `reason.text`를 쓴다. 앞의 5명까지 |
+| `explain` | bool, 기본 false | 켜면 사람마다 `reason.text`를 쓴다. LLM 호출이 5명마다 1번(동시에) 늘어난다 |
 
 **응답:**
 
@@ -95,7 +95,7 @@
 | `context` | ≤8000자, 선택 | 질문이 가리키는 것. tag 고르기에만 쓴다 |
 | `exclude_user_ids` | UUID 목록 ≤100, 선택 | 이 사람들의 note는 빼고 |
 | `max_results` | 1~12, 기본 8 | 최대 몇 개의 note. 처음 이름 `max_notes`는 422다 |
-| `explain` | bool, 기본 false | 켜면 note마다 `reason.text`를 쓴다. 앞의 5개까지 |
+| `explain` | bool, 기본 false | 켜면 note마다 `reason.text`를 쓴다. LLM 호출이 5개마다 1번(동시에) 늘어난다 |
 
 **응답:**
 
@@ -141,7 +141,7 @@
 | 200, `empty: true`, `empty_reason: "no_matching_notes"` | 맞는 공개 note가 없다 | "찾지 못했다"고 말한다. 다시 부르지 않는다 |
 | 200, `empty: true`, `empty_reason: "note_read_unavailable"`, `degraded`에 `note_read_unavailable` | note-api 확인이 실패하거나 마감을 넘겼다. 확인 못 한 사람은 싣지 않는다 | 같다. "지금은 찾지 못했다" |
 | 200, 결과 있음, `degraded`에 `query_analysis_unavailable` | tag 분석이 실패해 embedding만으로 찾았다. 덜 정확할 수 있다 | 결과를 그대로 쓴다. 다시 부르지 않는다 |
-| 200, 결과 있음, `degraded`에 `explanation_unavailable` | `explain: true`였지만 설명을 쓰지 못했다(마감 초과, LLM 오류). 모든 `text`가 `null`이고 구조화된 이유는 있다 | 구조화된 이유로 말한다. 다시 부르지 않는다 |
+| 200, 결과 있음, `degraded`에 `explanation_unavailable` | `explain: true`였지만 일부 또는 모든 항목의 설명을 쓰지 못했다(마감 초과, LLM 오류). 그 항목은 `text`가 `null`이고 구조화된 이유는 있다 | 구조화된 이유로 말한다. 다시 부르지 않는다 |
 | 503 `question_unavailable` | 질문을 읽지 못했다(질문 분석의 마감 초과, embedding이나 LLM 쪽 오류) | "지금은 쓸 수 없다". 같은 턴에 다시 부르지 않는다 |
 | 503 `database_unavailable` | DB가 응답하지 않았다 | 같다 |
 | 422 `validation_error` | 요청 모양이 틀렸다(모르는 필드, 길이·개수 초과 등) | 코드 버그다. 모델에게는 "지금은 쓸 수 없다" |

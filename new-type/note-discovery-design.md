@@ -704,13 +704,17 @@ note_score = cosine(note, query)
   - `matched_tags`: 쿼리 tag 중 그 note의 지금 tag에 있는 것.
   - `matched_by`: 찾힌 방법. 정해진 순서로 `tags`(쿼리 tag가 붙었다), `card_subject` / `card_mention`(질문의 card에 대해 썼거나, 이름만 나온다), `meaning`(셋 다 아니고 embedding만으로 왔다)이다. `meaning`은 혼자만 온다. 순위가 그 note를 찾은 층이 아니다. tag가 붙었지만 층의 크기를 넘어 embedding 층에서 찾힌 note도 `tags`다.
   - note-api가 인덱스보다 새 version을 가진 note는 tag도 card 역할도 없이 `meaning`이다.
-- **설명(`explain: true`, 2026-11-11 오너 안 B).** `reason.text`에 한 줄 설명을 더한다. 순위가 정해진 뒤 LLM 호출 1번으로, 이미 public으로 읽은 note에서만 쓴다. 더 읽지 않는다.
-  - 앞에서부터 `explain.max_items`(5)개 항목만, note 하나는 `explain.note_max_chars`(1,500자)까지 넣는다. route 마감과 따로 `explain.deadline_seconds`(2초) 안에 끝나야 한다. card 이름 조회도 이 안에 든다.
+- **설명(`explain: true`, 2026-11-11 오너 안 B).** `reason.text`에 한 줄 설명을 더한다. 순위가 정해진 뒤 LLM 호출로, 이미 public으로 읽은 note에서만 쓴다. 더 읽지 않는다.
+  - **모든 항목에 쓴다(2026-11-11 오너).** 항목을 `explain.batch_items`(5)개씩 묶어 묶음마다 호출 1번, 모두 동시에 부른다. note 하나는 `explain.note_max_chars`(1,500자)까지 넣는다. route 마감과 따로 `explain.deadline_seconds`(2초)라는 마감 시각 하나 안에서, card 이름 조회(요청당 1번)와 각 묶음이 그 시각까지 끝나야 한다. 늦은 묶음은 그 묶음의 항목만 잃는다.
+  - **무엇을 쓰는가.** 요약이 아니라 왜 맞는지다. 답할 사람 찾기는 "그 note의 무엇이 질문에 도움이 되는지"(글쓴이가 해 보고, 찾고, 비교하고, 내린 결론), 주제 추천은 "왜 이 주제로 이 사람과 이야기할 만한지"다. note에 없는 사실, 추측, 평가, "전문가"·"자주" 같은 말, 사는 곳·일하는 곳은 쓰지 않는다. 직접 했다는 말은 `experienced`인 note에서만 쓴다. "작가는/글쓴이는"으로 시작하지 않는다. 한국어는 해요체 평서문이다. 모델이 쓴 글이라 note와 맞는지 기계로 확인하지 못한다.
+  - **질문의 언어로 쓴다.** 질문의 문자로 정한다(한글이 있으면 한국어, 가나가 있으면 일본어). 질문으로 정해지지 않으면 `context`로, 그래도 안 되면 "질문의 언어"로 지시한다. note의 `language`는 쓰지 않는다. 다른 언어로 온 글은 버리지 않고 결정 로그에 수(`off_language`)만 센다.
   - **card 이름을 아는 note만 보낸다.** 지금 내용의 분석이 있고(§5-1의 hash 조건) note-api가 인덱스보다 새 version을 갖지 않은 note다(§5-5). 그렇지 않은 note는 어떤 card를 언급하는지 몰라 이름을 거를 수 없다. 보낼 note가 없는 항목은 `text: null`이고 `degraded`는 없다.
-  - note 본문과 금지할 card 이름은 user 메시지에 표시(`<note>` … `</note>`, `<names>` … `</names>`) 사이에 넣고, 그 안의 지시는 따르지 않게 한다. 그 안의 `<`, `>`는 escape해 표시를 닫을 수 없게 한다.
-  - 쓴 글은 확인한 뒤에만 싣는다. 한 줄, `explain.max_chars`(160자) 이하, 링크 없음, 그 note들이 연결한 `place`, `org`, `person` card(종류가 아직 정해지지 않은 card 포함)의 이름 없음(불변식 8). 이름은 `normalize_name`으로 접고 공백을 모두 뺀 뒤 부분 문자열로 본다("제주에서"는 "제주"이고, "스타벅스강남점"은 "스타벅스 강남점"이다). 링크는 NFKC로 접은 글에서 scheme, `www.`, markdown 링크, 맨 도메인을 본다. 어긋나면 그 항목만 `text: null`이고 구조화된 이유는 남는다.
-  - 호출이 실패하면(마감 초과, proxy 장애, 이름 조회 중 DB 장애, 모양이 다른 응답) 모든 `text`가 null이고 `degraded`에 `explanation_unavailable`이다. 호출은 됐지만 모델이 쓰지 않았거나 걸러진 항목은 `text: null`만이고 `degraded`는 없다.
-  - 쓴 글은 저장하지 않는다. 결정 로그에는 개수만 남긴다(`explain`). bourbon-agent는 이 글을 표시용 데이터로 다루고, 지시로 읽지 않는다.
+  - note 본문과 card 이름은 user 메시지에 표시(`<note>`, `<names>`, `<title_names>`) 사이에 넣고, 그 안의 지시는 따르지 않게 한다. 그 안의 `<`, `>`는 escape해 표시를 닫을 수 없게 한다.
+  - 쓴 글은 확인한 뒤에만 싣는다. 한 줄, `explain.max_chars`(160자) 이하, 링크 없음, 그 묶음의 note들이 연결한 `place`, `org`, `person` card(종류가 아직 정해지지 않은 card 포함)의 이름 없음(불변식 8). 이름은 `normalize_name`으로 접고 공백을 모두 뺀 뒤 부분 문자열로 본다("제주에서"는 "제주"이고, "스타벅스강남점"은 "스타벅스 강남점"이다). 링크는 NFKC로 접은 글에서 scheme, `www.`, markdown 링크, 맨 도메인을 본다. 어긋나면 그 항목만 `text: null`이고 구조화된 이유는 남는다.
+  - **제목에 있는 이름은 그 항목에서 쓸 수 있다(2026-11-11 오너).** 같은 응답에 제목이 그대로 나가므로 새로 드러나는 것이 없다. 그 항목 note들의 제목에 한 단어로 적힌 이름만이다. 왼쪽은 단어 경계, 오른쪽은 라틴 이름일 때만 경계를 둔다(조사는 붙는다: "마인츠에서"). 금지 목록에서 빼는 것이지 글에서 지우는 것이 아니므로, 허용된 이름을 품은 더 긴 이름("제주" 허용, "제주시 애월읍" 금지)은 계속 막힌다. 다른 항목의 제목, 본문에만 있는 이름, 제목에 없는 다른 표기(별칭, 2026-11-11 오너: 글자 그대로만)는 허용하지 않는다. **알려진 한계:** 한국어 접두("인도네시아"의 "인도", "강남스타일"의 "강남")는 형태소 분석 없이 가르지 못해 허용된다. 반대로 다른 글자 뒤에 붙은 이름("겨울제주"의 "제주")과, 금지된 이름을 품은 제목 이름("스타벅스강남점"과 별도의 "강남" card)은 막힌다. 라틴 이름 뒤의 조사("Mainz에서")는 허용된다.
+  - 호출이 실패하면(마감 초과, proxy 장애, 이름 조회 중 DB 장애, 모양이 다른 응답) 그 호출이 맡은 항목의 `text`가 null이고 `degraded`에 `explanation_unavailable`이다. 이름 조회가 실패하면 모든 항목이, 묶음 호출이 실패하면 그 묶음의 항목만이다. 다른 묶음의 글은 남는다. 호출은 됐지만 모델이 쓰지 않았거나 걸러진 항목은 `text: null`만이고 `degraded`는 없다.
+  - **비용.** 항목 수 상한이 없어져, 주제 추천 20명이면 호출이 4번(5개 상한 때의 4배)이다. 보통은 1~2번이다(주제 추천 기본 3명, 답할 사람 찾기 기본 8개).
+  - 쓴 글은 저장하지 않는다. 결정 로그에는 개수만 남긴다(`explain`: `items`, `sent`, `batches`, `written`, `dropped`, `failed`, `off_language`). bourbon-agent는 이 글을 표시용 데이터로 다루고, 지시로 읽지 않는다.
   - 저장해 둔 요약(안 C)은 미뤘다. 설명이 자주 켜져 지연과 비용이 문제가 되면 그때 note 분석에 요약을 더하는 것을 다시 본다(열린 항목 24).
 - 주제 추천의 `reason`도 같은 규칙이다(§6-1). 거기서는 사람마다 확인된 note를 모아 쓴다.
 
@@ -755,11 +759,11 @@ note_score = cosine(note, query)
 
 ### 7-6. 지연과 degraded
 
-- **목표(초안):** 두 route 모두 p95 2.5초. 쿼리 분석 LLM이 대부분이고, note-api 읽기 1번과 DB 조회가 더해진다. `explain: true`는 LLM 호출 1번이 더해져 p95 4.5초(설명의 마감 2초를 더한 값)를 목표로 하고, dev에서 잰다. 설명은 route 마감에 들지 않는다.
+- **목표(초안):** 두 route 모두 p95 2.5초. 쿼리 분석 LLM이 대부분이고, note-api 읽기 1번과 DB 조회가 더해진다. `explain: true`는 항목 5개마다 LLM 호출 1번이 동시에 더해져 p95 4.5초(설명의 마감 2초를 더한 값)를 목표로 하고, dev에서 묶음별 시간으로 잰다. 묶음이 많을수록 그중 하나가 마감을 넘길 확률이 오른다. 설명은 route 마감에 들지 않는다.
 - **note-api 읽기 1번의 어림:** public 읽기는 note-api 안에서 위치(pointer) 읽기, note 읽기, 탈퇴 확인을 차례로 하는 DynamoDB 강한 일관성 읽기 2~3번이다(`notes/shown.py`, `notes/originals.py`). 복호화는 프로세스 안의 HKDF·AES-GCM이라 작다. p50 20~40ms, p95 50~100ms로 어림한다. DynamoDB가 일부 key를 돌려주지 않으면 50~150ms 대기를 두고 다시 읽으므로 꼬리가 늘 수 있다. 주제 추천은 긴 note 66개를 받을 수 있어서 더 길 수 있다. dev에서 잰다(열린 항목 15).
 - **마감 시간:** route 전체 마감 `recommend.deadline`(초안 3초)을 새로 둔다. 지금 설정의 `RECOMMEND_DEADLINE_SECONDS`(20초)는 옛 route의 것이다. 쿼리 분석이 마감 안에 끝나지 않으면 503이다.
 - **note-api 읽기가 실패하거나, 마감을 넘거나, 비정상으로 판단되면(§5-5):** 확인된 note가 없으니 사람도 싣지 않는다. 두 route 모두 `empty: true`, `degraded`에 `note_read_unavailable`이다. 파생 데이터로만 고른 사람을 내보내면, 그 사이 private이 되거나 탈퇴한 사람이 섞일 수 있어서다.
-- **`degraded`는 알림이다.** bourbon-agent는 받은 결과를 그대로 쓴다. 다시 부르지 않는다. v1의 값은 `query_analysis_unavailable`, `note_read_unavailable`, `explanation_unavailable`(설명만 빠졌다) 셋이다.
+- **`degraded`는 알림이다.** bourbon-agent는 받은 결과를 그대로 쓴다. 다시 부르지 않는다. v1의 값은 `query_analysis_unavailable`, `note_read_unavailable`, `explanation_unavailable`(호출 실패로 설명이 빠진 항목이 있다. 다른 항목에는 있을 수 있다) 셋이다.
 - 요청자별 호출 상한은 두지 않는다. 내부 route이고 부르는 쪽이 bourbon-agent 하나다.
 
 ---
@@ -777,7 +781,7 @@ note_score = cosine(note, query)
 7. **private note는 분석하지 않는다.** 내용이 바뀌어도 hash만 적는다. 그래서 등록된 tag가 private note에서 새로 생기지 않는다(분석 도중 private이 된 경우는 예외, §2-4).
    - **스냅샷 다시 적재의 예외(2026-11-09 오너, §2-3).** note는 public으로 생기고, 공개 범위만 바꾸는 note-api API는 본문을 바꾸지 않는다. 그래서 지금 private인 note의 본문은 public이던 때의 본문이고, live 경로는 그때 분석해 두었다가 private이 된 뒤에도 남겼을 것이다. build는 이 이력대로 private note를 public으로 읽혀 분석한 뒤, private으로 다시 읽혀 검색에서 뺀다. 한계: private인 동안 본문을 고친 note는 구별하지 못해 고친 본문으로 분석된다. note-api가 공개 범위 API를 낼 때 공개 범위를 바꾼 시각(`visibility_changed_at` 같은 것)을 함께 받으면 거를 수 있다(§11).
    - 클러스터 안의 제자리 재구축(§2-3)에는 이 예외가 없다. private note는 hash만 적힌다.
-8. **`place`, `org`, `person` card의 이름은 discovery가 만드는 설명 필드(`reason`의 `matched_tags`, `text` 등)에 싣지 않는다.** card는 역할(`matched_by`)로만 드러난다. `text`는 싣기 전에 이름을 거른다(§7-1). note 본문이나 제목에 그 이름이 있는 것은 owner가 공개한 글이라 그대로 둔다.
+8. **`place`, `org`, `person` card의 이름은 discovery가 만드는 설명 필드(`reason`의 `matched_tags`, `text` 등)에 싣지 않는다.** card는 역할(`matched_by`)로만 드러난다. `text`는 싣기 전에 이름을 거르고, 그 항목의 note 제목에 한 단어로 적힌 이름만 실을 수 있다(2026-11-11 오너, §7-1). 한국어 접두는 가르지 못하는 한계가 있다. note 본문이나 제목에 그 이름이 있는 것은 owner가 공개한 글이라 그대로 둔다.
 9. **요청자 자신과 `exclude_user_ids`는 결과에 나오지 않는다.**
 
 ---
@@ -989,6 +993,7 @@ v1은 원본을 두지 않는다. 아래 경우에는 public note의 사본을 d
 - 응답에 note 본문을 싣지 않는다. bourbon-agent가 note-api public 읽기로 직접 읽는다. `answer.note_max_chars`, `truncated`, `owners`를 없앴다(§7-1).
 - 모든 항목에 구조화된 이유(`reason`: `matched_tags`, `matched_by`, 사람은 `notes`)를 단다(안 A). `note_count`는 확인된 note만 센다(§6-1).
 - `explain: true`로 한 줄 설명을 더한다(안 B). 저장된 요약(안 C)은 미뤘다(열린 항목 24). degraded 값 `explanation_unavailable`, 설명의 지연 목표, 불변식 2·3·8을 고쳤다(§7-6, §8).
+- 설명을 모든 항목에 쓴다(5개씩 묶어 동시에), 질문의 언어로, 요약이 아니라 왜 맞는지를. 그 항목의 note 제목에 있는 이름은 그 항목의 설명에 쓸 수 있다(불변식 8, 별칭은 허용하지 않는다). `explanation_unavailable`은 일부 항목만 빠진 경우도 뜻한다(§7-1, §7-6, §8).
 
 **2026-11-09, 스냅샷으로 note 인덱스를 다시 적재하는 길 (discovery phase 5)**
 - note-api가 개발 중에 저장소를 비우고 다시 쓰는 일이 잦아, live 경로 대신 인덱스를 통째로 바꾸는 `snapshot` → `build` → `load`를 두었다(§2-3). build는 sync 자체를 돌려 row가 live와 같다.
