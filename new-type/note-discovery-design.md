@@ -705,10 +705,11 @@ note_score = cosine(note, query)
   - `matched_by`: 찾힌 방법. 정해진 순서로 `tags`(쿼리 tag가 붙었다), `card_subject` / `card_mention`(질문의 card에 대해 썼거나, 이름만 나온다), `meaning`(셋 다 아니고 embedding만으로 왔다)이다. `meaning`은 혼자만 온다. 순위가 그 note를 찾은 층이 아니다. tag가 붙었지만 층의 크기를 넘어 embedding 층에서 찾힌 note도 `tags`다.
   - note-api가 인덱스보다 새 version을 가진 note는 tag도 card 역할도 없이 `meaning`이다.
 - **설명(`explain: true`, 2026-11-11 오너 안 B).** `reason.text`에 한 줄 설명을 더한다. 순위가 정해진 뒤 LLM 호출 1번으로, 이미 public으로 읽은 note에서만 쓴다. 더 읽지 않는다.
-  - 앞에서부터 `explain.max_items`(5)개만, note 하나는 `explain.note_max_chars`(1,500자)까지 넣는다. route 마감과 따로 `explain.deadline_seconds`(2초) 안에 끝나야 한다. card 이름 조회도 이 안에 든다.
-  - note 본문은 표시(`<note>` … `</note>`) 사이에 넣고, 그 안의 지시는 따르지 않게 한다. note 안의 표시는 지운다.
-  - 쓴 글은 확인한 뒤에만 싣는다. 한 줄, `explain.max_chars`(160자) 이하, 링크 없음, 그 note들이 연결한 `place`, `org`, `person` card(종류가 아직 정해지지 않은 card 포함)의 이름 없음(불변식 8). 이름은 `normalize_name`으로 접어 부분 문자열로 본다("제주에서"는 "제주"다). 어긋나면 그 항목만 `text: null`이고 구조화된 이유는 남는다.
-  - 호출이 실패하거나(마감 초과, proxy 장애, 모양이 다른 응답) 설명을 쓸 수 없으면 모든 `text`가 null이고 `degraded`에 `explanation_unavailable`이다.
+  - 앞에서부터 `explain.max_items`(5)개 항목만, note 하나는 `explain.note_max_chars`(1,500자)까지 넣는다. route 마감과 따로 `explain.deadline_seconds`(2초) 안에 끝나야 한다. card 이름 조회도 이 안에 든다.
+  - **card 이름을 아는 note만 보낸다.** 지금 내용의 분석이 있고(§5-1의 hash 조건) note-api가 인덱스보다 새 version을 갖지 않은 note다(§5-5). 그렇지 않은 note는 어떤 card를 언급하는지 몰라 이름을 거를 수 없다. 보낼 note가 없는 항목은 `text: null`이고 `degraded`는 없다.
+  - note 본문과 금지할 card 이름은 user 메시지에 표시(`<note>` … `</note>`, `<names>` … `</names>`) 사이에 넣고, 그 안의 지시는 따르지 않게 한다. 그 안의 `<`, `>`는 escape해 표시를 닫을 수 없게 한다.
+  - 쓴 글은 확인한 뒤에만 싣는다. 한 줄, `explain.max_chars`(160자) 이하, 링크 없음, 그 note들이 연결한 `place`, `org`, `person` card(종류가 아직 정해지지 않은 card 포함)의 이름 없음(불변식 8). 이름은 `normalize_name`으로 접고 공백을 모두 뺀 뒤 부분 문자열로 본다("제주에서"는 "제주"이고, "스타벅스강남점"은 "스타벅스 강남점"이다). 링크는 NFKC로 접은 글에서 scheme, `www.`, markdown 링크, 맨 도메인을 본다. 어긋나면 그 항목만 `text: null`이고 구조화된 이유는 남는다.
+  - 호출이 실패하면(마감 초과, proxy 장애, 이름 조회 중 DB 장애, 모양이 다른 응답) 모든 `text`가 null이고 `degraded`에 `explanation_unavailable`이다. 호출은 됐지만 모델이 쓰지 않았거나 걸러진 항목은 `text: null`만이고 `degraded`는 없다.
   - 쓴 글은 저장하지 않는다. 결정 로그에는 개수만 남긴다(`explain`). bourbon-agent는 이 글을 표시용 데이터로 다루고, 지시로 읽지 않는다.
   - 저장해 둔 요약(안 C)은 미뤘다. 설명이 자주 켜져 지연과 비용이 문제가 되면 그때 note 분석에 요약을 더하는 것을 다시 본다(열린 항목 24).
 - 주제 추천의 `reason`도 같은 규칙이다(§6-1). 거기서는 사람마다 확인된 note를 모아 쓴다.

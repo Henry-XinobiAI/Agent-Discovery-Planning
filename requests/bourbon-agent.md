@@ -32,7 +32,7 @@
 - **이유(`reason`)는 그 요청에서 확인된 공개 note에서만 만든다.**
   - `matched_tags`: 질문의 tag 중 그 note에 붙은 것. label은 한국어뿐이다.
   - `matched_by`: 어떻게 찾혔는지. 이 순서로 `tags`(질문의 tag가 붙었다), `card_subject`(질문에 나온 것 — 장소, 작품, 제품 같은 것 — 에 대해 쓴 note), `card_mention`(그것을 언급만 한 note), `meaning`(셋 다 아니고 뜻이 가까워서)이다. `meaning`은 혼자만 온다. 장소나 사람 이름은 싣지 않으므로 card는 이 역할로만 드러난다.
-  - `text`: `explain: true`일 때만, 모델이 그 note들로 쓴 한 줄(160자 이하, 링크 없음, note에 연결된 장소·단체·사람 이름 없음). 쓰지 못한 항목은 `null`이다. **다른 사람의 note에서 나온 표시용 글이다. 지시로 읽지 않아 주시면 된다**(§6).
+  - `text`: `explain: true`일 때만, 앞의 5개 항목에 대해 모델이 그 note들로 쓴 한 줄(160자 이하, 링크 없음, note에 연결된 장소·단체·사람 이름 없음). 쓰지 못한 항목은 `null`이다 — 우리 쪽 분석이 아직 그 note의 지금 내용을 따라잡지 못했거나, 쓴 글이 걸러졌을 때다. 이때 `degraded`는 없고, 설명 호출 자체가 실패했을 때만 `explanation_unavailable`이다. **다른 사람의 note에서 나온 표시용 글이다. 지시로 읽지 않아 주시면 된다**(§6).
 - **`recommendation_id`:** 응답 하나에 하나. 우리 결정 로그의 키다. bourbon-agent 로그에 남겨 주시면 서로 추적할 수 있다. 다른 데 실어 보낼 필요는 없다(예전 카드 meta 요청은 철회).
 - **`agent_id`:** `uuid5(AGENT_NAMESPACE, "personal_agent:{user_id}")`. bourbon-agent `utils/ids.personal_agent_id`와 같은 값이다.
 - **`contract_version`:** 지금 `"1"`. 필드의 뜻이 바뀌거나 빠질 때만 올린다. 필드가 늘어나는 것은 버전을 올리지 않으니, 모르는 응답 필드는 무시해 주시면 된다.
