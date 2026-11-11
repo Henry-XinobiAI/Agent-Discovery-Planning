@@ -11,7 +11,7 @@
 
 ## 0. 서비스 개요 (한 단락)
 
-bourbon-agent-discovery-api는 유저의 **공개 note**로 "대화해 볼 사람"을 찾는다. route는 둘이다. 주제 추천(`/recommend/subject`)은 짧은 주제로 이야기할 만한 사람을, 답할 사람 찾기(`/recommend/answerers`)는 질문에 답할 수 있는 note와 그 주인을 돌려준다. 입력은 note-api의 note 이벤트와 읽기(본문은 저장하지 않는다), bourbon-api의 대화·탈퇴 이벤트다. note마다 embedding(768차원)과 tag, note-api 공유 card 연결을 PostgreSQL에 두고, 요청마다 cosine 검색과 사람별 집계를 한다. api Deployment와 deferq 워커 Deployment가 dev에 있다(같은 이미지, 명령만 다름). topic-api와 친구 관계는 더 이상 쓰지 않는다.
+bourbon-agent-discovery-api는 유저의 **공개 note**로 "대화해 볼 사람"을 찾는다. route는 둘이다. 주제 추천(`/recommend/agents`)은 주제로 이야기할 만한 사람을, 답할 사람 찾기(`/recommend/notes`)는 질문에 답할 수 있는 note를 참조로 돌려준다. 입력은 note-api의 note 이벤트와 읽기(본문은 저장하지 않는다), bourbon-api의 대화·탈퇴 이벤트다. note마다 embedding(768차원)과 tag, note-api 공유 card 연결을 PostgreSQL에 두고, 요청마다 cosine 검색과 사람별 집계를 한다. api Deployment와 deferq 워커 Deployment가 dev에 있다(같은 이미지, 명령만 다름). topic-api와 친구 관계는 더 이상 쓰지 않는다.
 
 ## 1. PostgreSQL
 
