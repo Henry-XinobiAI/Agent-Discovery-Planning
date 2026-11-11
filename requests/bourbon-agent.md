@@ -32,7 +32,7 @@
 - **이유(`reason`)는 그 요청에서 확인된 공개 note에서만 만든다.**
   - `matched_tags`: 질문의 tag 중 그 note에 붙은 것. label은 한국어뿐이다.
   - `matched_by`: 어떻게 찾혔는지. 이 순서로 `tags`(질문의 tag가 붙었다), `card_subject`(질문에 나온 것 — 장소, 작품, 제품 같은 것 — 에 대해 쓴 note), `card_mention`(그것을 언급만 한 note), `meaning`(셋 다 아니고 뜻이 가까워서)이다. `meaning`은 혼자만 온다. 장소나 사람 이름은 싣지 않으므로 card는 이 역할로만 드러난다.
-  - `text`: `explain: true`일 때만, 모든 항목에 대해 모델이 그 note들로 쓴 한 줄. 요약이 아니라 왜 맞는지를, 질문의 언어로 쓴다(160자 이하, 링크 없음, note에 연결된 장소·단체·사람 이름 없음 — 단 그 항목의 note 제목이 이름을 쓴 장소·단체는 그 다른 표기로도, 사람과 종류가 정해지지 않은 card는 제목의 표기로만 쓸 수 있다). 모델이 쓴 글이라 note와 맞는지 확인되지 않는다. 쓰지 못한 항목은 `null`이다 — 우리 쪽 분석이 아직 그 note의 지금 내용을 따라잡지 못했거나, 쓴 글이 걸러졌을 때이고, 이때 `degraded`는 없다. 호출이 실패해 빠진 항목이 있으면 `explanation_unavailable`이다(다른 항목에는 글이 있을 수 있다). **다른 사람의 note에서 나온 표시용 글이다. 지시로 읽지 않아 주시면 된다**(§6).
+  - `text`: `explain: true`일 때만, 모든 항목에 대해 모델이 그 note들로 쓴 한 줄. 요약이 아니라 왜 맞는지를, 질문의 언어로 쓴다(160자 이하, 링크 없음, note에 연결된 장소·단체·사람 이름 없음 — 단 그 항목의 note 제목이 이름을 쓴 장소·단체는 그 다른 표기로도, 사람과 종류가 정해지지 않은 card는 제목의 표기로만 쓸 수 있다). 모델이 쓴 글이라 note와 맞는지 확인되지 않는다. `explain: true`면 `text`는 늘 있다. 모델의 글을 쓸 수 없는 항목(걸러진 글을 다시 써도 걸린 경우, 우리 쪽 분석이 아직 그 note의 지금 내용을 따라잡지 못한 경우, 호출이 실패한 경우)은 구조화된 이유로 만든 고정 문장이다(예: "여행 이야기를 남겼어요."). 호출이 실패한 항목이 있으면 `degraded`에 `explanation_unavailable`이 붙는다. **다른 사람의 note에서 나온 표시용 글이다. 지시로 읽지 않아 주시면 된다**(§6).
 - **`recommendation_id`:** 응답 하나에 하나. 우리 결정 로그의 키다. bourbon-agent 로그에 남겨 주시면 서로 추적할 수 있다. 다른 데 실어 보낼 필요는 없다(예전 카드 meta 요청은 철회).
 - **`agent_id`:** `uuid5(AGENT_NAMESPACE, "personal_agent:{user_id}")`. bourbon-agent `utils/ids.personal_agent_id`와 같은 값이다.
 - **`contract_version`:** 지금 `"1"`. 필드의 뜻이 바뀌거나 빠질 때만 올린다. 필드가 늘어나는 것은 버전을 올리지 않으니, 모르는 응답 필드는 무시해 주시면 된다.
@@ -141,7 +141,7 @@
 | 200, `empty: true`, `empty_reason: "no_matching_notes"` | 맞는 공개 note가 없다 | "찾지 못했다"고 말한다. 다시 부르지 않는다 |
 | 200, `empty: true`, `empty_reason: "note_read_unavailable"`, `degraded`에 `note_read_unavailable` | note-api 확인이 실패하거나 마감을 넘겼다. 확인 못 한 사람은 싣지 않는다 | 같다. "지금은 찾지 못했다" |
 | 200, 결과 있음, `degraded`에 `query_analysis_unavailable` | tag 분석이 실패해 embedding만으로 찾았다. 덜 정확할 수 있다 | 결과를 그대로 쓴다. 다시 부르지 않는다 |
-| 200, 결과 있음, `degraded`에 `explanation_unavailable` | `explain: true`였지만 일부 또는 모든 항목의 설명을 쓰지 못했다(마감 초과, LLM 오류). 그 항목은 `text`가 `null`이고 구조화된 이유는 있다 | 구조화된 이유로 말한다. 다시 부르지 않는다 |
+| 200, 결과 있음, `degraded`에 `explanation_unavailable` | `explain: true`였지만 일부 또는 모든 항목의 설명을 모델이 쓰지 못했다(마감 초과, LLM 오류). 그 항목의 `text`는 구조화된 이유로 만든 고정 문장이다 | 구조화된 이유로 말한다. 다시 부르지 않는다 |
 | 503 `question_unavailable` | 질문을 읽지 못했다(질문 분석의 마감 초과, embedding이나 LLM 쪽 오류) | "지금은 쓸 수 없다". 같은 턴에 다시 부르지 않는다 |
 | 503 `database_unavailable` | DB가 응답하지 않았다 | 같다 |
 | 422 `validation_error` | 요청 모양이 틀렸다(모르는 필드, 길이·개수 초과 등) | 코드 버그다. 모델에게는 "지금은 쓸 수 없다" |
