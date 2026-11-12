@@ -1,6 +1,6 @@
 # note 기반 agent-discovery-api — dev 배포 절차
 
-> **2026-11-11에 끝났다.** 실제로 올린 것은 `deploy/2611` `31b2f8d`(phase 9와 이미지 내용 수정 #95까지)다. 해 보며 더한 것: pgvector는 관리 계정으로 안 돼 인프라가 설치했다(3-1). alembic은 `DATABASE_URL`이 dev를 가리키는지 `alembic current`·`heads`로 먼저 본다. 첫 이미지(`8460c6c`)에는 `cli/`가 빠지고 로컬 `data/`가 들어 있었다(#95의 allow-list `.dockerignore`로 고쳤다). 그 뒤의 배포는 §9부터다(phase 10, 2026-11-12에 끝났다. migration 기준 정리는 §10). **§1~§8은 그 첫 배포의 기록이다.** `room_turns`와 turn queue가 나오는 명령은 0016 뒤에는 그대로 돌리지 않는다.
+> **2026-11-11에 끝났다.** 실제로 올린 것은 `deploy/2611` `31b2f8d`(phase 9와 이미지 내용 수정 #95까지)다. 해 보며 더한 것: pgvector는 관리 계정으로 안 돼 인프라가 설치했다(3-1). alembic은 `DATABASE_URL`이 dev를 가리키는지 `alembic current`·`heads`로 먼저 본다. 첫 이미지(`8460c6c`)에는 `cli/`가 빠지고 로컬 `data/`가 들어 있었다(#95의 allow-list `.dockerignore`로 고쳤다). 그 뒤의 배포는 §9부터다(phase 10, 2026-11-12에 끝났다. migration 기준 정리는 §10, main 배포와 인덱스 다시 만들기는 §11). **§1~§8은 그 첫 배포의 기록이다.** `room_turns`와 turn queue가 나오는 명령은 0016 뒤에는 그대로 돌리지 않는다.
 >
 > discovery `deploy/2611`(`e73f1f9`, phase 8 `cli rebuild-index` 포함)을 dev에 처음 올린다. dev는 지금 `60bf02f`(topic 기반), DB는 migration `0011`. prod는 DB도 배포도 없다.
 > 되돌림은 없다(topic 시절 테이블을 지운다). 문제가 생기면 앞으로 고친다.
@@ -342,3 +342,21 @@ psql "$DEV_ADMIN_PG" -c 'GRANT SELECT, INSERT, UPDATE, DELETE ON room_turns TO b
 - 로컬 DB가 `0015` 이하이면 compose의 `init`이 "Can't locate revision"으로 멈춘다. 볼륨을 새로 만들고 build를 다시 적재한다(discovery `docs/operations.md`).
 - 새 DB(prod 처음)는 빈 DB에 `vector` 확장, `alembic upgrade head`, 그 뒤 테이블 일곱과 `tags_tag_id_seq`에 앱 계정 권한이다(discovery `docs/operations.md`).
 - discovery README는 이때 짧게 나뉘었다. 운영 절차는 discovery `docs/operations.md`에 있다. 옛 체인에서 0015로 옮기던 절차는 README에서 빠졌고, 이 문서 §3이 그 기록이다.
+
+## 11. main 배포와 인덱스 다시 만들기 (2026-11-12, `deploy/2611` `80f411b`)
+
+`note-discovery`가 main에 머지됐다(#98). `deploy/2611`을 main(`80f411b`)으로 옮겨 배포했다. 실행 코드는 `a8fbbe0`과 같고 migration은 없다(`alembic current`가 `0016 (head)`).
+
+같은 날 note-api가 저장소를 비우고 모든 note를 다시 만들었다(백필). 그래서 discovery 인덱스도 클러스터 안에서 다시 만들었다(discovery `docs/operations.md` "Rebuilding the note index in the cluster").
+
+```bash
+k8s/scripts/rebuild-index.sh dev
+kubectl --context dev-tokyo-cluster -n dev exec deploy/bourbon-agent-discovery-worker -- python -m cli rebuild-index --status
+```
+
+- 비운 것: note 37, tag 80, card 115, 결정 로그 24. note queue 넷에 남은 메시지는 0이었다(note-api 백필의 이벤트는 그 전에 worker가 처리했다).
+- 유저 112명을 모두 읽어 note 166개를 표시했고, 몇 분 뒤 `ready 166`이 됐다. 같은 시각의 snapshot(`20261112T133049Z`)과 수가 같다.
+- 두 route 모두 200, `degraded` 없음. 라이카 질문의 1위는 tag(주제 추천)와 tag + card `subject`(답할 사람 찾기)로 맞았고, 2·3위는 뜻만 가까운 사람과 note였다. 이것이 하한을 다시 잰 계기다(설계 §5-3, §6-2).
+
+**다음 배포:** 하한(discovery #99, main `890f62a`)은 아직 dev에 없다. migration과 백필이 필요 없다. 근거는 이미 있는 tag와 tag 넓이로 요청할 때 계산하고, 하한은 설정값이다. 배포 뒤 주제 추천 결정 로그의 `floor`를 본다.
+
