@@ -2,6 +2,10 @@
 
 > 코드 읽은 기준: bourbon-api main `c4c3300`(2026-09-08), 발행 이벤트 목록 2026-09-10, `rooms/service.py`·`rooms/dm_identity.py`·`agent_context/` 2026-09-11. 결정: R23(`discoverable`), **R51(방 생성 이벤트 요청 철회 — R46 개정)**, R47(어트리뷰션은 우리가 직접 받는다), R52·R53.
 >
+> **2026-11-12(discovery phase 10): `bourbon.message_created`를 더 받지 않는다.** room v4(#365, 2026-11-06 머지)에서 `agent_dm`이 없어져 우리가 세던 turn이 없었다. listener와 queue를 지웠고, §2-1의 room id 계산식과 `DM_NAMESPACE`도 더 복제하지 않는다(§2-1·§4 질문 3은 끝났다). `AGENT_NAMESPACE`와 `personal_agent_id`는 그대로 쓰고, 이제 테스트가 그쪽 `origin/main`의 코드를 직접 돌려 비교한다.
+>
+> **나중에 부탁드릴 것 하나(아직 요청 아님):** 추천으로 열리는 guest 방이 생긴 것을 지금은 부모 방의 system 메시지 `room_branched`로만 알 수 있다. 이것을(또는 guest 방 생성을) AMQP 이벤트로 내 주시면, "이미 대화한 사람"을 다시 볼 수 있다. 필요해지면 따로 요청서를 쓴다.
+>
 > **남은 요청은 없다(2026-09-13).** §1은 철회했고(§1-1), §2는 해결됐다(§2-2 — PR #325·#326). 이 문서에 남은 것은 요청이 아니라 **알려 드릴 것 셋**이고 §2-2 끝에 있다. 아래 §1·§2 본문은 보낸 그대로 남긴다(README "쓰는 규칙").
 >
 > 2026-09-10 판까지 이 문서의 §2는 방 생성 이벤트 요청이었고 "가장 먼저"인 이유도 그것이었다 — 그 뒤 친구 게이트가 그 자리를 물려받았고, 이제는 둘 다 닫혔다.
@@ -152,7 +156,7 @@ CORS preflight는 우리 앱이 직접 답합니다(`docs/microservice-edge-auth
 - `bourbon.friendship_changed` (`user_low, user_high, action, occurred_at`) — 친구 미러(R17).
 - `bourbon.user_registered` (`user_id`, `email`) — 추천 대상 agent row 생성. **`email`은 읽지 않는다.**
 - `bourbon.user_deactivated` (`user_id`) — 전부 삭제.
-- `bourbon.message_created` (`room_id, message_id, sender_id, sender_type, type, room_type`) — `room_type == agent_dm`인 유저 메시지를 turn으로 센다. 새 turn 이벤트는 필요 없다.
+- ~~`bourbon.message_created` (`room_id, message_id, sender_id, sender_type, type, room_type`) — `room_type == agent_dm`인 유저 메시지를 turn으로 센다. 새 turn 이벤트는 필요 없다.~~ → 2026-11-12에 받기를 그만뒀다(맨 위).
 - 대화 시작 route(`POST /rooms/dm/{user_id}/agent`) — **파라미터 추가를 요청하지 않는다.**
 
 ## 4. 확인 질문

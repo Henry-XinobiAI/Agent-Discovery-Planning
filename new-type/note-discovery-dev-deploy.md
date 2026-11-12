@@ -1,5 +1,7 @@
-# note 기반 agent-discovery-api — dev 첫 배포 절차
+# note 기반 agent-discovery-api — dev 배포 절차
 
+> **2026-11-11에 끝났다.** 실제로 올린 것은 `deploy/2611` `31b2f8d`(phase 9와 이미지 내용 수정 #95까지)다. 해 보며 더한 것: pgvector는 관리 계정으로 안 돼 인프라가 설치했다(3-1). alembic은 `DATABASE_URL`이 dev를 가리키는지 `alembic current`·`heads`로 먼저 본다. 첫 이미지(`8460c6c`)에는 `cli/`가 빠지고 로컬 `data/`가 들어 있었다(#95의 allow-list `.dockerignore`로 고쳤다). 그 뒤의 배포는 §9부터다. **§1~§8은 그 첫 배포의 기록이다.** `room_turns`와 turn queue가 나오는 명령은 0016 뒤에는 그대로 돌리지 않는다.
+>
 > discovery `deploy/2611`(`e73f1f9`, phase 8 `cli rebuild-index` 포함)을 dev에 처음 올린다. dev는 지금 `60bf02f`(topic 기반), DB는 migration `0011`. prod는 DB도 배포도 없다.
 > 되돌림은 없다(topic 시절 테이블을 지운다). 문제가 생기면 앞으로 고친다.
 > 근거: discovery README "Database migrations"·"Rebuilding the note index in the cluster"·"Reloading the note index from a snapshot", 설계 §2-3·§10-2, `requests/infra.md`.
@@ -251,3 +253,72 @@ unset PGPASSWORD DEV_ADMIN_PG DEV_ADMIN_URL
 - **bourbon-agent:** 배포 완료, `/recommend/explicit` 없음. `requests/bourbon-agent.md` §4를 배포해 달라.
 - **인프라:** dev DynamoDB 테이블 삭제(`infra.md` §2). queue 깊이 상한(§4)의 대상이 note queue 넷으로 바뀌었다.
 - `implementation_progress.md`에 배포 커밋, 시각, 적재한 note 수, 확인 결과를 남긴다.
+
+## 9. phase 10 배포 (2026-11-12, `deploy/2611` `a8fbbe0`)
+
+"이미 대화한 사람"을 "최근 보여 준 사람"으로 바꾸고, turn 세기와 `room_turns`를 지운다(설계 §6-3). migration 0016이 `room_turns`를 지운다. **순서가 중요하다:** 옛 worker나 옛 api가 남아 있을 때 0016을 돌리면, 없어진 테이블 때문에 그 pod가 실패한다. 그래서 배포 → 옛 pod 없음 확인 → queue 삭제 → 0016 순서다.
+
+먼저 bastion 터널을 열고 §1의 관리 계정 블록을 다시 돌린다(7-3에서 변수를 지웠다). 그 블록의 마지막 줄은 이제 `0011`이 아니라 `0015`를 보여야 한다.
+
+**9-1. dev가 0015인지 본다.**
+
+```bash
+DATABASE_URL="$DEV_ADMIN_URL" uv run alembic current
+```
+
+**9-2. dev의 설정 덮어쓰기를 본다.** API만 `{"agents": {"shown_penalty_on": false}}`를 읽는다(사람이 적어서 감점을 끈다).
+
+```bash
+kubectl kustomize k8s/overlays/dev | grep -A1 'settings.json'
+```
+
+**9-3. 배포한다.** `deploy/2611`로 옮겨 pull하고(`a8fbbe0`, tree가 깨끗해야 한다) 배포한다. 이번에는 api를 0으로 내리지 않았으니 따로 올릴 필요가 없다.
+
+```bash
+k8s/scripts/deploy.sh dev
+```
+
+**9-4. 옛 pod가 없고, turn queue의 consumer가 0인지 본다.**
+
+```bash
+kubectl --context dev-tokyo-cluster -n dev get pods -l 'app in (bourbon-agent-discovery-api, bourbon-agent-discovery-worker)' -o wide
+```
+
+RabbitMQ 콘솔의 Queues에서 `deferq.count_turn_on_message_created`의 Consumers가 0인지 본다.
+
+**9-5. 그 queue를 지운다(콘솔에서 Delete).** purge가 아니라 delete다. purge한 queue는 binding이 남아 모든 `message_created`를 계속 모은다.
+
+**9-6. 0016을 돌린다.**
+
+```bash
+DATABASE_URL="$DEV_ADMIN_URL" uv run alembic upgrade 0016
+DATABASE_URL="$DEV_ADMIN_URL" uv run alembic current
+```
+
+**9-7. 확인한다.** `<user id>`는 dev에서 주제 추천을 받아 볼 유저 하나다. 아래 모두 같은 유저로 한다.
+
+주제 추천을 두 번 부른다(다른 셸에서 port-forward).
+
+```bash
+kubectl --context dev-tokyo-cluster -n dev port-forward svc/bourbon-agent-discovery-api 18080:80
+```
+
+```bash
+curl -s localhost:18080/api/internal/svc/agent-discovery/recommend/agents -H 'content-type: application/json' -d '{"user_id": "<user id>", "topic": "<주제>"}'
+```
+
+응답에 `already_talked`가 없고, 결정 로그에 새 필드가 있는지 본다. dev는 감점을 꺼서 `shown_penalty`는 0.0, `shown_read`는 true다. 두 번째 결정에서 첫 번째에 나온 사람의 `shown_before`는 첫 번째 결정의 값보다 1 크다(배포 전 7일 안의 기록도 세므로 1보다 클 수 있다).
+
+```bash
+psql "$DEV_ADMIN_PG" -c "SELECT made_at, body->'shown_penalty', body->'shown_read', jsonb_path_query_array(body, '$.shown[*].shown_before') FROM decisions WHERE route = 'agents' AND requester_user_id = '<user id>' ORDER BY made_at DESC LIMIT 2"
+```
+
+그다음 결정 로그 읽기가 빠른지 본다. 기록이 있는 유저로 재야 의미가 있다. 이 결과로 `agents.shown_read_seconds`(지금 0.3초)를 정한다(설계 열린 항목 25).
+
+```bash
+psql "$DEV_ADMIN_PG" -c "EXPLAIN ANALYZE SELECT elem->>'owner_user_id', count(*) FROM decisions, jsonb_array_elements(body->'shown') elem WHERE requester_user_id = '<user id>' AND route = 'agents' AND made_at >= now() - interval '7 days' GROUP BY 1"
+```
+
+**되돌리기:** `alembic downgrade 0015`로 빈 `room_turns`를 다시 만들고, 앱 계정에 그 테이블의 `GRANT SELECT, INSERT, UPDATE, DELETE`를 다시 준다. 옛 코드를 배포하면 turn queue는 그 worker가 다시 만든다.
+
+**9-8. 알리기.** 인프라에 queue 정책 대상에서 `deferq.count_turn_on_message_created`가 빠졌다고 알린다(`infra.md` §4). `implementation_progress.md`에 배포 커밋과 확인 결과를 남긴다.

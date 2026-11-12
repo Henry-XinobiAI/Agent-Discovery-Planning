@@ -1,6 +1,6 @@
 # bourbon-agent 요청서 — 공개 note 기반 추천 API를 쓰는 법
 
-> **코드 읽은 기준:** bourbon-agent `origin/deploy/2611` `25cfc9a3`(2026-11-10; 추천 관련 파일은 `main`과 같다). discovery `note-discovery_phase9`(phase 9 — route 이름, 본문 없음, 이유와 설명. 2026-11-11). 설계는 `new-type/note-discovery-design.md` §6(주제 추천)·§7(답할 사람 찾기)이다.
+> **코드 읽은 기준:** bourbon-agent `origin/deploy/2611` `25cfc9a3`(2026-11-10; 추천 관련 파일은 `main`과 같다). discovery `note-discovery_phase9`(phase 9 — route 이름, 본문 없음, 이유와 설명. 2026-11-11). phase 10(`already_talked` 제거, 최근 보여 준 사람 감점. 2026-11-12). 설계는 `new-type/note-discovery-design.md` §6(주제 추천)·§7(답할 사람 찾기)이다.
 >
 > **요약:** agent-discovery-api가 topic 기반에서 **공개 note 기반**으로 바뀐다. discovery의 dev 배포(`deploy/2611`)와 함께 지금 bourbon-agent가 부르는 `POST /recommend/explicit`가 없어진다. 대신 route가 둘 생긴다.
 >
@@ -8,6 +8,8 @@
 > 2. **제안 (선택, 결정은 bourbon-agent):** 다른 사람의 공개 note로 질문에 답하는 새 도구를 `/recommend/notes`로 만들 수 있다(§5). 응답에는 note 본문이 없어서, 붙인다면 note-api의 public 읽기를 bourbon-agent가 직접 불러야 한다.
 >
 > 2026-11-11에 route 이름을 무엇을 추천하는지에 맞춰 바꿨다(`/recommend/subject` → `/recommend/agents`, `/recommend/answerers` → `/recommend/notes`). 옛 이름은 dev에 나간 적이 없어 남겨 두지 않는다.
+>
+> **2026-11-12(discovery phase 10): `already_talked`를 응답에서 뺐다.** 미리 말씀드린 대로다. bourbon-api room v4에 agent DM이 없어져 늘 false였다. 연동하신 곳이 없을 때라 `contract_version`은 "1" 그대로다. 대신 같은 requester에게 최근 7일 안에 보여 준 사람은 보여 준 횟수만큼 순위가 내려간다(§2-1). 주제 추천을 다시 불러도 같은 사람만 나오지 않게 하려는 것이다.
 >
 > 이전 요청서(topic 시절, `/recommend/explicit`·카드 meta의 `recommendation_id`)는 `archive/2026-11-10_topic-era-bourbon-agent-request/`로 옮겼다. 그 요청은 철회한다.
 
@@ -19,7 +21,7 @@
 - **주제 추천 (`/recommend/agents`):** "이 주제로 이야기할 만한 사람"(그 사람의 Ami)을 찾는다. 지금 `recommend_agents`가 하는 일이 이것이다.
 - **답할 사람 찾기 (`/recommend/notes`):** 질문에 답이 되는 다른 사람의 공개 note를 찾는다. note는 참조(id, version, 제목)로만 오고 본문은 오지 않는다.
 - **이유(`reason`):** 항목마다 왜 추천했는지. 늘 오는 구조화된 부분과, `explain: true`일 때만 오는 한 줄 글(`text`)이 있다.
-- **requester:** 요청의 `user_id`. 결과에서 자동으로 빠지고, "이미 대화한 사람" 판단과 결정 로그의 기준이 된다.
+- **requester:** 요청의 `user_id`. 결과에서 자동으로 빠지고, "최근 보여 준 사람" 판단과 결정 로그의 기준이 된다.
 
 ## 2. agent-discovery가 제공하는 것
 
@@ -61,7 +63,6 @@
       "agent_id": "806e57fa-…",
       "owner_user_id": "019ddd04-…",
       "position": 1,
-      "already_talked": false,
       "reason": {
         "matched_tags": [{"key": "board game", "label": "보드게임", "note_count": 1}],
         "matched_by": ["tags"],
@@ -81,7 +82,7 @@
 - **`reason.matched_tags`:** 위 note들에 붙은 tag 중 질문과 겹치는 것과, 그 tag가 붙은 note 수(`note_count`, 위 `notes` 안에서 센다). 비어 있을 수 있다 — 그때 `matched_by`가 왜 뽑혔는지 말한다.
 - **`reason.matched_by`:** 위 note들이 찾힌 방법을 모은 것(§2).
 - **"왜 이 사람인지"는 `reason`으로 말하면 된다.** tag label, note 제목, `experienced`, card 역할로 충분하고, `explain: true`면 `text`를 그대로 보여 줄 수 있다.
-- **`already_talked`:** requester가 이 사람의 Ami와 1:1 방(agent DM)에서 대화한 적이 있다(그 방의 마지막 메시지에서 365일까지). `start_thread`로 연 guest 방은 세지 않는다. 순위가 조금 내려가지만 빠지지는 않는다.
+- **최근 보여 준 사람:** 주제 추천이 같은 requester에게 최근 7일 안에 응답으로 준 사람은, 준 횟수만큼 순위가 내려간다(한 번에 점수의 표준편차 하나만큼). 주제와 상관없이 센다. 빠지지는 않는다. "보여 줬다"는 응답에 실린 모든 사람이라, 지금처럼 `max_results` 1로 부르실 때만 화면에 나온 사람과 같다. 같은 요청을 다시 보내시면 두 번 센다. 응답에 따로 표시하는 필드는 없다. dev에서는 사람이 적어 꺼 두었다.
 - 이름은 싣지 않는다. 지금처럼 bourbon-api에서 `owner_user_id`로 조회해 주시면 된다.
 
 ### 2-2. 답할 사람 찾기 — `POST /recommend/notes`
@@ -166,7 +167,7 @@
 
 - URL을 `/api/internal/svc/agent-discovery/recommend/agents`로 바꿔 주시면 된다.
 - 요청 모델: `topic_text` → `topic`. 길이 타입 `TopicText`는 2000자, `Context`는 8000자로 늘려 주시면 된다(도구 인자도 이 타입을 쓴다). `exclude_user_ids: list[UUID]`(≤100)를 더하고, **`room_id`·`lang`은 빼 주시면 된다**(보내면 422).
-- 응답 모델: §2-1의 모양으로. `matched_topics` 대신 `reason{matched_tags[{key, label, note_count}], matched_by, notes[{note_id, title, experienced}], text}`, `already_talked`, envelope의 `empty`, `empty_reason`. `explain`은 우선 보내지 않아도 된다(기본 false). 지금처럼 쓰는 필드만 선언하면 된다. `MatchedTopicResponse`는 필요 없어진다.
+- 응답 모델: §2-1의 모양으로. `matched_topics` 대신 `reason{matched_tags[{key, label, note_count}], matched_by, notes[{note_id, title, experienced}], text}`, envelope의 `empty`, `empty_reason`. `explain`은 우선 보내지 않아도 된다(기본 false). 지금처럼 쓰는 필드만 선언하면 된다. `MatchedTopicResponse`는 필요 없어진다.
 - `GROUNDING_ERROR_CODES`, `topic_not_grounded`는 지워 주시면 된다.
 
 **`agents/personal_agent/recommendation/tools.py`**
@@ -174,9 +175,9 @@
 | 지금 | 바꿀 것 |
 |---|---|
 | `RecommendRequest(topic_text=args.topic, room_id=…, lang=…, max_results=1)` | `topic=args.topic`, `max_results=1`(카드 한 장이니 그대로), `exclude_user_ids` = 방의 다른 사람. `payload.room_members`의 `UserInfo.id`와 사람 소유 Ami의 `AgentInfo.owner_user_id` 중 requester가 아닌 것, 100개까지. 이를 위해 `RecommendationToolContext`에 방 구성원을 넣어 주시면 된다. 소유자 혼자 있는 방에서는 비어 있고, 다른 사람이 있는 방(deputy)에서만 의미가 있다 |
-| 결과의 `topics`, `narrower_topics`, `owner_notes`(`RecommendedAgentNote`) | `tags`(= `reason.matched_tags`의 label), `notes`(= `reason.notes`의 title과 `experienced`), `matched_by`, `already_talked`. `explain`을 켜면 `why`(= `reason.text`. `explain: true`면 늘 있다) |
+| 결과의 `topics`, `narrower_topics`, `owner_notes`(`RecommendedAgentNote`) | `tags`(= `reason.matched_tags`의 label), `notes`(= `reason.notes`의 title과 `experienced`), `matched_by`. `explain`을 켜면 `why`(= `reason.text`. `explain: true`면 늘 있다) |
 | `RecommendAgentsArgs.topic`의 설명과 도구 설명의 "one short, general subject… never a list of qualifiers" (두 곳) | 그 제약을 풀어 주시면 된다. 예: "the subject the person should know about, in a few words or a sentence; details of what the owner wants go in context" |
-| 도구 설명의 "using topics, narrower_topics and the owner's own notes, quoting the notes…"와 "If an Ami appears only through narrower_topics…" | 예: "say why each one matches from their tags, the titles of their notes and whether they lived it; if already_talked, mention that your owner has talked with their Ami before" |
+| 도구 설명의 "using topics, narrower_topics and the owner's own notes, quoting the notes…"와 "If an Ami appears only through narrower_topics…" | 예: "say why each one matches from their tags, the titles of their notes and whether they lived it" |
 | 422 grounding 재시도 분기 | 지워 주시면 된다 |
 | `lang`: `Lang`, `_RECOMMEND_LANGS`, `_recommend_lang`, `RecommendationToolContext.lang` | 필요 없어진다 |
 | `RecommendError` 그 밖, 예외 | 그대로("unavailable") |
@@ -192,7 +193,7 @@
 **참고**
 
 - **label은 한국어뿐이다.** 소유자가 영어·일본어를 쓰면 모델이 옮겨 말하게 된다. 지금 `lang`이 하던 일을 우리 쪽에서 채우려면 tag에 다른 언어 label이 필요하다(§7).
-- **requester:** 지금처럼 Ami의 소유자를 보내면 된다. 다른 사람이 있는 방에서 남이 "추천해 줘"라고 할 때 그 사람을 requester로 할지는 제품 판단이다 — 바꾸면 결과에서 빠지는 사람과 `already_talked`가 그 사람 기준이 된다(§8).
+- **requester:** 지금처럼 Ami의 소유자를 보내면 된다. 다른 사람이 있는 방에서 남이 "추천해 줘"라고 할 때 그 사람을 requester로 할지는 제품 판단이다 — 바꾸면 결과에서 빠지는 사람과 최근 보여 준 사람이 그 사람 기준이 된다(§8).
 
 ## 5. 제안: 답할 사람 찾기 도구 (선택)
 
