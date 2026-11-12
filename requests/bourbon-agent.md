@@ -1,6 +1,6 @@
 # bourbon-agent 요청서 — 공개 note 기반 추천 API를 쓰는 법
 
-> **코드 읽은 기준:** bourbon-agent `origin/deploy/2611` `25cfc9a3`(2026-11-10; 추천 관련 파일은 `main`과 같다). discovery `note-discovery_phase9`(phase 9 — route 이름, 본문 없음, 이유와 설명. 2026-11-11). phase 10(`already_talked` 제거, 최근 보여 준 사람 감점. 2026-11-12). 설계는 `new-type/note-discovery-design.md` §6(주제 추천)·§7(답할 사람 찾기)이다.
+> **코드 읽은 기준:** bourbon-agent `origin/deploy/2611` `25cfc9a3`(2026-11-10; 추천 관련 파일은 `main`과 같다). discovery `note-discovery_phase9`(phase 9 — route 이름, 본문 없음, 이유와 설명. 2026-11-11). phase 10(`already_talked` 제거, 최근 보여 준 사람 감점. 2026-11-12). #99(근거 없는 결과의 하한. 2026-11-13). 설계는 `new-type/note-discovery-design.md` §6(주제 추천)·§7(답할 사람 찾기)이다.
 >
 > **요약:** agent-discovery-api가 topic 기반에서 **공개 note 기반**으로 바뀐다. discovery의 dev 배포(`deploy/2611`)와 함께 지금 bourbon-agent가 부르는 `POST /recommend/explicit`가 없어진다. 대신 route가 둘 생긴다.
 >
@@ -8,6 +8,8 @@
 > 2. **제안 (선택, 결정은 bourbon-agent):** 다른 사람의 공개 note로 질문에 답하는 새 도구를 `/recommend/notes`로 만들 수 있다(§5). 응답에는 note 본문이 없어서, 붙인다면 note-api의 public 읽기를 bourbon-agent가 직접 불러야 한다.
 >
 > 2026-11-11에 route 이름을 무엇을 추천하는지에 맞춰 바꿨다(`/recommend/subject` → `/recommend/agents`, `/recommend/answerers` → `/recommend/notes`). 옛 이름은 dev에 나간 적이 없어 남겨 두지 않는다.
+>
+> **2026-11-13(discovery #99): 주제 추천도 맞는 사람이 적으면 적게 온다.** 주제의 tag(넓은 tag 말고)나 주제에 나온 것을 주제로 쓴 note가 없고 뜻만 가까운 사람은 충분히 가까울 때만 들어간다(§2-1). 지금처럼 `max_results` 1로 부르시면 `empty: true`(`no_matching_notes`)가 전보다 자주 온다. "찾지 못했다"고 말하고 다시 부르지 않으면 된다(§2-3). 응답 모양은 그대로라 `contract_version`은 "1"이다.
 >
 > **2026-11-12(discovery phase 10): `already_talked`를 응답에서 뺐다.** 미리 말씀드린 대로다. bourbon-api room v4에 agent DM이 없어져 늘 false였다. 연동하신 곳이 없을 때라 `contract_version`은 "1" 그대로다. 대신 같은 requester에게 최근 7일 안에 보여 준 사람은 보여 준 횟수만큼 순위가 내려간다(§2-1). 주제 추천을 다시 불러도 같은 사람만 나오지 않게 하려는 것이다.
 >
@@ -83,6 +85,7 @@
 - **`reason.matched_by`:** 위 note들이 찾힌 방법을 모은 것(§2).
 - **"왜 이 사람인지"는 `reason`으로 말하면 된다.** tag label, note 제목, `experienced`, card 역할로 충분하고, `explain: true`면 `text`를 그대로 보여 줄 수 있다.
 - **최근 보여 준 사람:** 주제 추천이 같은 requester에게 최근 7일 안에 응답으로 준 사람은, 준 횟수만큼 순위가 내려간다(한 번에 점수의 표준편차 하나만큼). 주제와 상관없이 센다. 빠지지는 않는다. "보여 줬다"는 응답에 실린 모든 사람이라, 지금처럼 `max_results` 1로 부르실 때만 화면에 나온 사람과 같다. 같은 요청을 다시 보내시면 두 번 센다. 응답에 따로 표시하는 필드는 없다. dev에서는 사람이 적어 꺼 두었다.
+- **맞는 사람이 적으면 적게 온다(2026-11-13, discovery #99).** 주제의 tag(넓은 tag 말고)가 붙은 note도, 주제에 나온 것을 주제로 쓴 note(card `subject`)도 없는 사람은 충분히 가까울 때만 들어간다. 그래서 `matched_by`가 `meaning`뿐인 사람만이 아니라, 넓은 tag나 `card_mention`으로만 이어진 사람도 걸러질 수 있다. 그래서 `max_results`보다 적게 오거나 비어 있는 것(`no_matching_notes`)은 정상이다. 답할 사람 찾기와 같다.
 - 이름은 싣지 않는다. 지금처럼 bourbon-api에서 `owner_user_id`로 조회해 주시면 된다.
 
 ### 2-2. 답할 사람 찾기 — `POST /recommend/notes`
@@ -128,7 +131,7 @@
 }
 ```
 
-- **`notes`는 답을 쓸 note의 참조다.** 관련도 높은 순이고, 한 사람의 note는 최대 3개까지만 들어간다(한 사람의 경험에 답이 갇히지 않게). 질문의 tag나 질문에 나온 것과 이어지지 않고 뜻만 가까운 note는 충분히 가까울 때만 들어가므로, `max_results`보다 적게 오거나 비어 있는 것(`no_matching_notes`)은 정상이다.
+- **`notes`는 답을 쓸 note의 참조다.** 관련도 높은 순이고, 한 사람의 note는 최대 3개까지만 들어간다(한 사람의 경험에 답이 갇히지 않게). 질문의 tag(넓은 tag 말고)도, 질문에 나온 것을 주제로 쓴 연결(card `subject`)도 없는 note는 충분히 가까울 때만 들어가므로, `max_results`보다 적게 오거나 비어 있는 것(`no_matching_notes`)은 정상이다.
 - **본문은 없다.** note-api의 public 읽기로 직접 읽어 주시면 된다(§5). 그때 받은 `version`이 응답의 `version`과 다르거나 note가 없으면(404) 그 note는 버린다 — 그 사이 고쳐졌거나 비공개가 됐거나 지워진 것이다.
 - **소유자 목록(`owners`)은 없다.** note마다 `owner_user_id`와 `agent_id`가 있으니 필요하면 묶어서 쓰면 된다.
 - **`experienced`:** 소유자가 직접 경험한 일인지(note-api의 값). 답에서 "직접 해 본 분"과 "알아본 분"을 구분하는 데 쓸 수 있다.
