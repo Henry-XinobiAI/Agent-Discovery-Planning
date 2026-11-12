@@ -141,7 +141,6 @@
 | `bourbon.note_visibility_changed` `{user_id, note_id, version}` | note-api, 합의만 됨 | `mark_pending(hide=true)`. 다시 읽어 public이 확인돼야 다시 올라간다 |
 | `bourbon.note_deleted` `{user_id, note_id}` | note-api, 합의만 됨 | `mark_pending(hide=true)` |
 | `bourbon.user_deactivated` | bourbon-api | 그 유저를 지우고 `departed_users`에 남긴다(§2-6) |
-| `bourbon.message_created` | bourbon-api | `room_turns`만 센다. "이미 대화한 사람"에 쓴다(§6-3) |
 
 - **네 note 이벤트는 같은 다시 맞추기로 처리한다.** 다른 것은 그 자리에서 검색에서 빼는지(`hide`)뿐이다. 어느 이벤트든 최신 상태를 다시 읽어 맞추므로, 중복되거나 순서가 바뀌어 와도 결과는 마지막 상태가 된다.
 - note-api `main`(`f527131`)은 `note_created`와 `note_updated`를 발행한다. `note_updated`는 writer가 note를 다시 쓰거나 철회할 때 나간다. `note_visibility_changed`, `note_deleted`는 README에만 있고, 비공개 전환·삭제 기능을 만들 때 함께 발행한다(§11의 R3). discovery는 README의 payload대로 mirror를 두고, 지금처럼 느슨하게 받는다.
@@ -149,8 +148,9 @@
 - `note_visibility_changed`, `note_deleted`는 note-api에 비공개 전환·삭제 기능이 생길 때 함께 발행된다(reference §6). deferq queue는 discovery가 listener를 등록할 때 생기므로, **그 발행이 시작되기 전에** discovery를 배포해야 이벤트를 잃지 않는다.
 - `note_updated`는 이미 발행 중이라, discovery listener가 뜨기 전의 것은 사라진다. 다시 쓰인 note는 주기적 다시 맞추기가 `version` 차이로 잡고, 철회된 note는 "없음"으로 잡는다. 받지 못한 생성은 backfill이 메운다.
 - listener는 지금 코드의 재시도 묶음(`worker/flows.retrying`)으로 감싼다. deferq는 listener가 실패한 이벤트를 버리므로, DB가 잠깐 흔들려도 숨기기가 빠지지 않게 한다.
-- **네 note listener와 `message_created` listener(`count_turn_on_message_created`)의 함수 이름은 바꾸지 않는다.** deferq는 queue 이름을 listener 함수 이름으로 정한다. 이름을 바꾸면 옛 queue가 남아 이벤트를 조용히 모은다. 바꿔야 하면 옛 queue를 비우고 지운다.
+- **네 note listener와 탈퇴 listener의 함수 이름은 바꾸지 않는다.** deferq는 queue 이름을 listener 함수 이름으로 정한다. 이름을 바꾸면 옛 queue가 남아 이벤트를 조용히 모은다. 바꿔야 하면 옛 queue를 비우고 지운다.
 - `bourbon.user_registered` listener와 `agents` 테이블은 지운다(§3-2).
+- `bourbon.message_created`는 더 받지 않는다(2026-11-12, phase 10). room v4 뒤로 셀 agent DM이 없었다(§6-3). listener와 queue `deferq.count_turn_on_message_created`를 지운다(queue는 purge가 아니라 delete).
 - 지우는 listener: `bourbon.topics_updated`, `bourbon.topic_visibility_changed`, `bourbon.friendship_changed`. 지운 listener의 queue도 함께 지운다.
 
 ### 2-2. 다시 맞추기
@@ -265,7 +265,7 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
 - note-api는 개발 중에 저장소를 비우고 note를 다시 쓰는 일이 잦고, 그때 본문이 바뀔 수 있다. live 경로로 따라가면 discovery에는 삭제 급증으로 보여 §2-2의 삭제 급증 차단이 지우기를 보류하고, 그 뒤 모든 note를 다시 읽는다. 그래서 이때는 인덱스를 통째로 바꾼다. discovery `cli snapshot` → `build` → `load`다(discovery README "Reloading the note index").
 - **snapshot:** bourbon-api의 유저 목록, 유저마다 note 전체(public과 private), note가 가리키는 공유 card를 받아 노트북의 gitignore된 폴더에 둔다. 유저 하나나 card 조회 하나라도 실패하면 미완료로 두고, 그 스냅샷으로는 만들지 않는다. note 본문이 들어 있으므로 build 뒤 `--forget-text`로 본문과 card 사실을 지운다.
 - **build:** 로컬 DB에서 sync를 그대로 돌린다. note-api 읽기만 스냅샷으로 바꾸고, note는 live와 같이 `mark_pending`으로 표시해 sync가 읽고 만들고 쓴다. 그래서 row가 sync의 것과 같다. 매번 새로 분석한다(본문이 바뀔 수 있어서). public note를 먼저 만들고, private note는 아래 불변식 7의 예외대로 만든다. 끝내 분석이 실패한 note는 `failed`로 남겨 워커가 이어 받게 한다.
-- **load:** 대상 DB(dev는 bastion 터널)에서 `notes`, `note_tags`, `note_cards`, `cards`, `tags`, `decisions`를 TRUNCATE하고 build의 row를 쓴다. 한 transaction이다. DROP하지 않는다(앱 계정 권한이 사라지고 alembic 밖의 스키마가 된다). `room_turns`와 `departed_users`는 남기고, 대상 DB가 아는 탈퇴 유저의 note는 쓰지 않는다(불변식 5). DB나 build가 코드의 migration head가 아니거나, build의 embedding·분석 spec이 지금 코드와 다르면 거부한다. tag id sequence는 옮긴 id 다음으로 맞춘다.
+- **load:** 대상 DB(dev는 bastion 터널)에서 `notes`, `note_tags`, `note_cards`, `cards`, `tags`, `decisions`를 TRUNCATE하고 build의 row를 쓴다. 한 transaction이다. DROP하지 않는다(앱 계정 권한이 사라지고 alembic 밖의 스키마가 된다). `departed_users`는 남기고, 대상 DB가 아는 탈퇴 유저의 note는 쓰지 않는다(불변식 5). DB나 build가 코드의 migration head가 아니거나, build의 embedding·분석 spec이 지금 코드와 다르면 거부한다. tag id sequence는 옮긴 id 다음으로 맞춘다.
 - **순서:** 워커를 멈춘다 → note-api의 다시 쓰기가 끝나길 기다린다 → note listener 큐 넷을 비운다 → snapshot → build → load → 워커를 켠다.
   - 워커를 스냅샷보다 먼저 멈춰야, 그 사이 처리한 이벤트가 적재로 덮이지 않는다.
   - 큐를 스냅샷 직전에 비우는 이유: 큐에는 note-api가 다시 쓰면서 낸 이벤트가 쌓여 있는데, 그 결과는 스냅샷에 이미 있다. 그대로 두면 적재 뒤 `note_updated`마다 note가 다시 읽힐 때까지 검색에서 빠지고, 다시 쓰기로 사라진 옛 note의 이벤트는 삭제 급증 차단을 건다.
@@ -273,7 +273,7 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
 
 **클러스터 안에서 제자리 재구축하기(2026-11-10):**
 - 스냅샷 다시 적재는 노트북, bastion 터널, 관리 계정, broker 콘솔이 있어야 한다. note-api가 note를 다시 쓰는 일이 잦아서, kubectl만으로 되는 길을 하나 더 둔다. discovery `k8s/scripts/rebuild-index.sh dev`가 워커를 멈추고 `cli rebuild-index --confirm`을 일회용 Job으로 돌린 뒤 워커를 다시 켠다(discovery README "Rebuilding the note index in the cluster").
-- **순서:** 인덱스를 한 transaction의 `DELETE`로 비운다(앱 계정 권한 안. `room_turns`, `departed_users`는 남긴다) → note listener 큐 넷을 비운다(다른 큐는 건드리지 않는다. `erase_on_user_deactivated`를 비우면 탈퇴 처리가 사라진다) → backfill로 모든 유저의 note를 표시한다. 다시 켠 워커의 sync가 읽고 분석한다.
+- **순서:** 인덱스를 한 transaction의 `DELETE`로 비운다(앱 계정 권한 안. `departed_users`는 남긴다) → note listener 큐 넷을 비운다(다른 큐는 건드리지 않는다. `erase_on_user_deactivated`를 비우면 탈퇴 처리가 사라진다) → backfill로 모든 유저의 note를 표시한다. 다시 켠 워커의 sync가 읽고 분석한다.
 - 비우기는 필요하다. note-api가 같은 id로 더 낮은 version의 note를 다시 쓰면, 남은 row가 원하는 version을 영영 만나지 못한다.
 - DB가 코드의 migration head가 아니거나 note 큐에 consumer가 있으면(워커가 돌고 있으면) 아무것도 하지 않고 거부한다. 각 단계는 다시 돌려도 된다. 목록을 읽지 못한 유저가 있으면 실패로 끝내고 `cli backfill`로 다시 한다.
 - **대가:** 채워지는 동안(note 수에 따라 몇 분) 인덱스가 일부만 차 있어 검색 결과가 덜 나온다. 빈틈 없이 바꿔야 하면 스냅샷 다시 적재를 쓴다. LLM 비용은 같다(public note마다 embedding 하나, 분석 하나).
@@ -340,7 +340,6 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
 ### 2-6. 탈퇴
 
 - `bourbon.user_deactivated`를 받으면 한 트랜잭션에서 그 유저의 `notes`, `note_tags`, `note_cards`를 지우고 `departed_users`에 남긴다. 지금 `storage/erasure.py`의 lock과 순서를 그대로 쓴다.
-- `room_turns`는 room 단위라 사람을 담지 않는다. 지금처럼 둔다.
 - **note-api의 빈틈:** 탈퇴 직후 늦게 저장된 note에 `note_created`가 올 수 있고, trusted 조회는 탈퇴 유저의 note도 돌려준다(reference §7). 그래서 discovery는 모든 쓰기에서 탈퇴 여부를 본다.
 - **탈퇴 이벤트를 놓친 경우:** deferq는 listener가 실패한 이벤트를 버린다. 그러면 `departed_users`가 비어 있다.
   - 응답에는 나가지 않는다. 요청할 때 public 읽기가 탈퇴 유저의 note를 거르고, 확인된 note가 없는 사람은 응답에 없다(§5-5).
@@ -392,7 +391,7 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
 
 | 테이블 | 쓰는 곳 |
 |---|---|
-| `room_turns` | 이미 대화한 사람(§6-3). 지금 보존 sweep은 `interactions`가 없는 `room_turns`를 7일 뒤 지운다(`room_turns.orphan_ttl_days`, `storage/retention.py`). `interactions`를 지우면 모든 row가 그 대상이 되어 "이미 대화함"이 일주일 만에 잊힌다. 그래서 이 규칙을 지우고, `last_turn_at` 뒤 `room_turns.retention_days`(365일)가 지나면 지운다. 1년 넘게 대화가 없던 사람은 다시 "새로운 사람"으로 추천해도 된다고 본다. row에는 방 id와 수, 시각만 있어 사람을 직접 담지 않는다. `interactions`를 지우는 §10-2의 1단계 PR에서 함께 바꾼다 |
+| ~~`room_turns`~~ | 지웠다(2026-11-12, migration 0016). room v4 뒤로 셀 agent DM이 없었다(§6-3). 아래는 처음 안이다. 이미 대화한 사람(§6-3). 지금 보존 sweep은 `interactions`가 없는 `room_turns`를 7일 뒤 지운다(`room_turns.orphan_ttl_days`, `storage/retention.py`). `interactions`를 지우면 모든 row가 그 대상이 되어 "이미 대화함"이 일주일 만에 잊힌다. 그래서 이 규칙을 지우고, `last_turn_at` 뒤 `room_turns.retention_days`(365일)가 지나면 지운다. 1년 넘게 대화가 없던 사람은 다시 "새로운 사람"으로 추천해도 된다고 본다. row에는 방 id와 수, 시각만 있어 사람을 직접 담지 않는다. `interactions`를 지우는 §10-2의 1단계 PR에서 함께 바꾼다 |
 | `departed_users` | 탈퇴 확인 |
 
 `agents`는 지운다. agent id는 `identity.personal_agent_id(owner)`로 계산되고, 검색 조건에도 쓰이지 않는다. 함께 `bourbon.user_registered` listener도 지운다.
@@ -412,6 +411,7 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
 - 그러면 aioboto3, DynamoDB 테이블, 쓰고 나서 탈퇴를 확인하던 처리가 없어진다. IAM은 공유 role(`bourbon-app`)이라 role은 그대로 두고, discovery 테이블에 대한 권한만 뺀다. 메모 §9-3의 "저장소 하나"다.
 - 옛 이벤트 로그와 결정 로그는 내보내지 않고 테이블째 지운다(2026-11-07 오너). 새 구조에서 쓸 곳이 없다.
 - DynamoDB는 옛 route와 함께 §10-2의 1단계에서 지운다. `decisions` 테이블은 2단계의 새 테이블과 함께 만든다.
+- 결정 로그는 요청 경로에서 한 곳만 읽힌다. 주제 추천이 같은 요청자에게 최근 보여 준 사람을 센다(§6-3). 요청자 id 인덱스로 한 사람의 7일만 본다.
 
 ---
 
@@ -556,7 +556,6 @@ note_score = cosine(note, query)
       "agent_id": "...",
       "owner_user_id": "...",
       "position": 1,
-      "already_talked": false,
       "reason": {
         "matched_tags": [{"key": "peaty whisky", "label": "피트 위스키", "note_count": 2}],
         "matched_by": ["tags", "card_subject"],
@@ -573,6 +572,7 @@ note_score = cosine(note, query)
 
 - 사람 점수(§6-2)로 상위 `max_results + agents.read_buffer`(초안 +2)명을 고르고, 그 사람들의 쿼리와 가장 가까운 note 최대 3개씩을 여러 개 public 조회 1번으로 읽는다(최대 22명 × 3 = 66개, 한 번에 읽는 100개 안).
 - **확인된 note가 하나도 없는 사람은 빼고**, 순위에서 다음 사람으로 채운다(§5-5).
+- 처음 응답에 있던 `already_talked`는 뺐다(2026-11-12, §6-3). 연동한 곳이 없을 때 바꿔서 `contract_version`은 "1" 그대로다.
 - **`reason`은 그 요청에서 확인된 note에서만 만든다**(불변식 2). 순위는 파생 데이터로 정했지만, 응답에 드러나는 사람과 이유는 방금 public으로 확인된 note에서만 나온다(메모 §11-3).
   - `notes`: 확인된 note의 id, 제목, 직접 경험 여부.
   - `matched_tags`: 그 note들의 지금 tag 중 쿼리 tag와 겹치는 것과, 그 tag가 붙은 확인된 note 수(`note_count`). 확인된 note만 센다(2026-11-11 오너). 검색 가능한 note 전체 수는 응답에 드러나지 않는다.
@@ -591,8 +591,8 @@ note_score = cosine(note, query)
 3. 두 값을 각각 z-score로 바꿔 더한다. 실험은 전체 유저 100명에 대해 z-score를 내고, 그 뒤에 질문한 사람을 뺐다. v1도 검색 가능한 note가 있는 모든 owner에 대해 내고, 그 뒤에 요청자와 `exclude_user_ids`를 뺀다(§5-1). z-score를 낼 사람이 3명보다 적으면 가까운 note 유사도 순서로 둔다.
    - **비용:** 요청마다 검색 가능한 모든 note와 cosine을 계산하는 전체 scan이다. owner별 상위 3개는 벡터 인덱스(HNSW)로 뽑을 수 없다. note 1만 개(768차원)면 수 ms~수십 ms라 v1 규모에서는 괜찮다. 규모가 커질 때 가장 먼저 깨지는 곳이다. 그때는 tag·벡터 경로로 후보 owner를 좁히고, 좁혔을 때의 차이를 잰다.
 4. 질문의 card에 대해 쓴 사람에게 card 항을 더한다(아래 "card 항", v1 0.5).
-5. 이미 대화한 사람을 감점한다(§6-3).
-- 사람이 3명보다 적으면 z-score 없이 가까운 note 유사도로 줄을 세우고, card 항과 감점도 그 값에 그대로 더하고 뺀다.
+5. 같은 요청자에게 최근 보여 준 사람을 감점한다(§6-3).
+- 사람이 3명보다 적으면 z-score 없이 가까운 note 유사도로 줄을 세우고, card 항은 그 값에 그대로 더한다. 감점은 하지 않는다(§6-3).
 
 - 계산의 모든 입력(사람 수, tag를 쓴 사람 수, note 수, 가까운 note)은 검색 가능한 note만으로 센다(§8).
 - **card 항(2026-11-08 오너, v1에 넣었다).** 질문의 card를 `subject`로 연결한 검색 가능한 note(지금 내용의 분석)가 있는 사람은 `agents.card_term`(0.5, z-score 단위)을 더 받는다. mention은 받지 않는다(거주지 누출, §2-5). z-score를 낸 뒤에 더하므로 다른 사람의 점수는 바뀌지 않는다. 결정 로그에 항의 값과 이 항을 받은 사람을 남긴다. 실험에 없던 항이라 값은 dev에서 다시 잰다.
@@ -608,15 +608,24 @@ note_score = cosine(note, query)
 - 한 사람이 여러 note로 잡혀도 사람은 하나다(메모 §3-1).
 - **같은 계산인지 확인한 결과(2026-11-08):** 실험의 tag와 embedding을 넣으면 질문 95개 모두에서 운영 점수가 실험의 "tag + emb top3"와 1e-4 안에서 같고(실험은 float32라 최대 1.1e-5 차이), 순서는 완전히 같다. DB를 거친 경로도 1e-4 안에서 같고 순서도 같다. 0.400 / 0.484를 그대로 낸다. 실험의 합성 유저는 모두 note가 10개라 위의 M2를 넣어도 이 결과는 같다.
 
-### 6-3. 이미 대화한 사람
+### 6-3. 최근 보여 준 사람 (2026-11-12 오너, discovery phase 10)
 
-- "대화해 보세요" 추천에서는 이미 대화한 사람을 **빼지 않고 내린다**(메모 §8-5).
-- **판정:** 요청자가 그 사람의 agent와 대화한 방 id는 계산할 수 있다(`identity.agent_dm_room_id(요청자, personal_agent_id(owner))`). 그 방이 `room_turns`에 있으면 대화한 것이다.
-  - `room_turns`는 `message_created`가 agent DM의 유저 메시지마다 센다. 추천한 방만이 아니다.
-  - 후보 전체의 방 id를 계산해 DB 조회 한 번으로 본다.
-- 대화했으면 `agents.already_talked_penalty`를 뺀다. 감점 크기는 실험에 없으니 dev에서 정한다.
-- 응답에 `already_talked`를 실어 화면이 "다시 이야기해 보기"처럼 보여줄 수 있게 한다.
-- 지금 `interactions`는 discovery가 추천한 방만 기록한다(`worker/conversations.py`). 그래서 이 판정에는 쓰지 않고 지운다.
+처음 안은 "이미 대화한 사람"을 내렸다. 요청자와 그 사람의 agent가 대화한 방 id를 계산해(`agent_dm_room_id`) `room_turns`에서 찾는 방식이었다. bourbon-api의 room v4(#365, 2026-11-06 머지)가 `agent_dm` 방 종류를 없애면서 이 판정은 늘 거짓이 됐다.
+- 추천으로 열리는 방은 이제 `guest` 방이다(요청자 + 요청자의 agent + 추천받은 사람의 agent). bourbon-agent의 `start_thread`가 `POST /api/internal/rooms/guest`로 만든다. id는 uuid7이라 미리 계산할 수 없다.
+- 방이 생긴 것은 부모 방에 남는 system 메시지 `room_branched`로만 알 수 있다. AMQP 이벤트는 없다.
+- 그래서 `message_created` listener가 세던 `room_turns`는 v4 뒤로 아무것도 세지 않았다. listener, `room_turns`(migration 0016), 응답의 `already_talked`를 지웠다.
+
+대신 같은 요청자에게 **최근 보여 준 사람**을 내린다. 같은 입력이면 늘 같은 순위가 나와서, 같은 주제로 다시 물으면 늘 같은 사람이 나왔다(합성 세트에서 두 번째 질문의 100%).
+- 같은 요청자에게 주제 추천이 최근 `agents.shown_window_days`(7일) 안에 보여 준 횟수만큼, 한 번에 `agents.shown_penalty`(1.0, z-score 단위)씩 점수를 깎는다. 주제와 상관없이 센다. 결과에서 빼지는 않고 순위만 내린다(메모 §8-5).
+- 횟수는 결정 로그(`decisions`)의 `shown[].owner_user_id`를 다시 읽어 센다(`DecisionsRepository.shown_to`). 결정 로그가 요청 경로에서 읽히는 유일한 곳이다. 이 기간은 `decision_log.retention_days`보다 길 수 없다(설정 검증).
+- "보여 줬다"는 응답에 실린 모든 사람이다. bourbon-agent가 `max_results` 1로 부르는 동안만 "본 사람"과 같다. 어느 호출자든(`cli ask --api`, Postman 포함) 센다. 기본 `cli ask`는 서비스를 프로세스 안에서 돌려 결정 로그를 쓰지 않으니 읽기만 한다. 클라이언트가 다시 보내면 두 번 센다. v1에서는 받아들인다.
+- 사람이 3명보다 적어 가까운 note 유사도로 줄을 세울 때는 빼지 않는다. z-score 단위가 cosine 단위가 아니어서다.
+- **켜고 끄기:** `agents.shown_penalty_on`(기본 켬). 꺼도 횟수는 읽고 로그에 남긴다. 점수만 바꾸지 않는다. **dev는 끈다.** 사람이 적어서 내리고 나면 보여 줄 만한 사람이 남지 않는다. dev overlay의 ConfigMap이 API에만 이 값을 준다.
+- **읽기 실패:** 읽기에는 route 마감 안에서 따로 `agents.shown_read_seconds`(0.3초, dev에서 잰 뒤 정한다)를 준다. 실패하거나 늦으면 아무도 내리지 않고 답을 계속한다. `agents.shown_unread` 경고와 `shown_read: false`를 남기고 `degraded`에는 넣지 않는다. 마감 전체를 쓰게 두면 뒤의 public 읽기가 잘려 빈 답이 나갔다(Fable 리뷰). 단, DB 연결 자체의 실패(asyncpg의 `OSError`)는 아직 500이다(좁은 틈이라 두었다).
+- **결정 로그:** 사람마다 `shown_before`(횟수. 읽지 못했으면 0은 "모름"이다), 최상위에 `shown_penalty`(이 답에서 한 번 보여 준 것에 실제로 매긴 값. 끔, 읽기 실패, 사람 3명 미만이면 0.0)와 `shown_read`.
+- **합성 세트에서 잰 것(2026-11-12):** 1.0이면 두 번째 질문에서 61%가 새 사람이고, 다섯 번 물으면 평균 3.4명을 본다(Fable이 합성 세트로 잰 값, 로컬 스크립트). 첫 질문의 순위는 바뀌지 않는다.
+- 동점에 가까운 사람 사이에서 뽑는 방법(C)은 보류했다. 효과가 약하거나 맞는 비율이 떨어졌다.
+- 다시 "대화한 사람"을 보려면 bourbon-api가 `room_branched`(또는 guest 방 생성)를 AMQP 이벤트로 내야 한다. 나중의 요청이다(`requests/bourbon-api.md`).
 
 ### 6-4. 빈 결과와 출시 기준
 
@@ -895,6 +904,8 @@ note_score = cosine(note, query)
 
 남기는 것: LLM transport(`providers/llm/`), 설정 레지스터, 탈퇴 처리(`departed.py`, `erasure.py`), 보존 sweep(`room_turns` 규칙은 §3-2대로 바꾼다), `identity.py`.
 
+2026-11-12(phase 10): 남겼던 `message_created` listener, `room_turns`와 그 보존 규칙, `identity.agent_dm_room_id`도 지웠다(§6-3).
+
 ### 10-2. 순서
 
 topic-api는 지금부터 없다고 보고 작업한다(2026-11-06 오너). 그래서 옛 기능과 새 기능을 함께 두는 기간을 두지 않고, 지우기를 먼저 한다.
@@ -902,7 +913,7 @@ topic-api는 지금부터 없다고 보고 작업한다(2026-11-06 오너). 그�
 1. **지우기.** §10-1의 코드와 옛 route, listener를 지운다. 남기는 코드도 같은 PR에서 고친다. 지울 것에 기대고 있어서다.
    - `storage/erasure.py`: `visible_topic_rows`, `friends`, `attributions`, `interactions`, `agents`, 인기도 지우기를 뺀다. 탈퇴 기록(`departed_users`)만 남기고, note 쪽 지우기는 2단계에서 더한다.
    - `worker/deactivation.py`: DynamoDB의 CF 후보 지우기를 뺀다.
-   - `worker/conversations.py`(`message_created`): `room_turns` 세기만 남기고 예측 방, `interactions`, attribution을 뺀다. listener 함수 이름은 그대로 둔다(§2-1).
+   - `worker/conversations.py`(`message_created`): `room_turns` 세기만 남기고 예측 방, `interactions`, attribution을 뺀다. listener 함수 이름은 그대로 둔다(§2-1). (2026-11-12에 이것도 지웠다. §10-1 끝, §6-3)
    - `worker/journal.py`의 `record`(모든 listener가 DynamoDB 이벤트 로그에 쓴다)와 `worker/retry.py`의 DynamoDB 오류 분류를 뺀다.
    - 보존 sweep: `friends`, `attributions` 규칙을 빼고, `room_turns` 규칙을 §3-2대로 바꾼다.
    - 아무것도 import하지 않아 테스트로는 안 보이는 `scripts/`(`create_dynamodb_table.py`, `disposable.py`, `fetch_dev_snapshot.py`, `load_dev.py`, `seed_local*.py`, `try_recommend.py`, 카탈로그 스크립트)와 `cli/publish.py`, `cli/recommend.py`도 지우거나 고친다.
@@ -984,7 +995,7 @@ v1은 원본을 두지 않는다. 아래 경우에는 public note의 사본을 d
 | 9 | bourbon-agent가 인용한 note id를 돌려주는 방법 | bourbon-agent | v1 뒤 |
 | 10 | ~~두 route의 이름과 필드~~ → 정해짐(2026-11-07): 이 안대로(§6-1, §7-1) | — | — |
 | 11 | ~~공개 discover 화면을 부르는 앱~~ → 정해짐(2026-11-07): 없다. 지운다(§10-2) | — | — |
-| 12 | ~~보존 기간~~ → 정해짐(2026-11-07, 추천값): `decisions` 30일, `room_turns`는 마지막 대화 뒤 365일(§3-2, §3-4). 운영하며 조정한다 | — | — |
+| 12 | ~~보존 기간~~ → 정해짐(2026-11-07, 추천값): `decisions` 30일, `room_turns`는 마지막 대화 뒤 365일(§3-2, §3-4). 운영하며 조정한다. `room_turns`는 2026-11-12에 지웠다(§6-3) | — | — |
 | 13 | ~~private이 된 note의 파생 데이터를 지울지~~ → 정해짐(2026-11-06): 남기고 공개 범위로 거른다(§2-2) | — | — |
 | 14 | deferq queue와 메시지가 broker 재시작 뒤에도 남는지. 오너는 남을 것으로 본다(2026-11-07). deferq 설정(queue durable, 메시지 persistent)과 실제 재시작으로 확인한다 | discovery | 적재 단계 |
 | 15 | note-api 읽기의 실제 지연(dev, 클러스터 안에서) | discovery | 답할 사람 찾기 route 전 |
@@ -997,10 +1008,18 @@ v1은 원본을 두지 않는다. 아래 경우에는 public note의 사본을 d
 | 22 | private으로 오래 머무는 note의 파생 데이터를 얼마나 둘지(지금은 public이 되거나 지워질 때까지) | 오너 | v1 뒤 |
 | 23 | ~~짧은 주제 문장 세트와 고유명사 질문 세트의 크기, 만드는 방법, 판정 깊이~~ → 짧은 주제 100개를 만들어 상위 10명 깊이로 판정했고 주제 추천은 통과했다(2026-11-08, §6-4). 고유명사 세트는 사람 단위 판정 없이 60개를 만들었다(2026-11-08, §9) | — | — |
 | 24 | 저장해 둔 요약(안 C)을 둘지. 설명(`explain`)이 자주 켜져 지연이나 비용이 문제가 되면 note 분석에 요약을 더한다(§7-1) | 오너 | dev에서 설명을 써 본 뒤 |
+| 25 | `agents.shown_read_seconds`(지금 0.3초)의 값. dev에서 `shown_to` 쿼리를 `EXPLAIN ANALYZE`로 재고 정한다(§6-3) | discovery | phase 10 dev 배포 때 |
+| 26 | 최근 보여 준 사람의 감점(§6-3)을 dev에서 켤 시점과 값. 동점 근처 뽑기(C)를 넣을지 | 오너 | dev에 사람이 늘면 |
 
 ---
 
 ## 검토 기록
+
+**2026-11-12, "이미 대화한 사람"을 "최근 보여 준 사람"으로 (discovery phase 10)**
+- bourbon-api room v4가 `agent_dm`을 없애 `already_talked`가 늘 거짓이었다. 응답과 결정 로그에서 `already_talked`를 빼고(`contract_version` "1" 유지, 연동 전), `message_created` listener와 `room_turns`(migration 0016)를 지웠다(§2-1, §3-2, §6-1, §6-3).
+- 같은 요청자에게 7일 안에 보여 준 횟수마다 1.0 z를 뺀다. 결정 로그를 다시 읽는다. 켜고 끌 수 있고 dev는 끈다. 동점 근처 뽑기(C)는 보류했다(§6-3).
+- `personal_agent_id`를 bourbon-api `origin/main`의 코드로 직접 돌려 비교하는 테스트를 더했다(§3-2의 `agents` 제거 근거).
+- Fable 리뷰로: 결정 로그 읽기가 route 마감 전체를 쓰면 빈 답이 나갔다. 읽기에 따로 0.3초를 준다(`agents.shown_read_seconds`, 열린 항목 25). 로그의 `shown_penalty`는 한 번에 실제로 매긴 값이다.
 
 **2026-11-11, 두 route를 목적에 맞게 다시 그린 것 (discovery phase 9)**
 - route와 필드 이름: `/recommend/subject` → `/recommend/agents`(`subject` → `topic`), `/recommend/answerers` → `/recommend/notes`(`max_notes` → `max_results`). 설정 묶음 `subject.*` → `agents.*`(§6-1, §7-1).

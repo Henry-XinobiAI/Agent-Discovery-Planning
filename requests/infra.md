@@ -38,6 +38,8 @@ note embedding을 `vector(768)` 컬럼에 두고 요청마다 cosine 거리로 �
 |---|---|---|
 | `visible_topic_rows`, `catalog_edges`, `catalog_snapshots`, `friends`, `popularity`, `attributions`, `interactions`, `population_stats`, `agents` | `notes`, `tags`, `note_tags`, `cards`, `note_cards`, `decisions` | `room_turns`, `departed_users` |
 
+2026-11-12: `room_turns`는 migration 0016으로 지웠다(discovery phase 10). 남는 테이블은 `departed_users`뿐이다.
+
 ### 1-3. 커넥션 수 — 공유하기 때문에 우리가 먼저 줄인 것
 
 프로세스마다 SQLAlchemy 커넥션 풀을 하나 들고, pod당 프로세스는 1개다. 풀 크기는 `DB_POOL_SIZE`·`DB_MAX_OVERFLOW`로 환경마다 정한다. **숫자는 예전과 같다.**
@@ -91,8 +93,7 @@ topic 시절 예약 작업(`agent_discovery.refresh_user_topics`)이 남긴 key�
 
 **큐 깊이 상한과 알람 (2026-09-16 요청, 큐 이름만 바뀜).** 우리 워커는 데이터베이스에 닿지 못하면 뜨지 않는다. deferq는 실패한 리스너의 메시지를 ack하고, 재전달도 DLQ도 하지 않는다. 그래서 뜬 채로 소비하면 그 이벤트는 영구 손실이고, 안 뜨면 큐에 남는다. 그런데 우리 큐에는 `x-max-length`도 `x-message-ttl`도 없고, 브로커는 `SINGLE_INSTANCE`이며 여러 서비스가 같은 vhost를 쓰고, 큐 깊이 알람이 없다. 그래서 둘을 부탁드린다.
 
-- **(가)** 우리 큐에 `x-max-length`(또는 `x-max-length-bytes`)와 overflow 동작을 정책으로 걸어 주시고, 며칠치 백로그를 감당할 수 있는지 알려 주세요. **패턴을 `deferq.*`로 잡지는 말아 주세요.** deferq는 모든 서비스의 컨슈머 큐를 그 접두어로 짓기 때문에 다른 팀의 큐까지 건드린다. 지금 우리 큐는 여섯이다:
-  - `deferq.count_turn_on_message_created`
+- **(가)** 우리 큐에 `x-max-length`(또는 `x-max-length-bytes`)와 overflow 동작을 정책으로 걸어 주시고, 며칠치 백로그를 감당할 수 있는지 알려 주세요. **패턴을 `deferq.*`로 잡지는 말아 주세요.** deferq는 모든 서비스의 컨슈머 큐를 그 접두어로 짓기 때문에 다른 팀의 큐까지 건드린다. 지금 우리 큐는 다섯이다(2026-11-12에 `deferq.count_turn_on_message_created`를 지웠다. 걸어 두신 정책이 있으면 함께 풀어 주세요):
   - `deferq.erase_on_user_deactivated`
   - `deferq.mark_pending_on_note_created`
   - `deferq.mark_pending_on_note_updated`
@@ -118,5 +119,5 @@ topic 시절 예약 작업(`agent_discovery.refresh_user_topics`)이 남긴 key�
 
 1. §1-1 — 우리 관리 계정으로 `CREATE EXTENSION vector`가 거부되면 `rds_superuser`로 실행해 주실 수 있는지.
 2. §2 — dev DynamoDB 테이블 삭제(우리 배포 뒤).
-3. §4 — 여섯 큐에 걸 수 있는 깊이 상한과 기대할 수 있는 백로그 기간, 알람 임계.
+3. §4 — 다섯 큐에 걸 수 있는 깊이 상한과 기대할 수 있는 백로그 기간, 알람 임계.
 4. prod — §1-5는 prod 배포 시점에 다시 묻는다.
