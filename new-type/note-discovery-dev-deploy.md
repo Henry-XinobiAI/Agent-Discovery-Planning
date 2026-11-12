@@ -1,6 +1,6 @@
 # note 기반 agent-discovery-api — dev 배포 절차
 
-> **2026-11-11에 끝났다.** 실제로 올린 것은 `deploy/2611` `31b2f8d`(phase 9와 이미지 내용 수정 #95까지)다. 해 보며 더한 것: pgvector는 관리 계정으로 안 돼 인프라가 설치했다(3-1). alembic은 `DATABASE_URL`이 dev를 가리키는지 `alembic current`·`heads`로 먼저 본다. 첫 이미지(`8460c6c`)에는 `cli/`가 빠지고 로컬 `data/`가 들어 있었다(#95의 allow-list `.dockerignore`로 고쳤다). 그 뒤의 배포는 §9부터다(phase 10, 2026-11-12에 끝났다. migration 기준 정리는 §10, main 배포와 인덱스 다시 만들기는 §11, 근거 없는 결과의 하한은 §12). **§1~§8은 그 첫 배포의 기록이다.** `room_turns`와 turn queue가 나오는 명령은 0016 뒤에는 그대로 돌리지 않는다.
+> **2026-11-11에 끝났다.** 실제로 올린 것은 `deploy/2611` `31b2f8d`(phase 9와 이미지 내용 수정 #95까지)다. 해 보며 더한 것: pgvector는 관리 계정으로 안 돼 인프라가 설치했다(3-1). alembic은 `DATABASE_URL`이 dev를 가리키는지 `alembic current`·`heads`로 먼저 본다. 첫 이미지(`8460c6c`)에는 `cli/`가 빠지고 로컬 `data/`가 들어 있었다(#95의 allow-list `.dockerignore`로 고쳤다). 그 뒤의 배포는 §9부터다(phase 10, 2026-11-12에 끝났다. migration 기준 정리는 §10, main 배포와 인덱스 다시 만들기는 §11. 근거 없는 결과의 하한은 §12이고 2026-11-13에 끝났다). **§1~§8은 그 첫 배포의 기록이다.** `room_turns`와 turn queue가 나오는 명령은 0016 뒤에는 그대로 돌리지 않는다.
 >
 > discovery `deploy/2611`(`e73f1f9`, phase 8 `cli rebuild-index` 포함)을 dev에 처음 올린다. dev는 지금 `60bf02f`(topic 기반), DB는 migration `0011`. prod는 DB도 배포도 없다.
 > 되돌림은 없다(topic 시절 테이블을 지운다). 문제가 생기면 앞으로 고친다.
@@ -358,9 +358,18 @@ kubectl --context dev-tokyo-cluster -n dev exec deploy/bourbon-agent-discovery-w
 - 유저 112명을 모두 읽어 note 166개를 표시했고, 몇 분 뒤 `ready 166`이 됐다. 같은 시각의 snapshot(`20261112T133049Z`)과 수가 같다.
 - 두 route 모두 200, `degraded` 없음. 라이카 질문의 1위는 tag(주제 추천)와 tag + card `subject`(답할 사람 찾기)로 맞았고, 2·3위는 뜻만 가까운 사람과 note였다. 이것이 하한을 다시 잰 계기다(설계 §5-3, §6-2).
 
-## 12. 근거 없는 결과의 하한 (배포 예정, `deploy/2611` `890f62a`)
+## 12. 근거 없는 결과의 하한 (2026-11-13, `deploy/2611` `890f62a`)
 
-discovery #99(설계 §5-3, §6-2)를 올린다. 배포하면 이 절의 제목과 결과를 채운다. `deploy/2611`을 main `890f62a`로 옮겼다. **migration과 백필이 필요 없다.** 근거(broad가 아닌 쿼리 tag, `subject` card)는 인덱스에 이미 있는 tag와 tag 넓이로 요청할 때 계산하고, 하한(`answer.meaning_floor` 0.64, `agents.meaning_floor` 0.60)은 설정값이다. dev의 설정 덮어쓰기(감점 off)는 그대로다.
+> **2026-11-13에 끝났다.** 두 deployment가 `890f62a`로 떴다. §11의 라이카 질문에서 근거 없는 결과만 빠졌다.
+>
+> | | 배포 전 (§11) | 배포 뒤 |
+> |---|---|---|
+> | 주제 추천 "라이카 카메라에 대해서" | 3명. 1위는 `camera` tag, 2·3위는 뜻만 가까운 사람(위성 해상도, 구텐베르크 박물관) | 1명. `camera` tag의 그 사람만 |
+> | 답할 사람 찾기 "라이카 Q2 써 본 사람 있어?" | 2개. 1위는 라이카 note, 2위는 뜻만 가까운 "미니멀한 취향과 양재천 티하우스" | 1개. tag와 card `subject`가 붙은 라이카 note만 |
+>
+> 두 route 모두 200, `degraded` 없음. 결정 로그의 `floor`는 주제 추천이 `value` 0.6, `left_out` 18, 빠진 사람 중 가까운 cosine 0.581·0.577·0.576이고, 답할 사람 찾기가 `value` 0.64, `left_out` 158, 빠진 note 중 가까운 cosine 0.601·0.599·0.599다. 빠진 것 중 가장 가까운 것이 하한 바로 아래에 몰리는지가 값을 다시 정할 때 볼 곳이다(설계 열린 항목 29). 아래는 그 절차의 기록이다.
+
+discovery #99(설계 §5-3, §6-2)를 올렸다. `deploy/2611`을 main `890f62a`로 옮겼다. **migration과 백필이 필요 없다.** 근거(broad가 아닌 쿼리 tag, `subject` card)는 인덱스에 이미 있는 tag와 tag 넓이로 요청할 때 계산하고, 하한(`answer.meaning_floor` 0.64, `agents.meaning_floor` 0.60)은 설정값이다. dev의 설정 덮어쓰기(감점 off)는 그대로다.
 
 **12-1. 배포하고, 두 deployment가 `890f62a`인지 본다.**
 
