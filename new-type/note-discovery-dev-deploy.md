@@ -354,13 +354,13 @@ k8s/scripts/rebuild-index.sh dev
 kubectl --context dev-tokyo-cluster -n dev exec deploy/bourbon-agent-discovery-worker -- python -m cli rebuild-index --status
 ```
 
-- 비운 것: note 37, tag 80, card 115, 결정 로그 24. note queue 넷에 남은 메시지는 0이었다(note-api 백필의 이벤트는 그 전에 worker가 처리했다).
+- 비운 것: note 37, tag 80, card 115, 결정 로그 24. note queue 넷에 남은 메시지는 0이었다. 그런데 비울 때 인덱스에 note가 37개뿐이었다(note-api는 166개, 그날 오후 snapshot은 36개). note-api 백필의 이벤트가 나가지 않았거나, 오지 않았거나, 처리되지 않은 것이다. 원인은 아직 모른다(설계 열린 항목 30).
 - 유저 112명을 모두 읽어 note 166개를 표시했고, 몇 분 뒤 `ready 166`이 됐다. 같은 시각의 snapshot(`20261112T133049Z`)과 수가 같다.
 - 두 route 모두 200, `degraded` 없음. 라이카 질문의 1위는 tag(주제 추천)와 tag + card `subject`(답할 사람 찾기)로 맞았고, 2·3위는 뜻만 가까운 사람과 note였다. 이것이 하한을 다시 잰 계기다(설계 §5-3, §6-2).
 
-## 12. 근거 없는 결과의 하한 (2026-11-13, `deploy/2611` `890f62a`)
+## 12. 근거 없는 결과의 하한 (배포 예정, `deploy/2611` `890f62a`)
 
-discovery #99(설계 §5-3, §6-2)를 올린다. `deploy/2611`을 main `890f62a`로 옮겼다. **migration과 백필이 필요 없다.** 근거(broad가 아닌 쿼리 tag, `subject` card)는 인덱스에 이미 있는 tag와 tag 넓이로 요청할 때 계산하고, 하한(`answer.meaning_floor` 0.64, `agents.meaning_floor` 0.60)은 설정값이다. dev의 설정 덮어쓰기(감점 off)는 그대로다.
+discovery #99(설계 §5-3, §6-2)를 올린다. 배포하면 이 절의 제목과 결과를 채운다. `deploy/2611`을 main `890f62a`로 옮겼다. **migration과 백필이 필요 없다.** 근거(broad가 아닌 쿼리 tag, `subject` card)는 인덱스에 이미 있는 tag와 tag 넓이로 요청할 때 계산하고, 하한(`answer.meaning_floor` 0.64, `agents.meaning_floor` 0.60)은 설정값이다. dev의 설정 덮어쓰기(감점 off)는 그대로다.
 
 **12-1. 배포하고, 두 deployment가 `890f62a`인지 본다.**
 
