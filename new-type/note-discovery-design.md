@@ -621,7 +621,7 @@ note_score = cosine(note, query)
 - "보여 줬다"는 응답에 실린 모든 사람이다. bourbon-agent가 `max_results` 1로 부르는 동안만 "본 사람"과 같다. 어느 호출자든(`cli ask --api`, Postman 포함) 센다. 기본 `cli ask`는 서비스를 프로세스 안에서 돌려 결정 로그를 쓰지 않으니 읽기만 한다. 클라이언트가 다시 보내면 두 번 센다. v1에서는 받아들인다.
 - 사람이 3명보다 적어 가까운 note 유사도로 줄을 세울 때는 빼지 않는다. z-score 단위가 cosine 단위가 아니어서다.
 - **켜고 끄기:** `agents.shown_penalty_on`(기본 켬). 꺼도 횟수는 읽고 로그에 남긴다. 점수만 바꾸지 않는다. **dev는 끈다.** 사람이 적어서 내리고 나면 보여 줄 만한 사람이 남지 않는다. dev overlay의 ConfigMap이 API에만 이 값을 준다.
-- **읽기 실패:** 읽기에는 route 마감 안에서 따로 `agents.shown_read_seconds`(0.3초, dev에서 잰 뒤 정한다)를 준다. 실패하거나 늦으면 아무도 내리지 않고 답을 계속한다. `agents.shown_unread` 경고와 `shown_read: false`를 남기고 `degraded`에는 넣지 않는다. 마감 전체를 쓰게 두면 뒤의 public 읽기가 잘려 빈 답이 나갔다(Fable 리뷰). 단, DB 연결 자체의 실패(asyncpg의 `OSError`)는 아직 500이다(좁은 틈이라 두었다).
+- **읽기 실패:** 읽기에는 route 마감 안에서 따로 `agents.shown_read_seconds`(0.3초. dev에서 쿼리가 0.12ms여서 그대로 둔다, 열린 항목 25)를 준다. 실패하거나 늦으면 아무도 내리지 않고 답을 계속한다. `agents.shown_unread` 경고와 `shown_read: false`를 남기고 `degraded`에는 넣지 않는다. 마감 전체를 쓰게 두면 뒤의 public 읽기가 잘려 빈 답이 나갔다(Fable 리뷰). 단, DB 연결 자체의 실패(asyncpg의 `OSError`)는 아직 500이다(좁은 틈이라 두었다).
 - **결정 로그:** 사람마다 `shown_before`(횟수. 읽지 못했으면 0은 "모름"이다), 최상위에 `shown_penalty`(이 답에서 한 번 보여 준 것에 실제로 매긴 값. 끔, 읽기 실패, 사람 3명 미만이면 0.0)와 `shown_read`.
 - **합성 세트에서 잰 것(2026-11-12):** 1.0이면 두 번째 질문에서 61%가 새 사람이고, 다섯 번 물으면 평균 3.4명을 본다(Fable이 합성 세트로 잰 값, 로컬 스크립트). 첫 질문의 순위는 바뀌지 않는다.
 - 동점에 가까운 사람 사이에서 뽑는 방법(C)은 보류했다. 효과가 약하거나 맞는 비율이 떨어졌다.
@@ -1008,12 +1008,17 @@ v1은 원본을 두지 않는다. 아래 경우에는 public note의 사본을 d
 | 22 | private으로 오래 머무는 note의 파생 데이터를 얼마나 둘지(지금은 public이 되거나 지워질 때까지) | 오너 | v1 뒤 |
 | 23 | ~~짧은 주제 문장 세트와 고유명사 질문 세트의 크기, 만드는 방법, 판정 깊이~~ → 짧은 주제 100개를 만들어 상위 10명 깊이로 판정했고 주제 추천은 통과했다(2026-11-08, §6-4). 고유명사 세트는 사람 단위 판정 없이 60개를 만들었다(2026-11-08, §9) | — | — |
 | 24 | 저장해 둔 요약(안 C)을 둘지. 설명(`explain`)이 자주 켜져 지연이나 비용이 문제가 되면 note 분석에 요약을 더한다(§7-1) | 오너 | dev에서 설명을 써 본 뒤 |
-| 25 | `agents.shown_read_seconds`(지금 0.3초)의 값. dev에서 `shown_to` 쿼리를 `EXPLAIN ANALYZE`로 재고 정한다(§6-3) | discovery | phase 10 dev 배포 때 |
+| 25 | ~~`agents.shown_read_seconds`(지금 0.3초)의 값~~ → 0.3초로 둔다(2026-11-12). dev에서 `shown_to` 쿼리가 `ix_decisions_requester_user_id` 인덱스로 0.122ms였다(§6-3). 결정 로그가 커지면 다시 잰다 | — | — |
 | 26 | 최근 보여 준 사람의 감점(§6-3)을 dev에서 켤 시점과 값. 동점 근처 뽑기(C)를 넣을지 | 오너 | dev에 사람이 늘면 |
 
 ---
 
 ## 검토 기록
+
+**2026-11-12, migration 기준을 0016 하나로 (discovery #97)**
+- `0015`(기준)와 `room_turns`를 지우던 `0016`을 기준 하나로 합쳤다. id는 `0016` 그대로다. dev가 이미 같은 스키마로 `0016`이어서 손으로 할 일이 없고, `0016`에서 만든 build도 그대로 적재된다. 옛 체인과 새 기준으로 만든 DB의 스키마 dump가 같았다.
+- 대가: 지금 코드로 downgrade하면 스키마 전체가 지워진다(`departed_users`, `decisions` 포함). phase 10을 되돌리려면 `a8fbbe0`에서 `downgrade 0015`를 돌린다(dev 배포 문서 §9).
+- 열린 항목 25를 닫았다. dev에서 결정 로그 읽기가 0.122ms여서 `agents.shown_read_seconds`는 0.3초로 둔다.
 
 **2026-11-12, "이미 대화한 사람"을 "최근 보여 준 사람"으로 (discovery phase 10)**
 - bourbon-api room v4가 `agent_dm`을 없애 `already_talked`가 늘 거짓이었다. 응답과 결정 로그에서 `already_talked`를 빼고(`contract_version` "1" 유지, 연동 전), `message_created` listener와 `room_turns`(migration 0016)를 지웠다(§2-1, §3-2, §6-1, §6-3).

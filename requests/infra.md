@@ -21,7 +21,7 @@ bourbon-agent-discovery-api는 유저의 **공개 note**로 "대화해 볼 사�
 
 ### 1-1. `vector` 확장 — 다음 배포 전에 필요
 
-note embedding을 `vector(768)` 컬럼에 두고 요청마다 cosine 거리로 검색한다(pgvector). 예전 요청서에서 "pgvector는 나중에 필요해지면 다시 요청한다"고 했던 그 시점이 왔다. 기준 마이그레이션(0015, 예전 0013)이 확장이 있는지 먼저 보고, 없으면 무엇을 하라는 메시지와 함께 멈춘다.
+note embedding을 `vector(768)` 컬럼에 두고 요청마다 cosine 거리로 검색한다(pgvector). 예전 요청서에서 "pgvector는 나중에 필요해지면 다시 요청한다"고 했던 그 시점이 왔다. 기준 마이그레이션(지금 0016, 그 전 0015와 0013)이 확장이 있는지 먼저 보고, 없으면 무엇을 하라는 메시지와 함께 멈춘다.
 
 - **우리가 먼저 한다:** pgvector는 trusted 확장이라, DB에 CREATE 권한이 있는 계정이면 superuser가 아니어도 만들 수 있다. 관리 계정으로 `CREATE EXTENSION vector;`를 실행해 본다.
 - **거부되면 부탁드린다:** 관리 계정에 그 권한이 없거나, RDS가 이 확장을 trusted로 두지 않아 권한 오류가 나면, `rds_superuser` 계정으로 dev DB `bourbon_agent_discovery`에서 같은 문장을 실행해 주세요.
@@ -32,13 +32,13 @@ note embedding을 `vector(768)` 컬럼에 두고 요청마다 cosine 거리로 �
 
 마이그레이션 0012~0014가 topic 시절 테이블 9개를 지우고 새 테이블 6개를 만든다. 앱 계정 권한은 관리 계정이 직접 준다.
 
-**2026-11-10: migration을 기준 하나(0015)로 합쳤다.** 0001~0014는 discovery `df05ccb`까지만 있다. dev는 한 번만 손으로 옮긴다: 옛 api와 worker를 멈춤 → `df05ccb` worktree에서 `alembic upgrade 0014`(관리 계정) → 새 테이블 권한 → dev 스키마를 새 기준과 비교(읽기만, 차이가 없어야 한다) → `alembic stamp --purge 0015` → 배포 후 두 deployment를 1로 되돌림. 절차는 discovery README "Database migrations"에 있다. 테이블과 남는 데이터(아래 표)는 그대로다. prod에는 아직 DB가 없어 이 절차가 필요 없다.
+**2026-11-10: migration을 기준 하나(0015)로 합쳤다.** 0001~0014는 discovery `df05ccb`까지만 있다. dev는 한 번만 손으로 옮긴다: 옛 api와 worker를 멈춤 → `df05ccb` worktree에서 `alembic upgrade 0014`(관리 계정) → 새 테이블 권한 → dev 스키마를 새 기준과 비교(읽기만, 차이가 없어야 한다) → `alembic stamp --purge 0015` → 배포 후 두 deployment를 1로 되돌림. 절차는 `new-type/note-discovery-dev-deploy.md` §3에 있다. 테이블과 남는 데이터(아래 표)는 그대로다. prod에는 아직 DB가 없어 이 절차가 필요 없다.
 
 | 지우는 테이블 (0012) | 새 테이블 (0013, 0014) | 남는 테이블 |
 |---|---|---|
 | `visible_topic_rows`, `catalog_edges`, `catalog_snapshots`, `friends`, `popularity`, `attributions`, `interactions`, `population_stats`, `agents` | `notes`, `tags`, `note_tags`, `cards`, `note_cards`, `decisions` | `room_turns`, `departed_users` |
 
-2026-11-12: `room_turns`는 migration 0016으로 지웠다(discovery phase 10). 남는 테이블은 `departed_users`뿐이다.
+2026-11-12: `room_turns`는 migration 0016으로 지웠다(discovery phase 10). 남는 테이블은 `departed_users`뿐이다. 같은 날 0015와 0016을 기준 하나(`0016`)로 다시 합쳤다(discovery #97). dev는 이미 그 스키마의 `0016`이라 할 일이 없다. prod는 빈 DB에 `alembic upgrade head` 뒤 테이블 일곱과 `tags_tag_id_seq`에 앱 계정 권한을 준다(discovery `docs/operations.md`).
 
 ### 1-3. 커넥션 수 — 공유하기 때문에 우리가 먼저 줄인 것
 
@@ -93,7 +93,7 @@ topic 시절 예약 작업(`agent_discovery.refresh_user_topics`)이 남긴 key�
 
 **큐 깊이 상한과 알람 (2026-09-16 요청, 큐 이름만 바뀜).** 우리 워커는 데이터베이스에 닿지 못하면 뜨지 않는다. deferq는 실패한 리스너의 메시지를 ack하고, 재전달도 DLQ도 하지 않는다. 그래서 뜬 채로 소비하면 그 이벤트는 영구 손실이고, 안 뜨면 큐에 남는다. 그런데 우리 큐에는 `x-max-length`도 `x-message-ttl`도 없고, 브로커는 `SINGLE_INSTANCE`이며 여러 서비스가 같은 vhost를 쓰고, 큐 깊이 알람이 없다. 그래서 둘을 부탁드린다.
 
-- **(가)** 우리 큐에 `x-max-length`(또는 `x-max-length-bytes`)와 overflow 동작을 정책으로 걸어 주시고, 며칠치 백로그를 감당할 수 있는지 알려 주세요. **패턴을 `deferq.*`로 잡지는 말아 주세요.** deferq는 모든 서비스의 컨슈머 큐를 그 접두어로 짓기 때문에 다른 팀의 큐까지 건드린다. 지금 우리 큐는 다섯이다(2026-11-12에 `deferq.count_turn_on_message_created`를 지웠다. 걸어 두신 정책이 있으면 함께 풀어 주세요):
+- **(가)** 우리 큐에 `x-max-length`(또는 `x-max-length-bytes`)와 overflow 동작을 정책으로 걸어 주시고, 며칠치 백로그를 감당할 수 있는지 알려 주세요. **패턴을 `deferq.*`로 잡지는 말아 주세요.** deferq는 모든 서비스의 컨슈머 큐를 그 접두어로 짓기 때문에 다른 팀의 큐까지 건드린다. 지금 우리 큐는 다섯이다. 2026-11-12에 리스너를 지운 `deferq.count_turn_on_message_created`는 우리가 콘솔에 들어가지 못해 **아직 남아 있다. 지워 주세요**(purge가 아니라 delete. purge한 queue는 binding이 남아 모든 `message_created`를 계속 모은다). 걸어 두신 정책이 있으면 함께 풀어 주세요:
   - `deferq.erase_on_user_deactivated`
   - `deferq.mark_pending_on_note_created`
   - `deferq.mark_pending_on_note_updated`
