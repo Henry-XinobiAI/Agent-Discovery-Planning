@@ -6,12 +6,13 @@
 > 1. **(경우에 따라)** dev DB에 `vector` 확장. 우리 관리 계정으로 먼저 만들어 보고, 권한이 없다고 거부되면 부탁드린다(§1-1).
 > 2. dev DynamoDB 테이블 삭제. 우리 배포 뒤에(§2).
 > 3. RabbitMQ 큐 깊이 상한과 알람. 예전 요청에서 큐 이름만 바뀌었다(§4).
+> 4. dev RabbitMQ의 `deferq.count_turn_on_message_created` 삭제(2026-11-12, §4(다)).
 >
 > 다음 배포는 잠깐 멈춤이 있는 배포다(옛 api·워커를 내리고 마이그레이션을 적용한 뒤 새 코드를 올린다). 그동안 울리는 api·워커 알람은 장애가 아니다. 되돌림은 없다. 우리 데이터는 note-api에서 다시 읽어 만든다(backfill).
 
 ## 0. 서비스 개요 (한 단락)
 
-bourbon-agent-discovery-api는 유저의 **공개 note**로 "대화해 볼 사람"을 찾는다. route는 둘이다. 주제 추천(`/recommend/agents`)은 주제로 이야기할 만한 사람을, 답할 사람 찾기(`/recommend/notes`)는 질문에 답할 수 있는 note를 참조로 돌려준다. 입력은 note-api의 note 이벤트와 읽기(본문은 저장하지 않는다), bourbon-api의 대화·탈퇴 이벤트다. note마다 embedding(768차원)과 tag, note-api 공유 card 연결을 PostgreSQL에 두고, 요청마다 cosine 검색과 사람별 집계를 한다. api Deployment와 deferq 워커 Deployment가 dev에 있다(같은 이미지, 명령만 다름). topic-api와 친구 관계는 더 이상 쓰지 않는다.
+bourbon-agent-discovery-api는 유저의 **공개 note**로 "대화해 볼 사람"을 찾는다. route는 둘이다. 주제 추천(`/recommend/agents`)은 주제로 이야기할 만한 사람을, 답할 사람 찾기(`/recommend/notes`)는 질문에 답할 수 있는 note를 참조로 돌려준다. 입력은 note-api의 note 이벤트와 읽기(본문은 저장하지 않는다), bourbon-api의 탈퇴 이벤트다(대화 이벤트는 2026-11-12부터 받지 않는다). note마다 embedding(768차원)과 tag, note-api 공유 card 연결을 PostgreSQL에 두고, 요청마다 cosine 검색과 사람별 집계를 한다. api Deployment와 deferq 워커 Deployment가 dev에 있다(같은 이미지, 명령만 다름). topic-api와 친구 관계는 더 이상 쓰지 않는다.
 
 ## 1. PostgreSQL
 
@@ -93,12 +94,13 @@ topic 시절 예약 작업(`agent_discovery.refresh_user_topics`)이 남긴 key�
 
 **큐 깊이 상한과 알람 (2026-09-16 요청, 큐 이름만 바뀜).** 우리 워커는 데이터베이스에 닿지 못하면 뜨지 않는다. deferq는 실패한 리스너의 메시지를 ack하고, 재전달도 DLQ도 하지 않는다. 그래서 뜬 채로 소비하면 그 이벤트는 영구 손실이고, 안 뜨면 큐에 남는다. 그런데 우리 큐에는 `x-max-length`도 `x-message-ttl`도 없고, 브로커는 `SINGLE_INSTANCE`이며 여러 서비스가 같은 vhost를 쓰고, 큐 깊이 알람이 없다. 그래서 둘을 부탁드린다.
 
-- **(가)** 우리 큐에 `x-max-length`(또는 `x-max-length-bytes`)와 overflow 동작을 정책으로 걸어 주시고, 며칠치 백로그를 감당할 수 있는지 알려 주세요. **패턴을 `deferq.*`로 잡지는 말아 주세요.** deferq는 모든 서비스의 컨슈머 큐를 그 접두어로 짓기 때문에 다른 팀의 큐까지 건드린다. 지금 우리 큐는 다섯이다. 2026-11-12에 리스너를 지운 `deferq.count_turn_on_message_created`는 우리가 콘솔에 들어가지 못해 **아직 남아 있다. 지워 주세요**(purge가 아니라 delete. purge한 queue는 binding이 남아 모든 `message_created`를 계속 모은다). 걸어 두신 정책이 있으면 함께 풀어 주세요:
+- **(가)** 우리 큐에 `x-max-length`(또는 `x-max-length-bytes`)와 overflow 동작을 정책으로 걸어 주시고, 며칠치 백로그를 감당할 수 있는지 알려 주세요. **패턴을 `deferq.*`로 잡지는 말아 주세요.** deferq는 모든 서비스의 컨슈머 큐를 그 접두어로 짓기 때문에 다른 팀의 큐까지 건드린다. 지금 우리 큐는 다섯이다:
   - `deferq.erase_on_user_deactivated`
   - `deferq.mark_pending_on_note_created`
   - `deferq.mark_pending_on_note_updated`
   - `deferq.mark_pending_on_note_visibility_changed`
   - `deferq.mark_pending_on_note_deleted`
+- **(다) dev의 `deferq.count_turn_on_message_created`를 지워 주세요(2026-11-12).** phase 10에서 리스너를 지웠는데, 우리가 콘솔에 들어가지 못해 queue가 남아 있다. purge가 아니라 delete다(purge한 queue는 binding이 남아 모든 `message_created`를 계속 모은다). 이 queue에 걸어 두신 정책이 있으면 함께 풀어 주세요.
 - **(나)** 큐 깊이(`MessageCount` 등) 알람. 임계는 브로커 용량 쪽에서 정해 주시는 편이 정확하다. note 이벤트의 실제 발생률은 dev 배포 뒤에 알려 드린다.
 
 **옛 큐는 우리가 지운다.** topic 시절 큐 넷은 리스너가 없어졌는데 바인딩이 남아 이벤트가 계속 쌓인다. 배포 뒤 워커가 새 큐를 소비하는 것을 확인하고 우리가 지운다. 이 큐들에 정책을 걸어 두셨다면 함께 풀어 주세요.
@@ -120,4 +122,5 @@ topic 시절 예약 작업(`agent_discovery.refresh_user_topics`)이 남긴 key�
 1. §1-1 — 우리 관리 계정으로 `CREATE EXTENSION vector`가 거부되면 `rds_superuser`로 실행해 주실 수 있는지.
 2. §2 — dev DynamoDB 테이블 삭제(우리 배포 뒤).
 3. §4 — 다섯 큐에 걸 수 있는 깊이 상한과 기대할 수 있는 백로그 기간, 알람 임계.
-4. prod — §1-5는 prod 배포 시점에 다시 묻는다.
+4. §4(다) — dev의 `deferq.count_turn_on_message_created`를 delete해 주실 수 있는지.
+5. prod — §1-5는 prod 배포 시점에 다시 묻는다.

@@ -150,7 +150,7 @@
 - listener는 지금 코드의 재시도 묶음(`worker/flows.retrying`)으로 감싼다. deferq는 listener가 실패한 이벤트를 버리므로, DB가 잠깐 흔들려도 숨기기가 빠지지 않게 한다.
 - **네 note listener와 탈퇴 listener의 함수 이름은 바꾸지 않는다.** deferq는 queue 이름을 listener 함수 이름으로 정한다. 이름을 바꾸면 옛 queue가 남아 이벤트를 조용히 모은다. 바꿔야 하면 옛 queue를 비우고 지운다.
 - `bourbon.user_registered` listener와 `agents` 테이블은 지운다(§3-2).
-- `bourbon.message_created`는 더 받지 않는다(2026-11-12, phase 10). room v4 뒤로 셀 agent DM이 없었다(§6-3). listener와 queue `deferq.count_turn_on_message_created`를 지운다(queue는 purge가 아니라 delete).
+- `bourbon.message_created`는 더 받지 않는다(2026-11-12, phase 10). room v4 뒤로 셀 agent DM이 없었다(§6-3). listener를 지웠다. queue `deferq.count_turn_on_message_created`도 지운다(purge가 아니라 delete). dev의 queue는 아직 남아 있어 인프라에 부탁했다(`requests/infra.md` §4).
 - 지우는 listener: `bourbon.topics_updated`, `bourbon.topic_visibility_changed`, `bourbon.friendship_changed`. 지운 listener의 queue도 함께 지운다.
 
 ### 2-2. 다시 맞추기
@@ -391,7 +391,7 @@ deferq는 재전달과 DLQ가 없다. 그래서 실패할 수 있는 일보다 *
 
 | 테이블 | 쓰는 곳 |
 |---|---|
-| ~~`room_turns`~~ | 지웠다(2026-11-12, migration 0016). room v4 뒤로 셀 agent DM이 없었다(§6-3). 아래는 처음 안이다. 이미 대화한 사람(§6-3). 지금 보존 sweep은 `interactions`가 없는 `room_turns`를 7일 뒤 지운다(`room_turns.orphan_ttl_days`, `storage/retention.py`). `interactions`를 지우면 모든 row가 그 대상이 되어 "이미 대화함"이 일주일 만에 잊힌다. 그래서 이 규칙을 지우고, `last_turn_at` 뒤 `room_turns.retention_days`(365일)가 지나면 지운다. 1년 넘게 대화가 없던 사람은 다시 "새로운 사람"으로 추천해도 된다고 본다. row에는 방 id와 수, 시각만 있어 사람을 직접 담지 않는다. `interactions`를 지우는 §10-2의 1단계 PR에서 함께 바꾼다 |
+| ~~`room_turns`~~ | 지웠다(2026-11-12, 옛 migration 0016. 지금 0016은 이 테이블을 만들지 않는 기준이다). room v4 뒤로 셀 agent DM이 없었다(§6-3). 아래는 처음 안이다. 이미 대화한 사람(§6-3). 지금 보존 sweep은 `interactions`가 없는 `room_turns`를 7일 뒤 지운다(`room_turns.orphan_ttl_days`, `storage/retention.py`). `interactions`를 지우면 모든 row가 그 대상이 되어 "이미 대화함"이 일주일 만에 잊힌다. 그래서 이 규칙을 지우고, `last_turn_at` 뒤 `room_turns.retention_days`(365일)가 지나면 지운다. 1년 넘게 대화가 없던 사람은 다시 "새로운 사람"으로 추천해도 된다고 본다. row에는 방 id와 수, 시각만 있어 사람을 직접 담지 않는다. `interactions`를 지우는 §10-2의 1단계 PR에서 함께 바꾼다 |
 | `departed_users` | 탈퇴 확인 |
 
 `agents`는 지운다. agent id는 `identity.personal_agent_id(owner)`로 계산되고, 검색 조건에도 쓰이지 않는다. 함께 `bourbon.user_registered` listener도 지운다.
@@ -613,7 +613,7 @@ note_score = cosine(note, query)
 처음 안은 "이미 대화한 사람"을 내렸다. 요청자와 그 사람의 agent가 대화한 방 id를 계산해(`agent_dm_room_id`) `room_turns`에서 찾는 방식이었다. bourbon-api의 room v4(#365, 2026-11-06 머지)가 `agent_dm` 방 종류를 없애면서 이 판정은 늘 거짓이 됐다.
 - 추천으로 열리는 방은 이제 `guest` 방이다(요청자 + 요청자의 agent + 추천받은 사람의 agent). bourbon-agent의 `start_thread`가 `POST /api/internal/rooms/guest`로 만든다. id는 uuid7이라 미리 계산할 수 없다.
 - 방이 생긴 것은 부모 방에 남는 system 메시지 `room_branched`로만 알 수 있다. AMQP 이벤트는 없다.
-- 그래서 `message_created` listener가 세던 `room_turns`는 v4 뒤로 아무것도 세지 않았다. listener, `room_turns`(migration 0016), 응답의 `already_talked`를 지웠다.
+- 그래서 `message_created` listener가 세던 `room_turns`는 v4 뒤로 아무것도 세지 않았다. listener, `room_turns`(옛 migration 0016), 응답의 `already_talked`를 지웠다.
 
 대신 같은 요청자에게 **최근 보여 준 사람**을 내린다. 같은 입력이면 늘 같은 순위가 나와서, 같은 주제로 다시 물으면 늘 같은 사람이 나왔다(합성 세트에서 두 번째 질문의 100%).
 - 같은 요청자에게 주제 추천이 최근 `agents.shown_window_days`(7일) 안에 보여 준 횟수만큼, 한 번에 `agents.shown_penalty`(1.0, z-score 단위)씩 점수를 깎는다. 주제와 상관없이 센다. 결과에서 빼지는 않고 순위만 내린다(메모 §8-5).
@@ -621,7 +621,7 @@ note_score = cosine(note, query)
 - "보여 줬다"는 응답에 실린 모든 사람이다. bourbon-agent가 `max_results` 1로 부르는 동안만 "본 사람"과 같다. 어느 호출자든(`cli ask --api`, Postman 포함) 센다. 기본 `cli ask`는 서비스를 프로세스 안에서 돌려 결정 로그를 쓰지 않으니 읽기만 한다. 클라이언트가 다시 보내면 두 번 센다. v1에서는 받아들인다.
 - 사람이 3명보다 적어 가까운 note 유사도로 줄을 세울 때는 빼지 않는다. z-score 단위가 cosine 단위가 아니어서다.
 - **켜고 끄기:** `agents.shown_penalty_on`(기본 켬). 꺼도 횟수는 읽고 로그에 남긴다. 점수만 바꾸지 않는다. **dev는 끈다.** 사람이 적어서 내리고 나면 보여 줄 만한 사람이 남지 않는다. dev overlay의 ConfigMap이 API에만 이 값을 준다.
-- **읽기 실패:** 읽기에는 route 마감 안에서 따로 `agents.shown_read_seconds`(0.3초. dev에서 쿼리가 0.12ms여서 그대로 둔다, 열린 항목 25)를 준다. 실패하거나 늦으면 아무도 내리지 않고 답을 계속한다. `agents.shown_unread` 경고와 `shown_read: false`를 남기고 `degraded`에는 넣지 않는다. 마감 전체를 쓰게 두면 뒤의 public 읽기가 잘려 빈 답이 나갔다(Fable 리뷰). 단, DB 연결 자체의 실패(asyncpg의 `OSError`)는 아직 500이다(좁은 틈이라 두었다).
+- **읽기 실패:** 읽기에는 route 마감 안에서 따로 `agents.shown_read_seconds`(0.3초. dev에서 쿼리가 0.122ms여서 그대로 둔다, 열린 항목 25)를 준다. 실패하거나 늦으면 아무도 내리지 않고 답을 계속한다. `agents.shown_unread` 경고와 `shown_read: false`를 남기고 `degraded`에는 넣지 않는다. 마감 전체를 쓰게 두면 뒤의 public 읽기가 잘려 빈 답이 나갔다(Fable 리뷰). 단, DB 연결 자체의 실패(asyncpg의 `OSError`)는 아직 500이다(좁은 틈이라 두었다).
 - **결정 로그:** 사람마다 `shown_before`(횟수. 읽지 못했으면 0은 "모름"이다), 최상위에 `shown_penalty`(이 답에서 한 번 보여 준 것에 실제로 매긴 값. 끔, 읽기 실패, 사람 3명 미만이면 0.0)와 `shown_read`.
 - **합성 세트에서 잰 것(2026-11-12):** 1.0이면 두 번째 질문에서 61%가 새 사람이고, 다섯 번 물으면 평균 3.4명을 본다(Fable이 합성 세트로 잰 값, 로컬 스크립트). 첫 질문의 순위는 바뀌지 않는다.
 - 동점에 가까운 사람 사이에서 뽑는 방법(C)은 보류했다. 효과가 약하거나 맞는 비율이 떨어졌다.
