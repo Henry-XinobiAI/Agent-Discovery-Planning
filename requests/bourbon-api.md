@@ -2,7 +2,7 @@
 
 > 코드 읽은 기준: bourbon-api main `c4c3300`(2026-09-08), 발행 이벤트 목록 2026-09-10, `rooms/service.py`·`rooms/dm_identity.py`·`agent_context/` 2026-09-11. 결정: R23(`discoverable`), **R51(방 생성 이벤트 요청 철회 — R46 개정)**, R47(어트리뷰션은 우리가 직접 받는다), R52·R53.
 >
-> **2026-11-12(discovery phase 10): `bourbon.message_created`를 더 받지 않는다.** room v4(#365, 2026-11-06 머지)에서 `agent_dm`이 없어져 우리가 세던 turn이 없었다. listener와 queue를 지웠고, §2-1의 room id 계산식과 `DM_NAMESPACE`도 더 복제하지 않는다(§2-1·§4 질문 3은 끝났다). `AGENT_NAMESPACE`와 `personal_agent_id`는 그대로 쓰고, 이제 테스트가 그쪽 `origin/main`의 코드를 직접 돌려 비교한다.
+> **2026-11-12(discovery phase 10): `bourbon.message_created`를 더 받지 않는다.** room v4(#365, 2026-11-06 머지)에서 `agent_dm`이 없어져 우리가 세던 turn이 없었다. listener를 지웠고(queue `deferq.count_turn_on_message_created`는 dev에 아직 남아 있어 인프라에 삭제를 부탁했다), §2-1의 room id 계산식과 `DM_NAMESPACE`도 더 복제하지 않는다(§2-1·§4 질문 3은 끝났다). `AGENT_NAMESPACE`와 `personal_agent_id`는 그대로 쓰고, 이제 테스트가 그쪽 `origin/main`의 코드를 직접 돌려 비교한다.
 >
 > **나중에 부탁드릴 것 하나(아직 요청 아님):** 추천으로 열리는 guest 방이 생긴 것을 지금은 부모 방의 system 메시지 `room_branched`로만 알 수 있다. 이것을(또는 guest 방 생성을) AMQP 이벤트로 내 주시면, "이미 대화한 사람"을 다시 볼 수 있다. 필요해지면 따로 요청서를 쓴다.
 >

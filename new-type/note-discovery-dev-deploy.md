@@ -1,10 +1,10 @@
 # note 기반 agent-discovery-api — dev 배포 절차
 
-> **2026-11-11에 끝났다.** 실제로 올린 것은 `deploy/2611` `31b2f8d`(phase 9와 이미지 내용 수정 #95까지)다. 해 보며 더한 것: pgvector는 관리 계정으로 안 돼 인프라가 설치했다(3-1). alembic은 `DATABASE_URL`이 dev를 가리키는지 `alembic current`·`heads`로 먼저 본다. 첫 이미지(`8460c6c`)에는 `cli/`가 빠지고 로컬 `data/`가 들어 있었다(#95의 allow-list `.dockerignore`로 고쳤다). 그 뒤의 배포는 §9부터다. **§1~§8은 그 첫 배포의 기록이다.** `room_turns`와 turn queue가 나오는 명령은 0016 뒤에는 그대로 돌리지 않는다.
+> **2026-11-11에 끝났다.** 실제로 올린 것은 `deploy/2611` `31b2f8d`(phase 9와 이미지 내용 수정 #95까지)다. 해 보며 더한 것: pgvector는 관리 계정으로 안 돼 인프라가 설치했다(3-1). alembic은 `DATABASE_URL`이 dev를 가리키는지 `alembic current`·`heads`로 먼저 본다. 첫 이미지(`8460c6c`)에는 `cli/`가 빠지고 로컬 `data/`가 들어 있었다(#95의 allow-list `.dockerignore`로 고쳤다). 그 뒤의 배포는 §9부터다(phase 10, 2026-11-12에 끝났다. migration 기준 정리는 §10). **§1~§8은 그 첫 배포의 기록이다.** `room_turns`와 turn queue가 나오는 명령은 0016 뒤에는 그대로 돌리지 않는다.
 >
 > discovery `deploy/2611`(`e73f1f9`, phase 8 `cli rebuild-index` 포함)을 dev에 처음 올린다. dev는 지금 `60bf02f`(topic 기반), DB는 migration `0011`. prod는 DB도 배포도 없다.
 > 되돌림은 없다(topic 시절 테이블을 지운다). 문제가 생기면 앞으로 고친다.
-> 근거: discovery README "Database migrations"·"Rebuilding the note index in the cluster"·"Reloading the note index from a snapshot", 설계 §2-3·§10-2, `requests/infra.md`.
+> 근거: discovery README(지금은 `docs/operations.md`. 옛 체인을 0015로 옮기는 절차는 거기서 빠졌다) "Database migrations"·"Rebuilding the note index in the cluster"·"Reloading the note index from a snapshot", 설계 §2-3·§10-2, `requests/infra.md`.
 
 ## 순서
 
@@ -154,7 +154,7 @@ kubectl --context dev-tokyo-cluster -n dev exec deploy/bourbon-agent-discovery-w
 
 ### 5-B. 스냅샷으로
 
-README "Reloading the note index from a snapshot"과 같은 순서다.
+discovery `docs/operations.md` "Reloading the note index from a snapshot"과 같은 순서다.
 
 **5-1. worker 멈춤.** 파드가 없어질 때까지 기다린다(종료 유예 90초). 그 전에 스냅샷을 찍으면, 그 사이 반영된 이벤트를 적재가 덮는다.
 
@@ -256,6 +256,8 @@ unset PGPASSWORD DEV_ADMIN_PG DEV_ADMIN_URL
 
 ## 9. phase 10 배포 (2026-11-12, `deploy/2611` `a8fbbe0`)
 
+> **2026-11-12에 끝났다.** 0015에서 0016으로 올렸고, 응답에 `already_talked`가 없고 `degraded`가 비어 있었다. 결정 로그는 `shown_penalty` 0.0, `shown_read` true였고, 두 번째 결정의 `shown_before`가 1씩 늘었다(배포 전 7일 안의 기록도 셌다). `EXPLAIN ANALYZE`는 0.122ms(`ix_decisions_requester_user_id` 인덱스 스캔)라 `agents.shown_read_seconds`는 0.3초로 둔다(설계 열린 항목 25를 닫았다). **9-5의 queue 삭제는 콘솔에 들어가지 못해 인프라에 맡긴다**(`requests/infra.md` §4(다)). 아래는 그 절차의 기록이다.
+
 "이미 대화한 사람"을 "최근 보여 준 사람"으로 바꾸고, turn 세기와 `room_turns`를 지운다(설계 §6-3). migration 0016이 `room_turns`를 지운다. **순서가 중요하다:** 옛 worker나 옛 api가 남아 있을 때 0016을 돌리면, 없어진 테이블 때문에 그 pod가 실패한다. 그래서 배포 → 옛 pod 없음 확인 → queue 삭제 → 0016 순서다.
 
 먼저 bastion 터널을 열고 §1의 관리 계정 블록을 다시 돌린다(7-3에서 변수를 지웠다). 그 블록의 마지막 줄은 이제 `0011`이 아니라 `0015`를 보여야 한다.
@@ -319,6 +321,24 @@ psql "$DEV_ADMIN_PG" -c "SELECT made_at, body->'shown_penalty', body->'shown_rea
 psql "$DEV_ADMIN_PG" -c "EXPLAIN ANALYZE SELECT elem->>'owner_user_id', count(*) FROM decisions, jsonb_array_elements(body->'shown') elem WHERE requester_user_id = '<user id>' AND route = 'agents' AND made_at >= now() - interval '7 days' GROUP BY 1"
 ```
 
-**되돌리기:** `alembic downgrade 0015`로 빈 `room_turns`를 다시 만들고, 앱 계정에 그 테이블의 `GRANT SELECT, INSERT, UPDATE, DELETE`를 다시 준다. 옛 코드를 배포하면 turn queue는 그 worker가 다시 만든다.
+**되돌리기:** `room_turns`가 필요한 옛 코드로 되돌려야 하면, 옛 0016(`room_turns`를 지우던 것)이 남아 있는 `a8fbbe0`에서 `downgrade 0015`를 돌리고 그 테이블에 앱 계정 권한을 다시 준다. 빈 `room_turns`가 생기고 `alembic_version`이 옛 코드의 head인 `0015`가 된다. **옛 코드를 배포하기 전에 한다.** 테이블이 없으면 옛 pod가 실패한다(위의 순서를 거꾸로). 지금 코드로는 하지 않는다. 0015가 없어 "Can't locate revision"으로 멈추고, **`downgrade base`는 스키마 전체를 지운다**(§10).
 
-**9-8. 알리기.** 인프라에 queue 정책 대상에서 `deferq.count_turn_on_message_created`가 빠졌다고 알린다(`infra.md` §4). `implementation_progress.md`에 배포 커밋과 확인 결과를 남긴다.
+```bash
+git worktree add ../discovery-a8fbbe0 a8fbbe0
+(cd ../discovery-a8fbbe0 && DATABASE_URL="$DEV_ADMIN_URL" uv run alembic downgrade 0015)
+git worktree remove --force ../discovery-a8fbbe0
+psql "$DEV_ADMIN_PG" -c 'GRANT SELECT, INSERT, UPDATE, DELETE ON room_turns TO bourbon_agent_discovery_app'
+```
+
+옛 worker는 turn queue에 다시 붙는다. 인프라가 그 queue를 지웠으면 새로 만들고, 아직이면 그동안 쌓인 `message_created`를 처리한다(`agent_dm`이 아니면 바로 넘기므로 해는 없다). 다시 앞으로 갈 때는 DB가 `0015`라 지금 코드의 `alembic upgrade head`, `cli load`, `cli rebuild-index`가 모두 거부한다. 이 절의 순서대로 배포 → 옛 pod 없음 확인 → queue 삭제를 한 뒤, 9-6 자리에서 같은 `a8fbbe0` worktree로 `alembic upgrade 0016`을 돌린다(`room_turns`를 지우고 `0016`이 된다).
+
+**9-8. 알리기.** 인프라에 `deferq.count_turn_on_message_created`를 지워 달라고, 그리고 queue 정책 대상에서 빼 달라고 부탁한다(`infra.md` §4(다)). 배포 커밋과 확인 결과는 이 절 머리에 남겼다.
+
+## 10. migration 기준을 0016 하나로 (2026-11-12, discovery #97)
+
+`0015`(기준)와 `room_turns`를 지우던 `0016`을 기준 하나로 합쳤다. id는 `0016` 그대로다. **dev에서 할 일은 없다.** dev의 `alembic_version`이 이미 `0016`이고, 스키마도 새 기준이 만드는 것과 같다. 로컬에서 옛 체인(0015→0016)과 새 기준으로 각각 만든 DB의 `pg_dump --schema-only`가 같았고, `0016`에서 만든 build도 그대로 `cli load`된다. 코드도 바뀌지 않아 다시 배포할 필요가 없다. `deploy/2611`은 다음 배포 때 함께 옮긴다.
+
+- **지금 코드로 downgrade하면 스키마 전체가 지워진다**(`departed_users`, `decisions` 포함, 둘 다 다시 만들 수 없다). dev에서 돌리지 않는다. phase 10을 되돌리는 길은 §9 끝에 있다(`a8fbbe0`에서).
+- 로컬 DB가 `0015` 이하이면 compose의 `init`이 "Can't locate revision"으로 멈춘다. 볼륨을 새로 만들고 build를 다시 적재한다(discovery `docs/operations.md`).
+- 새 DB(prod 처음)는 빈 DB에 `vector` 확장, `alembic upgrade head`, 그 뒤 테이블 일곱과 `tags_tag_id_seq`에 앱 계정 권한이다(discovery `docs/operations.md`).
+- discovery README는 이때 짧게 나뉘었다. 운영 절차는 discovery `docs/operations.md`에 있다. 옛 체인에서 0015로 옮기던 절차는 README에서 빠졌고, 이 문서 §3이 그 기록이다.
