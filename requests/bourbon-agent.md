@@ -151,6 +151,7 @@
 | 200, `empty: true`, `empty_reason: "no_matching_notes"` | 맞는 공개 note가 없다 | "찾지 못했다"고 말한다. 다시 부르지 않는다 |
 | 200, `empty: true`, `empty_reason: "note_read_unavailable"`, `degraded`에 `note_read_unavailable` | note-api 확인이 실패하거나 마감을 넘겼다. 확인 못 한 사람은 싣지 않는다 | 같다. "지금은 찾지 못했다" |
 | 200, 결과 있음, `degraded`에 `query_analysis_unavailable` | tag 분석이 실패해 embedding만으로 찾았다. 덜 정확할 수 있다 | 결과를 그대로 쓴다. 다시 부르지 않는다 |
+| 200, 결과 있음, `degraded`에 `name_spellings_unavailable` | 주제의 이름을 찾아볼 표기를 얻지 못했다(다음 배포부터). `reason.names_not_found`가 `null`이다 | 결과를 그대로 쓴다. 이름이 보이는지는 모르는 것으로 다룬다 |
 | 200, 결과 있음, `degraded`에 `explanation_unavailable` | `explain: true`였지만 일부 또는 모든 항목의 설명을 모델이 쓰지 못했다(마감 초과, LLM 오류). 그 항목의 `text`는 구조화된 이유로 만든 고정 문장이다 | 구조화된 이유로 말한다. 다시 부르지 않는다 |
 | 503 `question_unavailable` | 질문을 읽지 못했다(질문 분석의 마감 초과, embedding이나 LLM 쪽 오류) | "지금은 쓸 수 없다". 같은 턴에 다시 부르지 않는다 |
 | 503 `database_unavailable` | DB가 응답하지 않았다 | 같다 |
