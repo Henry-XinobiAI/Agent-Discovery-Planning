@@ -33,7 +33,7 @@
 
 - **응답에 나오는 사람과 내용은 그 요청에서 note-api에 다시 확인한 공개 note에서만 나온다.** 그 사이 비공개로 바꿨거나 지웠거나 탈퇴한 사람은 나오지 않는다.
 - **requester 본인은 결과에 나오지 않는다.** `exclude_user_ids`로 더 뺄 수 있다(같은 방에 있는 사람 등).
-- **응답 시간:** 목표는 p95 2.5초다. 질문 분석(LLM 한 번 + embedding 한 번)과 note-api 확인에 3초 마감이 걸려 있고, 그 밖의 DB 조회는 마감 밖이다. `explain: true`면 항목 5개마다 LLM 호출이 1~2번 더 있고(묶음끼리는 동시에, 걸린 글을 다시 쓰면 2번), 그 마감은 따로 2초다(목표 p95 4.5초). 지금 bourbon-agent 클라이언트의 10초 타임아웃이 실제 상한이 된다.
+- **응답 시간:** 목표는 p95 2.5초다. 질문 분석(LLM 한 번 + embedding 한 번, 다음 배포부터 이름 표기의 LLM 한 번이 동시에)과 note-api 확인에 3초 마감이 걸려 있고, 그 밖의 DB 조회는 마감 밖이다. `explain: true`면 항목 5개마다 LLM 호출이 1~2번 더 있고(묶음끼리는 동시에, 걸린 글을 다시 쓰면 2번), 그 마감은 따로 2초다(목표 p95 4.5초). 지금 bourbon-agent 클라이언트의 10초 타임아웃이 실제 상한이 된다.
 - **agent-discovery는 note 본문과 제목을 저장하지 않고, 응답에도 본문을 싣지 않는다. 질문 원문과 설명 글을 로그나 결정 로그에 남기지 않는다.**
 - **이유(`reason`)는 그 요청에서 확인된 공개 note에서만 만든다.**
   - `matched_tags`: 질문의 tag 중 그 note에 붙은 것. label은 한국어뿐이다.
@@ -86,7 +86,7 @@
 - **`reason.notes`:** 그 사람의 note 중 질문과 가장 가까운 것 최대 3개의 id, 제목, 직접 경험 여부. 제목은 note가 쓰인 언어 그대로다.
 - **`reason.matched_tags`:** 위 note들에 붙은 tag 중 질문과 겹치는 것과, 그 tag가 붙은 note 수(`note_count`, 위 `notes` 안에서 센다). 비어 있을 수 있다 — 그때 `matched_by`가 왜 뽑혔는지 말한다.
 - **`reason.matched_by`:** 위 note들이 찾힌 방법을 모은 것(§2).
-- **`reason.names_not_found`:** 주제에 직접 쓰신 고유명사 중 이 사람의 위 note들(가까운 것 최대 3개) 어디에서도 찾지 못한 것, 쓰신 표기 그대로(설계 §5-6). 한국어, 영어, 일본어 표기로 note의 card와 제목, 본문을 찾아본다. 언급만 한 note도 찾은 것으로 친다. 그래서 `[]`는 "그 이름이 보인다"이지 "그것에 대해 썼다"가 아니다. 그 차이는 `matched_by`(`card_subject` / `card_mention`)가 말하는데, 지금 클라이언트의 `RecommendReasonResponse`는 `matched_by`를 받지 않으니 필요하면 더해 주시면 된다. `[]`면 이름이 없었거나 모두 찾았고, `null`이면 질문 분석이 실패해 이름을 모른다. **"이 이름이 이 사람의 note에 보이지 않는다"는 뜻이지 "이 사람은 그것을 모른다"는 뜻은 아니다.** 약칭("SF")이나 세 언어 밖의 표기는 놓칠 수 있다.
+- **`reason.names_not_found`:** 주제에 직접 쓰신 고유명사 중 이 사람의 위 note들(가까운 것 최대 3개) 어디에서도 찾지 못한 것, 쓰신 표기 그대로(설계 §5-6). 한국어, 영어, 일본어 표기로 note의 card와 제목, 본문을 찾아본다. 언급만 한 note도 찾은 것으로 친다. 그래서 `[]`는 "그 이름이 보인다"이지 "그것에 대해 썼다"가 아니다. 그 차이는 `matched_by`(`card_subject` / `card_mention`)가 말하는데, 지금 클라이언트의 `RecommendReasonResponse`는 `matched_by`를 받지 않으니 필요하면 더해 주시면 된다. `[]`면 이름이 없었거나 모두 찾았고, `null`이면 이름을 찾아볼 표기를 얻지 못해 모른다(`degraded`에 `name_spellings_unavailable`). **"이 이름이 이 사람의 note에 보이지 않는다"는 뜻이지 "이 사람은 그것을 모른다"는 뜻은 아니다.** 약칭("SF")이나 세 언어 밖의 표기는 놓칠 수 있다.
 - **"왜 이 사람인지"는 `reason`으로 말하면 된다.** tag label, note 제목, `experienced`, card 역할로 충분하고, `explain: true`면 `text`를 그대로 보여 줄 수 있다.
 - **최근 보여 준 사람:** 주제 추천이 같은 requester에게 최근 7일 안에 응답으로 준 사람은, 준 횟수만큼 순위가 내려간다(한 번에 점수의 표준편차 하나만큼). 주제와 상관없이 센다. 빠지지는 않는다. "보여 줬다"는 응답에 실린 모든 사람이라, 지금처럼 `max_results` 1로 부르실 때만 화면에 나온 사람과 같다. 같은 요청을 다시 보내시면 두 번 센다. 응답에 따로 표시하는 필드는 없다. dev에서는 사람이 적어 꺼 두었다.
 - **맞는 사람이 적으면 적게 온다(2026-11-13, discovery #99).** 주제의 tag(넓은 tag 말고)가 붙은 note도, 주제에 나온 것을 주제로 쓴 note(card `subject`)도 없는 사람은 충분히 가까울 때만 들어간다. 그래서 `matched_by`가 `meaning`뿐인 사람만이 아니라, 넓은 tag나 `card_mention`으로만 이어진 사람도 걸러질 수 있다. 그래서 `max_results`보다 적게 오거나 비어 있는 것(`no_matching_notes`)은 정상이다. 답할 사람 찾기와 같다.
@@ -151,7 +151,7 @@
 | 200, `empty: true`, `empty_reason: "no_matching_notes"` | 맞는 공개 note가 없다 | "찾지 못했다"고 말한다. 다시 부르지 않는다 |
 | 200, `empty: true`, `empty_reason: "note_read_unavailable"`, `degraded`에 `note_read_unavailable` | note-api 확인이 실패하거나 마감을 넘겼다. 확인 못 한 사람은 싣지 않는다 | 같다. "지금은 찾지 못했다" |
 | 200, 결과 있음, `degraded`에 `query_analysis_unavailable` | tag 분석이 실패해 embedding만으로 찾았다. 덜 정확할 수 있다 | 결과를 그대로 쓴다. 다시 부르지 않는다 |
-| 200, 결과 있음, `degraded`에 `name_spellings_unavailable` | 주제의 이름을 찾아볼 표기를 얻지 못했다(다음 배포부터). `reason.names_not_found`가 `null`이다 | 결과를 그대로 쓴다. 이름이 보이는지는 모르는 것으로 다룬다 |
+| 200, `degraded`에 `name_spellings_unavailable`(결과가 있든 없든) | 주제의 이름을 찾아볼 표기를 얻지 못했다(다음 배포부터). 모든 항목의 `reason.names_not_found`가 `null`이다 | 결과를 그대로 쓴다. 이름이 보이는지는 모르는 것으로 다룬다 |
 | 200, 결과 있음, `degraded`에 `explanation_unavailable` | `explain: true`였지만 일부 또는 모든 항목의 설명을 모델이 쓰지 못했다(마감 초과, LLM 오류). 그 항목의 `text`는 구조화된 이유로 만든 고정 문장이다 | 구조화된 이유로 말한다. 다시 부르지 않는다 |
 | 503 `question_unavailable` | 질문을 읽지 못했다(질문 분석의 마감 초과, embedding이나 LLM 쪽 오류) | "지금은 쓸 수 없다". 같은 턴에 다시 부르지 않는다 |
 | 503 `database_unavailable` | DB가 응답하지 않았다 | 같다 |
