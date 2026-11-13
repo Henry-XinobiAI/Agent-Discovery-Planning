@@ -9,7 +9,7 @@
 >
 > 2026-11-11에 route 이름을 무엇을 추천하는지에 맞춰 바꿨다(`/recommend/subject` → `/recommend/agents`, `/recommend/answerers` → `/recommend/notes`). 옛 이름은 dev에 나간 적이 없어 남겨 두지 않는다.
 >
-> **2026-11-13(다음 discovery 배포, 예정): 질문의 이름을 찾지 못한 항목을 알린다.** 항목마다 `reason.names_not_found`를 더한다(§2-1, §2-2). 주제에 나온 고유명사("샌프란" 같은) 중 그 사람이나 note에서 찾지 못한 것이다. 지금 `RECOMMENDATION_GUIDANCE`는 "주제가 달라도 추천하라"고 해서, 이 필드를 넘겨받아도 그대로면 바뀌지 않는다. §4-1의 부탁을 봐 주시면 된다. 필드를 더하는 것이라 지금 클라이언트는 그대로 동작한다(`BaseStrictModel`은 모르는 필드를 무시한다). `contract_version`은 "1"이다.
+> **2026-11-13(다음 discovery 배포, 예정): 질문의 이름을 찾지 못한 항목을 알린다.** 항목마다 `reason.names_not_found`를 더한다(§2-1, §2-2). 주제에 나온 고유명사("샌프란" 같은) 중 그 사람이나 note에서 찾지 못한 것이다. 지금 `RECOMMENDATION_GUIDANCE`는 "주제가 달라도 추천하라"고 해서, 안내가 그대로면 이 필드를 받아도 동작이 바뀌지 않는다. §4-1의 부탁을 봐 주시면 된다. 필드를 더하는 것이라 지금 클라이언트는 그대로 동작한다(`BaseStrictModel`은 모르는 필드를 무시한다). `contract_version`은 "1"이다.
 >
 > **2026-11-13(discovery #99): 주제 추천도 맞는 사람이 적으면 적게 온다.** 주제의 tag(넓은 tag 말고)나 주제에 나온 것을 주제로 쓴 note가 없고 뜻만 가까운 사람은 충분히 가까울 때만 들어간다(§2-1). 지금처럼 `max_results` 1로 부르시면 `empty: true`(`no_matching_notes`)가 전보다 자주 온다. "찾지 못했다"고 말하고 다시 부르지 않으면 된다(§2-3). 응답 모양은 그대로라 `contract_version`은 "1"이다.
 >
@@ -71,6 +71,7 @@
         "matched_tags": [{"key": "board game", "label": "보드게임", "note_count": 1}],
         "matched_by": ["tags"],
         "notes": [{"note_id": "01a1b149-…", "title": "적당히 강한 가문으로 시작하는 섭정 플레이", "experienced": true}],
+        "names_not_found": [],
         "text": null
       }
     }
@@ -85,7 +86,7 @@
 - **`reason.notes`:** 그 사람의 note 중 질문과 가장 가까운 것 최대 3개의 id, 제목, 직접 경험 여부. 제목은 note가 쓰인 언어 그대로다.
 - **`reason.matched_tags`:** 위 note들에 붙은 tag 중 질문과 겹치는 것과, 그 tag가 붙은 note 수(`note_count`, 위 `notes` 안에서 센다). 비어 있을 수 있다 — 그때 `matched_by`가 왜 뽑혔는지 말한다.
 - **`reason.matched_by`:** 위 note들이 찾힌 방법을 모은 것(§2).
-- **`reason.names_not_found`:** 주제에 나온 고유명사 중 이 사람의 위 note들 어디에서도 찾지 못한 것, 요청에 쓴 표기 그대로(설계 §5-6). 한국어, 영어, 일본어 표기로 note의 card와 제목, 본문을 찾아본다. 언급만 한 note는 찾은 것으로 친다. `[]`면 이름이 없었거나 모두 찾았고, `null`이면 질문 분석이 실패해 이름을 모른다. **"이 이름이 이 사람의 note에 보이지 않는다"는 뜻이지 "이 사람은 그것을 모른다"는 뜻은 아니다.** 약칭("SF")이나 세 언어 밖의 표기는 놓칠 수 있다.
+- **`reason.names_not_found`:** 주제에 직접 쓰신 고유명사 중 이 사람의 위 note들(가까운 것 최대 3개) 어디에서도 찾지 못한 것, 쓰신 표기 그대로(설계 §5-6). 한국어, 영어, 일본어 표기로 note의 card와 제목, 본문을 찾아본다. 언급만 한 note도 찾은 것으로 친다. 그래서 `[]`는 "그 이름이 보인다"이지 "그것에 대해 썼다"가 아니다. 그 차이는 `matched_by`(`card_subject` / `card_mention`)가 말하는데, 지금 클라이언트의 `RecommendReasonResponse`는 `matched_by`를 받지 않으니 필요하면 더해 주시면 된다. `[]`면 이름이 없었거나 모두 찾았고, `null`이면 질문 분석이 실패해 이름을 모른다. **"이 이름이 이 사람의 note에 보이지 않는다"는 뜻이지 "이 사람은 그것을 모른다"는 뜻은 아니다.** 약칭("SF")이나 세 언어 밖의 표기는 놓칠 수 있다.
 - **"왜 이 사람인지"는 `reason`으로 말하면 된다.** tag label, note 제목, `experienced`, card 역할로 충분하고, `explain: true`면 `text`를 그대로 보여 줄 수 있다.
 - **최근 보여 준 사람:** 주제 추천이 같은 requester에게 최근 7일 안에 응답으로 준 사람은, 준 횟수만큼 순위가 내려간다(한 번에 점수의 표준편차 하나만큼). 주제와 상관없이 센다. 빠지지는 않는다. "보여 줬다"는 응답에 실린 모든 사람이라, 지금처럼 `max_results` 1로 부르실 때만 화면에 나온 사람과 같다. 같은 요청을 다시 보내시면 두 번 센다. 응답에 따로 표시하는 필드는 없다. dev에서는 사람이 적어 꺼 두었다.
 - **맞는 사람이 적으면 적게 온다(2026-11-13, discovery #99).** 주제의 tag(넓은 tag 말고)가 붙은 note도, 주제에 나온 것을 주제로 쓴 note(card `subject`)도 없는 사람은 충분히 가까울 때만 들어간다. 그래서 `matched_by`가 `meaning`뿐인 사람만이 아니라, 넓은 tag나 `card_mention`으로만 이어진 사람도 걸러질 수 있다. 그래서 `max_results`보다 적게 오거나 비어 있는 것(`no_matching_notes`)은 정상이다. 답할 사람 찾기와 같다.
@@ -124,6 +125,7 @@
       "reason": {
         "matched_tags": [{"key": "strategy game", "label": "전략 게임"}],
         "matched_by": ["tags", "card_subject"],
+        "names_not_found": [],
         "text": null
       }
     }
@@ -210,8 +212,8 @@
 
 **바꿔 주셨으면 하는 것(방법은 bourbon-agent가 정한다):**
 
-- 클라이언트의 `RecommendReasonResponse`에 `names_not_found: list[str] | None`을, 도구 결과의 `RecommendedAgent`에 같은 값을 더한다.
-- `RECOMMENDATION_GUIDANCE`의 "also when its notes are about a different subject" 대신, `names_not_found`가 비어 있지 않으면 **그 이름 자체를 쓴 사람은 찾지 못했다고 말하고, 이 사람은 `note_titles`의 관련된 것을 썼다고** 말하게 한다. 예: "샌프란을 다녀온 분은 못 찾았어요. 대신 미국 도시 여행을 쓴 분이 있어요." `null`이면 지금처럼 하면 된다.
+- 클라이언트의 `RecommendReasonResponse`에 `names_not_found: list[str] | None`을(구분이 필요하면 `matched_by`도), 도구 결과의 `RecommendedAgent`에 같은 값을 더한다.
+- `RECOMMENDATION_GUIDANCE`의 "also when its notes are about a different subject" 대신, `names_not_found`가 비어 있지 않으면 **이 사람의 note에는 그 이름이 보이지 않고, 대신 `note_titles`의 관련된 것을 썼다고** 말하게 한다. 예: "이 분의 note에는 샌프란 이야기가 안 보여요. 대신 스페인과 경주 여행을 쓰셨어요." `max_results` 1로 부르시면 이 필드는 한 사람의 가까운 note 최대 3개만 본 것이라, "샌프란을 다녀온 사람은 없다"고 말하면 지나치다. 순위 2위에 샌프란 note를 쓴 사람이 있을 수도 있다. `null`이면 지금처럼 하면 된다.
 - 카드를 올리기 전에 이 필드로 막는 방법도 있다. 다만 우리 쪽에서 순위로 막지 않은 것과 같은 이유로(표기가 다르면 맞는 사람도 막힌다) 위의 "솔직하게 말하기"를 먼저 권한다.
 
 ## 5. 제안: 답할 사람 찾기 도구 (선택)
