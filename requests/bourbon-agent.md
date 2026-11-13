@@ -9,6 +9,8 @@
 >
 > 2026-11-11에 route 이름을 무엇을 추천하는지에 맞춰 바꿨다(`/recommend/subject` → `/recommend/agents`, `/recommend/answerers` → `/recommend/notes`). 옛 이름은 dev에 나간 적이 없어 남겨 두지 않는다.
 >
+> **2026-11-13(다음 discovery 배포, 예정): 질문의 이름을 찾지 못한 항목을 알린다.** 항목마다 `reason.names_not_found`를 더한다(§2-1, §2-2). 주제에 나온 고유명사("샌프란" 같은) 중 그 사람이나 note에서 찾지 못한 것이다. 지금 `RECOMMENDATION_GUIDANCE`는 "주제가 달라도 추천하라"고 해서, 안내가 그대로면 이 필드를 받아도 동작이 바뀌지 않는다. §4-1의 부탁을 봐 주시면 된다. 필드를 더하는 것이라 지금 클라이언트는 그대로 동작한다(`BaseStrictModel`은 모르는 필드를 무시한다). `contract_version`은 "1"이다.
+>
 > **2026-11-13(discovery #99): 주제 추천도 맞는 사람이 적으면 적게 온다.** 주제의 tag(넓은 tag 말고)나 주제에 나온 것을 주제로 쓴 note가 없고 뜻만 가까운 사람은 충분히 가까울 때만 들어간다(§2-1). 지금처럼 `max_results` 1로 부르시면 `empty: true`(`no_matching_notes`)가 전보다 자주 온다. "찾지 못했다"고 말하고 다시 부르지 않으면 된다(§2-3). 응답 모양은 그대로라 `contract_version`은 "1"이다.
 >
 > **2026-11-12(discovery phase 10): `already_talked`를 응답에서 뺐다.** 미리 말씀드린 대로다. bourbon-api room v4에 agent DM이 없어져 늘 false였다. 연동하신 곳이 없을 때라 `contract_version`은 "1" 그대로다. 대신 같은 requester에게 최근 7일 안에 보여 준 사람은 보여 준 횟수만큼 순위가 내려간다(§2-1). 주제 추천을 다시 불러도 같은 사람만 나오지 않게 하려는 것이다.
@@ -31,7 +33,7 @@
 
 - **응답에 나오는 사람과 내용은 그 요청에서 note-api에 다시 확인한 공개 note에서만 나온다.** 그 사이 비공개로 바꿨거나 지웠거나 탈퇴한 사람은 나오지 않는다.
 - **requester 본인은 결과에 나오지 않는다.** `exclude_user_ids`로 더 뺄 수 있다(같은 방에 있는 사람 등).
-- **응답 시간:** 목표는 p95 2.5초다. 질문 분석(LLM 한 번 + embedding 한 번)과 note-api 확인에 3초 마감이 걸려 있고, 그 밖의 DB 조회는 마감 밖이다. `explain: true`면 항목 5개마다 LLM 호출이 1~2번 더 있고(묶음끼리는 동시에, 걸린 글을 다시 쓰면 2번), 그 마감은 따로 2초다(목표 p95 4.5초). 지금 bourbon-agent 클라이언트의 10초 타임아웃이 실제 상한이 된다.
+- **응답 시간:** 목표는 p95 2.5초다. 질문 분석(LLM 한 번 + embedding 한 번, 다음 배포부터 이름 표기의 LLM 한 번이 동시에)과 note-api 확인에 3초 마감이 걸려 있고, 그 밖의 DB 조회는 마감 밖이다. `explain: true`면 항목 5개마다 LLM 호출이 1~2번 더 있고(묶음끼리는 동시에, 걸린 글을 다시 쓰면 2번), 그 마감은 따로 2초다(목표 p95 4.5초). 지금 bourbon-agent 클라이언트의 10초 타임아웃이 실제 상한이 된다.
 - **agent-discovery는 note 본문과 제목을 저장하지 않고, 응답에도 본문을 싣지 않는다. 질문 원문과 설명 글을 로그나 결정 로그에 남기지 않는다.**
 - **이유(`reason`)는 그 요청에서 확인된 공개 note에서만 만든다.**
   - `matched_tags`: 질문의 tag 중 그 note에 붙은 것. label은 한국어뿐이다.
@@ -69,6 +71,7 @@
         "matched_tags": [{"key": "board game", "label": "보드게임", "note_count": 1}],
         "matched_by": ["tags"],
         "notes": [{"note_id": "01a1b149-…", "title": "적당히 강한 가문으로 시작하는 섭정 플레이", "experienced": true}],
+        "names_not_found": [],
         "text": null
       }
     }
@@ -83,6 +86,7 @@
 - **`reason.notes`:** 그 사람의 note 중 질문과 가장 가까운 것 최대 3개의 id, 제목, 직접 경험 여부. 제목은 note가 쓰인 언어 그대로다.
 - **`reason.matched_tags`:** 위 note들에 붙은 tag 중 질문과 겹치는 것과, 그 tag가 붙은 note 수(`note_count`, 위 `notes` 안에서 센다). 비어 있을 수 있다 — 그때 `matched_by`가 왜 뽑혔는지 말한다.
 - **`reason.matched_by`:** 위 note들이 찾힌 방법을 모은 것(§2).
+- **`reason.names_not_found`:** 주제에 직접 쓰신 고유명사 중 이 사람의 위 note들(가까운 것 최대 3개) 어디에서도 찾지 못한 것, 쓰신 표기 그대로(설계 §5-6). 한국어, 영어, 일본어 표기로 note의 card와 제목, 본문을 찾아본다. 언급만 한 note도 찾은 것으로 친다. 그래서 `[]`는 "그 이름이 보인다"이지 "그것에 대해 썼다"가 아니다. 그 차이는 `matched_by`(`card_subject` / `card_mention`)가 말하는데, 지금 클라이언트의 `RecommendReasonResponse`는 `matched_by`를 받지 않으니 필요하면 더해 주시면 된다. `[]`면 이름이 없었거나 모두 찾았고, `null`이면 이름을 찾아볼 표기를 얻지 못해 모른다(`degraded`에 `name_spellings_unavailable`). **"이 이름이 이 사람의 note에 보이지 않는다"는 뜻이지 "이 사람은 그것을 모른다"는 뜻은 아니다.** 약칭("SF")이나 세 언어 밖의 표기는 놓칠 수 있다.
 - **"왜 이 사람인지"는 `reason`으로 말하면 된다.** tag label, note 제목, `experienced`, card 역할로 충분하고, `explain: true`면 `text`를 그대로 보여 줄 수 있다.
 - **최근 보여 준 사람:** 주제 추천이 같은 requester에게 최근 7일 안에 응답으로 준 사람은, 준 횟수만큼 순위가 내려간다(한 번에 점수의 표준편차 하나만큼). 주제와 상관없이 센다. 빠지지는 않는다. "보여 줬다"는 응답에 실린 모든 사람이라, 지금처럼 `max_results` 1로 부르실 때만 화면에 나온 사람과 같다. 같은 요청을 다시 보내시면 두 번 센다. 응답에 따로 표시하는 필드는 없다. dev에서는 사람이 적어 꺼 두었다.
 - **맞는 사람이 적으면 적게 온다(2026-11-13, discovery #99).** 주제의 tag(넓은 tag 말고)가 붙은 note도, 주제에 나온 것을 주제로 쓴 note(card `subject`)도 없는 사람은 충분히 가까울 때만 들어간다. 그래서 `matched_by`가 `meaning`뿐인 사람만이 아니라, 넓은 tag나 `card_mention`으로만 이어진 사람도 걸러질 수 있다. 그래서 `max_results`보다 적게 오거나 비어 있는 것(`no_matching_notes`)은 정상이다. 답할 사람 찾기와 같다.
@@ -121,6 +125,7 @@
       "reason": {
         "matched_tags": [{"key": "strategy game", "label": "전략 게임"}],
         "matched_by": ["tags", "card_subject"],
+        "names_not_found": [],
         "text": null
       }
     }
@@ -132,6 +137,7 @@
 ```
 
 - **`notes`는 답을 쓸 note의 참조다.** 관련도 높은 순이고, 한 사람의 note는 최대 3개까지만 들어간다(한 사람의 경험에 답이 갇히지 않게). 질문의 tag(넓은 tag 말고)도, 질문에 나온 것을 주제로 쓴 연결(card `subject`)도 없는 note는 충분히 가까울 때만 들어가므로, `max_results`보다 적게 오거나 비어 있는 것(`no_matching_notes`)은 정상이다.
+- **`reason.names_not_found`:** 질문의 고유명사 중 이 note에서 찾지 못한 것(§2-1과 같은 규칙).
 - **본문은 없다.** note-api의 public 읽기로 직접 읽어 주시면 된다(§5). 그때 받은 `version`이 응답의 `version`과 다르거나 note가 없으면(404) 그 note는 버린다 — 그 사이 고쳐졌거나 비공개가 됐거나 지워진 것이다.
 - **소유자 목록(`owners`)은 없다.** note마다 `owner_user_id`와 `agent_id`가 있으니 필요하면 묶어서 쓰면 된다.
 - **`experienced`:** 소유자가 직접 경험한 일인지(note-api의 값). 답에서 "직접 해 본 분"과 "알아본 분"을 구분하는 데 쓸 수 있다.
@@ -145,6 +151,7 @@
 | 200, `empty: true`, `empty_reason: "no_matching_notes"` | 맞는 공개 note가 없다 | "찾지 못했다"고 말한다. 다시 부르지 않는다 |
 | 200, `empty: true`, `empty_reason: "note_read_unavailable"`, `degraded`에 `note_read_unavailable` | note-api 확인이 실패하거나 마감을 넘겼다. 확인 못 한 사람은 싣지 않는다 | 같다. "지금은 찾지 못했다" |
 | 200, 결과 있음, `degraded`에 `query_analysis_unavailable` | tag 분석이 실패해 embedding만으로 찾았다. 덜 정확할 수 있다 | 결과를 그대로 쓴다. 다시 부르지 않는다 |
+| 200, `degraded`에 `name_spellings_unavailable`(결과가 있든 없든) | 주제의 이름을 찾아볼 표기를 얻지 못했다(다음 배포부터). 모든 항목의 `reason.names_not_found`가 `null`이다 | 결과를 그대로 쓴다. 이름이 보이는지는 모르는 것으로 다룬다 |
 | 200, 결과 있음, `degraded`에 `explanation_unavailable` | `explain: true`였지만 일부 또는 모든 항목의 설명을 모델이 쓰지 못했다(마감 초과, LLM 오류). 그 항목의 `text`는 구조화된 이유로 만든 고정 문장이다 | 구조화된 이유로 말한다. 다시 부르지 않는다 |
 | 503 `question_unavailable` | 질문을 읽지 못했다(질문 분석의 마감 초과, embedding이나 LLM 쪽 오류) | "지금은 쓸 수 없다". 같은 턴에 다시 부르지 않는다 |
 | 503 `database_unavailable` | DB가 응답하지 않았다 | 같다 |
@@ -198,6 +205,18 @@
 - **label은 한국어뿐이다.** 소유자가 영어·일본어를 쓰면 모델이 옮겨 말하게 된다. 지금 `lang`이 하던 일을 우리 쪽에서 채우려면 tag에 다른 언어 label이 필요하다(§7).
 - **requester:** 지금처럼 Ami의 소유자를 보내면 된다. 다른 사람이 있는 방에서 남이 "추천해 줘"라고 할 때 그 사람을 requester로 할지는 제품 판단이다 — 바꾸면 결과에서 빠지는 사람과 최근 보여 준 사람이 그 사람 기준이 된다(§8).
 
+## 4-1. 부탁: 이름을 찾지 못한 사람을 어떻게 말할지 (2026-11-13)
+
+**왜.** "샌프란 여행"으로 부르자 샌프란 note가 없는 사람(경주, 스페인, 나트랑 여행 note)이 왔다. dev에는 샌프란을 쓴 사람이 없어서 남은 신호가 "여행"뿐이었다. bourbon-agent의 모델은 note 제목을 보고도 `RECOMMENDATION_GUIDANCE`의 "This holds also when its notes are about a different subject than the request"를 따라 추천했다. 카드는 모델이 결과를 보기 전에 올라간다.
+
+**우리가 할 것.** 항목마다 `reason.names_not_found`를 싣는다(§2-1). 이번 경우라면 `["샌프란"]`이다. 추천할지와 무엇을 말할지는 bourbon-agent가 정한다.
+
+**바꿔 주셨으면 하는 것(방법은 bourbon-agent가 정한다):**
+
+- 클라이언트의 `RecommendReasonResponse`에 `names_not_found: list[str] | None`을(구분이 필요하면 `matched_by`도), 도구 결과의 `RecommendedAgent`에 같은 값을 더한다.
+- `RECOMMENDATION_GUIDANCE`의 "also when its notes are about a different subject" 대신, `names_not_found`가 비어 있지 않으면 **이 사람의 note에는 그 이름이 보이지 않고, 대신 `note_titles`의 관련된 것을 썼다고** 말하게 한다. 예: "이 분의 note에는 샌프란 이야기가 안 보여요. 대신 스페인과 경주 여행을 쓰셨어요." `max_results` 1로 부르시면 이 필드는 한 사람의 가까운 note 최대 3개만 본 것이라, "샌프란을 다녀온 사람은 없다"고 말하면 지나치다. 순위 2위에 샌프란 note를 쓴 사람이 있을 수도 있다. `null`이면 지금처럼 하면 된다.
+- 카드를 올리기 전에 이 필드로 막는 방법도 있다. 다만 우리 쪽에서 순위로 막지 않은 것과 같은 이유로(표기가 다르면 맞는 사람도 막힌다) 위의 "솔직하게 말하기"를 먼저 권한다.
+
 ## 5. 제안: 답할 사람 찾기 도구 (선택)
 
 지금 Ami는 다른 사람의 경험으로 답할 방법이 없다. `search_notes`는 소유자 자신의 note만 본다. `/recommend/notes`를 쓰면 "제주 갈 때 어디 들르면 좋아?" 같은 질문에 다른 사람의 공개 note로 답하고, 그 note를 쓴 사람과 이어 줄 수 있다. 붙일지, 언제 부를지는 bourbon-agent가 정해 주시면 된다. 붙인다면 이런 모양을 제안한다.
@@ -245,3 +264,4 @@
 3. §5 — 답할 사람 찾기 도구를 붙일지, 붙인다면 언제쯤이고 방 열기는 (a)·(b) 중 어느 쪽인지. note-api public 읽기 client를 여러 개 조회와 단건 중 어느 것으로 할지.
 4. §6-1 — 로그에서 빼는 것과 DEBUG를 끄는 것 중 어느 쪽인지.
 5. §7 — §4를 배포할 수 있는 시점.
+6. §4-1 — `names_not_found`를 어떻게 쓸지(솔직하게 말하기, 카드 전에 막기, 그 밖). 우리 배포에 맞춰 바꿔 주실 수 있는 시점.
