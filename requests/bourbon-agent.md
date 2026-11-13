@@ -9,6 +9,8 @@
 >
 > 2026-11-11에 route 이름을 무엇을 추천하는지에 맞춰 바꿨다(`/recommend/subject` → `/recommend/agents`, `/recommend/answerers` → `/recommend/notes`). 옛 이름은 dev에 나간 적이 없어 남겨 두지 않는다.
 >
+> **2026-11-13(다음 discovery 배포, 예정): 질문의 이름을 찾지 못한 항목을 알린다.** 항목마다 `reason.names_not_found`를 더한다(§2-1, §2-2). 주제에 나온 고유명사("샌프란" 같은) 중 그 사람이나 note에서 찾지 못한 것이다. 지금 `RECOMMENDATION_GUIDANCE`는 "주제가 달라도 추천하라"고 해서, 이 필드를 넘겨받아도 그대로면 바뀌지 않는다. §4-1의 부탁을 봐 주시면 된다. 필드를 더하는 것이라 지금 클라이언트는 그대로 동작한다(`BaseStrictModel`은 모르는 필드를 무시한다). `contract_version`은 "1"이다.
+>
 > **2026-11-13(discovery #99): 주제 추천도 맞는 사람이 적으면 적게 온다.** 주제의 tag(넓은 tag 말고)나 주제에 나온 것을 주제로 쓴 note가 없고 뜻만 가까운 사람은 충분히 가까울 때만 들어간다(§2-1). 지금처럼 `max_results` 1로 부르시면 `empty: true`(`no_matching_notes`)가 전보다 자주 온다. "찾지 못했다"고 말하고 다시 부르지 않으면 된다(§2-3). 응답 모양은 그대로라 `contract_version`은 "1"이다.
 >
 > **2026-11-12(discovery phase 10): `already_talked`를 응답에서 뺐다.** 미리 말씀드린 대로다. bourbon-api room v4에 agent DM이 없어져 늘 false였다. 연동하신 곳이 없을 때라 `contract_version`은 "1" 그대로다. 대신 같은 requester에게 최근 7일 안에 보여 준 사람은 보여 준 횟수만큼 순위가 내려간다(§2-1). 주제 추천을 다시 불러도 같은 사람만 나오지 않게 하려는 것이다.
@@ -83,6 +85,7 @@
 - **`reason.notes`:** 그 사람의 note 중 질문과 가장 가까운 것 최대 3개의 id, 제목, 직접 경험 여부. 제목은 note가 쓰인 언어 그대로다.
 - **`reason.matched_tags`:** 위 note들에 붙은 tag 중 질문과 겹치는 것과, 그 tag가 붙은 note 수(`note_count`, 위 `notes` 안에서 센다). 비어 있을 수 있다 — 그때 `matched_by`가 왜 뽑혔는지 말한다.
 - **`reason.matched_by`:** 위 note들이 찾힌 방법을 모은 것(§2).
+- **`reason.names_not_found`:** 주제에 나온 고유명사 중 이 사람의 위 note들 어디에서도 찾지 못한 것, 요청에 쓴 표기 그대로(설계 §5-6). 한국어, 영어, 일본어 표기로 note의 card와 제목, 본문을 찾아본다. 언급만 한 note는 찾은 것으로 친다. `[]`면 이름이 없었거나 모두 찾았고, `null`이면 질문 분석이 실패해 이름을 모른다. **"이 이름이 이 사람의 note에 보이지 않는다"는 뜻이지 "이 사람은 그것을 모른다"는 뜻은 아니다.** 약칭("SF")이나 세 언어 밖의 표기는 놓칠 수 있다.
 - **"왜 이 사람인지"는 `reason`으로 말하면 된다.** tag label, note 제목, `experienced`, card 역할로 충분하고, `explain: true`면 `text`를 그대로 보여 줄 수 있다.
 - **최근 보여 준 사람:** 주제 추천이 같은 requester에게 최근 7일 안에 응답으로 준 사람은, 준 횟수만큼 순위가 내려간다(한 번에 점수의 표준편차 하나만큼). 주제와 상관없이 센다. 빠지지는 않는다. "보여 줬다"는 응답에 실린 모든 사람이라, 지금처럼 `max_results` 1로 부르실 때만 화면에 나온 사람과 같다. 같은 요청을 다시 보내시면 두 번 센다. 응답에 따로 표시하는 필드는 없다. dev에서는 사람이 적어 꺼 두었다.
 - **맞는 사람이 적으면 적게 온다(2026-11-13, discovery #99).** 주제의 tag(넓은 tag 말고)가 붙은 note도, 주제에 나온 것을 주제로 쓴 note(card `subject`)도 없는 사람은 충분히 가까울 때만 들어간다. 그래서 `matched_by`가 `meaning`뿐인 사람만이 아니라, 넓은 tag나 `card_mention`으로만 이어진 사람도 걸러질 수 있다. 그래서 `max_results`보다 적게 오거나 비어 있는 것(`no_matching_notes`)은 정상이다. 답할 사람 찾기와 같다.
@@ -132,6 +135,7 @@
 ```
 
 - **`notes`는 답을 쓸 note의 참조다.** 관련도 높은 순이고, 한 사람의 note는 최대 3개까지만 들어간다(한 사람의 경험에 답이 갇히지 않게). 질문의 tag(넓은 tag 말고)도, 질문에 나온 것을 주제로 쓴 연결(card `subject`)도 없는 note는 충분히 가까울 때만 들어가므로, `max_results`보다 적게 오거나 비어 있는 것(`no_matching_notes`)은 정상이다.
+- **`reason.names_not_found`:** 질문의 고유명사 중 이 note에서 찾지 못한 것(§2-1과 같은 규칙).
 - **본문은 없다.** note-api의 public 읽기로 직접 읽어 주시면 된다(§5). 그때 받은 `version`이 응답의 `version`과 다르거나 note가 없으면(404) 그 note는 버린다 — 그 사이 고쳐졌거나 비공개가 됐거나 지워진 것이다.
 - **소유자 목록(`owners`)은 없다.** note마다 `owner_user_id`와 `agent_id`가 있으니 필요하면 묶어서 쓰면 된다.
 - **`experienced`:** 소유자가 직접 경험한 일인지(note-api의 값). 답에서 "직접 해 본 분"과 "알아본 분"을 구분하는 데 쓸 수 있다.
@@ -198,6 +202,18 @@
 - **label은 한국어뿐이다.** 소유자가 영어·일본어를 쓰면 모델이 옮겨 말하게 된다. 지금 `lang`이 하던 일을 우리 쪽에서 채우려면 tag에 다른 언어 label이 필요하다(§7).
 - **requester:** 지금처럼 Ami의 소유자를 보내면 된다. 다른 사람이 있는 방에서 남이 "추천해 줘"라고 할 때 그 사람을 requester로 할지는 제품 판단이다 — 바꾸면 결과에서 빠지는 사람과 최근 보여 준 사람이 그 사람 기준이 된다(§8).
 
+## 4-1. 부탁: 이름을 찾지 못한 사람을 어떻게 말할지 (2026-11-13)
+
+**왜.** "샌프란 여행"으로 부르자 샌프란 note가 없는 사람(경주, 스페인, 나트랑 여행 note)이 왔다. dev에는 샌프란을 쓴 사람이 없어서 남은 신호가 "여행"뿐이었다. bourbon-agent의 모델은 note 제목을 보고도 `RECOMMENDATION_GUIDANCE`의 "This holds also when its notes are about a different subject than the request"를 따라 추천했다. 카드는 모델이 결과를 보기 전에 올라간다.
+
+**우리가 할 것.** 항목마다 `reason.names_not_found`를 싣는다(§2-1). 이번 경우라면 `["샌프란"]`이다. 추천할지와 무엇을 말할지는 bourbon-agent가 정한다.
+
+**바꿔 주셨으면 하는 것(방법은 bourbon-agent가 정한다):**
+
+- 클라이언트의 `RecommendReasonResponse`에 `names_not_found: list[str] | None`을, 도구 결과의 `RecommendedAgent`에 같은 값을 더한다.
+- `RECOMMENDATION_GUIDANCE`의 "also when its notes are about a different subject" 대신, `names_not_found`가 비어 있지 않으면 **그 이름 자체를 쓴 사람은 찾지 못했다고 말하고, 이 사람은 `note_titles`의 관련된 것을 썼다고** 말하게 한다. 예: "샌프란을 다녀온 분은 못 찾았어요. 대신 미국 도시 여행을 쓴 분이 있어요." `null`이면 지금처럼 하면 된다.
+- 카드를 올리기 전에 이 필드로 막는 방법도 있다. 다만 우리 쪽에서 순위로 막지 않은 것과 같은 이유로(표기가 다르면 맞는 사람도 막힌다) 위의 "솔직하게 말하기"를 먼저 권한다.
+
 ## 5. 제안: 답할 사람 찾기 도구 (선택)
 
 지금 Ami는 다른 사람의 경험으로 답할 방법이 없다. `search_notes`는 소유자 자신의 note만 본다. `/recommend/notes`를 쓰면 "제주 갈 때 어디 들르면 좋아?" 같은 질문에 다른 사람의 공개 note로 답하고, 그 note를 쓴 사람과 이어 줄 수 있다. 붙일지, 언제 부를지는 bourbon-agent가 정해 주시면 된다. 붙인다면 이런 모양을 제안한다.
@@ -245,3 +261,4 @@
 3. §5 — 답할 사람 찾기 도구를 붙일지, 붙인다면 언제쯤이고 방 열기는 (a)·(b) 중 어느 쪽인지. note-api public 읽기 client를 여러 개 조회와 단건 중 어느 것으로 할지.
 4. §6-1 — 로그에서 빼는 것과 DEBUG를 끄는 것 중 어느 쪽인지.
 5. §7 — §4를 배포할 수 있는 시점.
+6. §4-1 — `names_not_found`를 어떻게 쓸지(솔직하게 말하기, 카드 전에 막기, 그 밖). 우리 배포에 맞춰 바꿔 주실 수 있는 시점.
